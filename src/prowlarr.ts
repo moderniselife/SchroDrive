@@ -20,11 +20,11 @@ export async function testProwlarrConnection(): Promise<boolean> {
     if (!base || !config.prowlarrApiKey) return false;
     
     const started = Date.now();
-    console.log(`[${new Date().toISOString()}][prowlarr] testing connection to ${base}`);
+    console.log(`[${new Date().toISOString()}][prowlarr] testing connection to ${base}`, { timeoutMs: Math.max(5000, Math.min(config.prowlarrTimeoutMs || 10000, 60000)) });
     
     const res = await axios.get(`${base}/api/v1/indexer`, {
       headers: { "X-Api-Key": config.prowlarrApiKey },
-      timeout: 10000, // Shorter timeout for connection test
+      timeout: Math.max(5000, Math.min(config.prowlarrTimeoutMs || 10000, 60000)),
     });
     
     console.log(`[${new Date().toISOString()}][prowlarr] connection test successful`, {
@@ -55,24 +55,28 @@ export async function searchProwlarr(query: string, opts?: {
   const base = config.prowlarrUrl.replace(/\/$/, "");
   const url = new URL("/api/v1/search", base);
   const params: any = { query };
-  if (opts?.categories?.length) params.categories = opts.categories.join(",");
-  if (opts?.indexerIds?.length) params.indexerIds = opts.indexerIds.join(",");
-  if (opts?.limit) params.limit = opts.limit;
+  const categories = (opts?.categories?.length ? opts.categories : (config.prowlarrCategories?.length ? config.prowlarrCategories : undefined));
+  if (categories?.length) params.categories = categories.join(",");
+  const indexerIds = (opts?.indexerIds?.length ? opts.indexerIds : (config.prowlarrIndexerIds?.length ? config.prowlarrIndexerIds : undefined));
+  if (indexerIds?.length) params.indexerIds = indexerIds.join(",");
+  const limit = opts?.limit ?? (Number.isFinite(config.prowlarrSearchLimit) ? config.prowlarrSearchLimit : undefined);
+  if (limit) params.limit = limit;
 
   const maskedKey = config.prowlarrApiKey ? `${config.prowlarrApiKey.slice(0, 4)}…` : "unset";
   const started = Date.now();
   console.log(`[${new Date().toISOString()}][prowlarr] GET ${url.toString()}`, {
     query,
-    categories: opts?.categories,
-    indexerIds: opts?.indexerIds,
-    limit: opts?.limit,
+    categories,
+    indexerIds,
+    limit,
     apikey: maskedKey,
+    timeoutMs: config.prowlarrTimeoutMs,
   });
   
   const res = await axios.get<ProwlarrResult[]>(url.toString(), {
     params,
     headers: { "X-Api-Key": config.prowlarrApiKey },
-    timeout: 15000, // Reduced to 15s for faster feedback on connection issues
+    timeout: Math.max(5000, Math.min(config.prowlarrTimeoutMs || 15000, 120000)),
   }).catch((err: any) => {
     console.error(`[${new Date().toISOString()}][prowlarr] request failed`, {
       query,
@@ -81,7 +85,7 @@ export async function searchProwlarr(query: string, opts?: {
       status: err?.response?.status,
       statusText: err?.response?.statusText,
       url: url.toString(),
-      timeout: '15000ms'
+      timeout: `${Math.max(5000, Math.min(config.prowlarrTimeoutMs || 15000, 120000))}ms`
     });
     
     // Additional diagnostics for timeout errors
@@ -90,7 +94,7 @@ export async function searchProwlarr(query: string, opts?: {
         base,
         query,
         params,
-        suggestion: 'Check network connectivity to Prowlarr and consider reducing timeout or query complexity'
+        suggestion: 'Check network connectivity to Prowlarr; consider increasing PROWLARR_TIMEOUT_MS, reducing PROWLARR_INDEXER_IDS or categories'
       });
     }
     
