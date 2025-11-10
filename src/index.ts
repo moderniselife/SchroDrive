@@ -5,8 +5,8 @@ import { addMagnetToTorbox } from "./torbox";
 
 const program = new Command();
 program
-  .name("torbox-updater")
-  .description("CLI/Webhook tool to listen for Overseerr requests, search Prowlarr, and add torrents to TorBox")
+  .name("schrodrive")
+  .description("CLI/Webhook tool to integrate Overseerr with Prowlarr and TorBox (plus API poller mode)")
   .version("0.1.0");
 
 program

@@ -13,6 +13,12 @@ services:
       - TORBOX_API_KEY=${TORBOX_API_KEY}
       - TORBOX_BASE_URL=${TORBOX_BASE_URL:-https://api.torbox.app}
       - OVERSEERR_AUTH=${OVERSEERR_AUTH:-}
+      # Overseerr API poller configuration and toggles
+      - OVERSEERR_URL=${OVERSEERR_URL:-}
+      - OVERSEERR_API_KEY=${OVERSEERR_API_KEY:-}
+      - POLL_INTERVAL_S=${POLL_INTERVAL_S:-30}
+      - RUN_WEBHOOK=${RUN_WEBHOOK:-true}
+      - RUN_POLLER=${RUN_POLLER:-false}
       - PORT=${PORT:-8978}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8978/health"]

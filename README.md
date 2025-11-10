@@ -40,6 +40,18 @@ The ultimate media automation orchestrator. SchröDrive seamlessly integrates wi
 
 **Multi-Provider Debrid Support** - Expand your download ecosystem beyond TorBox. SchröDrive will soon integrate with leading debrid services including Real-Debrid, All-Debrid, and Premiumize, giving you the flexibility to choose the optimal provider for your content needs. Switch between providers effortlessly or use multiple services in parallel for maximum availability and speed.
 
+## Modes
+- **Webhook mode (default)**
+  - Endpoint: `POST /webhook/overseerr`
+  - Now responds immediately with `202 Accepted` and processes in the background to avoid Overseerr's 20s timeout window.
+  - Optional auth header via `OVERSEERR_AUTH`.
+
+- **Overseerr API Poller (optional)**
+  - Polls Overseerr for `approved` requests via `GET /request?filter=approved`.
+  - Requires: `OVERSEERR_URL` (must include `/api/v1`) and `OVERSEERR_API_KEY`.
+  - Enable with `RUN_POLLER=true` (and optionally set `RUN_WEBHOOK=false`).
+  - Poll interval configurable via `POLL_INTERVAL_S` (default 30s).
+
 ## Requirements
 - Node.js 18+
 - Prowlarr URL and API key
