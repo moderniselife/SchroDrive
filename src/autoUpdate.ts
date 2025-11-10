@@ -77,6 +77,8 @@ export function startAutoUpdater() {
     everySeconds: Math.round(intervalMs / 1000),
   });
 
+  let firstCheck = true;
+
   const check = async () => {
     try {
       const latestTag = await getLatestTag(owner, repo);
@@ -89,13 +91,20 @@ export function startAutoUpdater() {
         } else {
           doExitRestart("new version available");
         }
+      } else {
+        if (firstCheck) {
+          console.log(`[${new Date().toISOString()}][auto-update] first check: up to date`, { current, latest: latestTag });
+        }
       }
     } catch (e: any) {
       console.warn(`[${new Date().toISOString()}][auto-update] check failed`, e?.message || String(e));
     }
+    firstCheck = false;
   };
 
-  // run now & schedule
-  check();
-  setInterval(check, intervalMs);
+  // Delay first check by 30 seconds to avoid immediate restart on startup
+  setTimeout(() => {
+    check();
+    setInterval(check, intervalMs);
+  }, 30_000);
 }
