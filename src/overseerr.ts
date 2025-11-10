@@ -1,6 +1,6 @@
 import axios from "axios";
 import { config, requireEnv } from "./config";
-import { searchProwlarr, pickBestResult, getMagnet } from "./prowlarr";
+import { searchProwlarr, pickBestResult, getMagnet, getMagnetOrResolve } from "./prowlarr";
 import { addMagnetToTorbox, checkExistingTorrents } from "./torbox";
 import { testProwlarrConnection } from "./prowlarr";
 
@@ -186,7 +186,14 @@ export function startOverseerrPoller() {
           console.log(`[${new Date().toISOString()}][poller->prowlarr] results`, { id, count: results.length, ms: Date.now() - t0 });
           const best = pickBestResult(results);
           console.log(`[${new Date().toISOString()}][poller->prowlarr] chosen`, { id, title: (best as any)?.title, seeders: (best as any)?.seeders, size: (best as any)?.size });
-          const magnet = getMagnet(best);
+          let magnet = getMagnet(best);
+          if (!magnet) {
+            try {
+              magnet = await getMagnetOrResolve(best);
+            } catch (e: any) {
+              console.warn(`[${new Date().toISOString()}][poller] magnet resolve failed`, { id, err: e?.message || String(e) });
+            }
+          }
           if (!magnet) {
             console.warn(`[${new Date().toISOString()}][poller] no magnet found`, { id, query: built.query });
             processed.add(id);

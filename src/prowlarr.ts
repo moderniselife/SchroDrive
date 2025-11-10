@@ -6,6 +6,7 @@ export type ProwlarrResult = {
   guid?: string;
   magnetUrl?: string;
   link?: string;
+  downloadUrl?: string;
   seeders?: number;
   leechers?: number;
   size?: number;
@@ -227,6 +228,62 @@ export function getMagnet(r: ProwlarrResult | undefined): string | undefined {
   const ok = typeof magnet === "string" && magnet.startsWith("magnet:");
   console.log(`[${new Date().toISOString()}][prowlarr] getMagnet`, { hasCandidate: !!magnet, ok });
   if (ok) return magnet;
+  return undefined;
+}
+
+function isMagnet(s: any): s is string {
+  return typeof s === 'string' && s.startsWith('magnet:');
+}
+
+function absoluteUrl(u: string, base: string): string {
+  try { return new URL(u, base).toString(); } catch { return u; }
+}
+
+export async function getMagnetOrResolve(r: ProwlarrResult | undefined): Promise<string | undefined> {
+  if (!r) return undefined;
+  const direct = getMagnet(r);
+  if (direct) return direct;
+  const base = config.prowlarrUrl.replace(/\/$/, "");
+  const candidate = (r as any).downloadUrl || (r as any).download || (r as any).downloadurl || (r as any).download_link || (r as any).link;
+  let url = typeof candidate === 'string' ? absoluteUrl(candidate, base) : '';
+  if (!url || !(url.startsWith('http://') || url.startsWith('https://'))) return undefined;
+
+  const maxHops = Math.max(1, Math.min(Number(config.prowlarrRedirectMaxHops || 5), 10));
+  let hops = 0;
+  while (hops < maxHops && url && (url.startsWith('http://') || url.startsWith('https://'))) {
+    hops++;
+    let resp: any;
+    try {
+      resp = await axios.head(url, { headers: { 'X-Api-Key': config.prowlarrApiKey }, maxRedirects: 0, validateStatus: () => true, timeout: Math.max(5000, Math.min(config.prowlarrTimeoutMs || 15000, 120000)) });
+    } catch {
+      try {
+        resp = await axios.get(url, { headers: { 'X-Api-Key': config.prowlarrApiKey }, maxRedirects: 0, validateStatus: () => true, timeout: Math.max(5000, Math.min(config.prowlarrTimeoutMs || 15000, 120000)) });
+      } catch (e) {
+        console.warn(`[${new Date().toISOString()}][prowlarr] resolveMagnet failed`, { url, err: (e as any)?.message });
+        return undefined;
+      }
+    }
+    const status = resp?.status || 0;
+    const location = String(resp?.headers?.location || '');
+    const ctype = String(resp?.headers?.['content-type'] || '').toLowerCase();
+    if (status >= 300 && status < 400 && location) {
+      if (isMagnet(location)) {
+        console.log(`[${new Date().toISOString()}][prowlarr] resolveMagnet redirect->magnet`, { hops, hash: (location.match(/btih:([^&]+)/i)||[])[1] });
+        return location;
+      }
+      url = absoluteUrl(location, base);
+      if (url.endsWith('.torrent')) {
+        console.log(`[${new Date().toISOString()}][prowlarr] resolveMagnet redirect->torrent`, { hops, url });
+        return undefined;
+      }
+      continue;
+    }
+    if (ctype.includes('bittorrent') || url.endsWith('.torrent')) {
+      console.log(`[${new Date().toISOString()}][prowlarr] resolveMagnet content-type torrent`, { url });
+      return undefined;
+    }
+    break;
+  }
   return undefined;
 }
 

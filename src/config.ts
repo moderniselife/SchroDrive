@@ -6,6 +6,7 @@ export const config = {
   prowlarrIndexerIds: (process.env.PROWLARR_INDEXER_IDS || "").split(",").map((s) => s.trim()).filter(Boolean),
   prowlarrSearchLimit: Number(process.env.PROWLARR_SEARCH_LIMIT || 100),
   prowlarrTimeoutMs: Number(process.env.PROWLARR_TIMEOUT_MS || 120000),
+  prowlarrRedirectMaxHops: Number(process.env.PROWLARR_REDIRECT_MAX_HOPS || 5),
   torboxApiKey: process.env.TORBOX_API_KEY || "",
   torboxBaseUrl: process.env.TORBOX_BASE_URL || "https://api.torbox.app",
   overseerrAuth: process.env.OVERSEERR_AUTH || "",

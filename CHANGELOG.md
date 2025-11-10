@@ -12,6 +12,9 @@ and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.
   - `PROWLARR_TIMEOUT_MS` (default 45000, clamped 5s–120s)
   - `PROWLARR_INDEXER_IDS` (comma-separated IDs) to limit queried indexers
   - `PROWLARR_SEARCH_LIMIT` to cap results
+- Magnet/HTTP(S) resolver:
+  - HEAD-first, multi-hop (up to `PROWLARR_REDIRECT_MAX_HOPS`) resolution of Prowlarr download URLs that redirect to `magnet:` or `.torrent`
+  - New env: `PROWLARR_REDIRECT_MAX_HOPS` (default 5)
 - Query sanitation and fallbacks:
   - Strip `TMDB####` tokens from search queries before calling Prowlarr
   - Retry without the year when zero results are returned
@@ -22,6 +25,7 @@ and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.
 ### Changed 🔄
 - Improved request/diagnostic logging for Prowlarr (timeouts, params, fallbacks) and Overseerr
 - Default Prowlarr client timeout increased to 45s (configurable)
+- Overseerr poller now attempts magnet resolution from HTTP/HTTPS links when a direct magnet is not provided
 
 ### Fixed 🐛
 - 401 Unauthorized on Prowlarr search by including `X-Api-Key` header in `/api/v1/search`
