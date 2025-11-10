@@ -87,27 +87,93 @@ node dist/index.js add --query "Ubuntu 24.04"
 ```
 
 ## Docker Compose
-1. Copy environment template:
+### Prerequisites
+- Docker and Docker Compose installed
+- Prowlarr API key
+- TorBox API key
+
+### Step 1: Clone the repository
 ```bash
-cp .env.example .env
-# Edit .env with your Prowlarr and TorBox credentials
+git clone https://github.com/moderniselife/TorBoxUpdater.git
+cd TorBoxUpdater
 ```
 
-2. Start services:
+### Step 2: Configure environment variables
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your credentials:
+```env
+# Prowlarr Configuration
+PROWLARR_URL=http://prowlarr:9696
+PROWLARR_API_KEY=your_prowlarr_api_key_here
+PROWLARR_CATEGORIES=5000,2000
+
+# TorBox Configuration
+TORBOX_API_KEY=tb_your_torbox_api_key_here
+TORBOX_BASE_URL=https://api.torbox.app
+
+# Overseerr Webhook (optional)
+OVERSEERR_AUTH=your_secret_auth_header_value
+
+# Service Port (optional)
+PORT=8080
+```
+
+### Step 3: Start the services
 ```bash
 docker-compose up -d
 ```
 
-3. Health check:
+### Step 4: Verify the services
+Health check for TorBox Updater:
 ```bash
 curl http://localhost:8080/health
 ```
 
-The stack includes:
+Access Prowlarr web UI:
+```bash
+open http://localhost:9696
+```
+
+### Step 5: Configure Overseerr webhook
+In Overseerr Settings → Notifications → Add Webhook:
+- Webhook URL: `http://<your-host>:8080/webhook/overseerr`
+- Authorization Header (optional): set to your `OVERSEERR_AUTH` value if used
+- JSON Payload:
+```json
+{
+  "notification_type": "{{notification_type}}",
+  "event": "{{event}}",
+  "subject": "{{subject}}",
+  "message": "{{message}}",
+  "media": {{media}},
+  "request": {{request}}
+}
+```
+- Recommended events: Request Approved
+
+### Step 6: Test the webhook
+```bash
+curl -X POST http://localhost:8080/webhook/overseerr \
+  -H "Content-Type: application/json" \
+  -H "Authorization: your_secret_auth_header_value" \
+  -d '{"subject":"Big Buck Bunny 2008","media":{"title":"Big Buck Bunny","year":2008}}'
+```
+
+### Stack details
 - `torbox-updater` on port 8080
 - `prowlarr` on port 9696 (LinuxServer image)
 - Shared `media` network
 - Persistent `prowlarr_config` volume
+
+### Stop and clean up
+```bash
+docker-compose down
+# Remove volumes (optional)
+docker-compose down -v
+```
 
 ## GitHub Actions
 This repository includes two workflows:
