@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.1.25] - 2025-11-10 🚀
+*Status: Ready for release*
+
+### Added ✨
+- Magnet resolution from info hash:
+  - `getMagnet` builds a magnet URI from `infoHash/infohash/hash` when no direct magnet is present
+  - Logs `[prowlarr] getMagnet built from infoHash` on success
+- Candidate fallback scanning:
+  - Overseerr poller now iterates over sorted Prowlarr results if the top result lacks a resolvable magnet
+  - Results are sorted by seeders then size to prioritize quality
+
+### Changed 🔄
+- Overseerr poller only proceeds to TorBox once a magnet is resolved from any candidate
+
+### Fixed 🐛
+- Cases where `getMagnet { hasCandidate: true, ok: false }` would stop processing without attempting resolution
+
+---
+
 ### Version [0.1.20] - 2025-11-10 🚀
 
 ### Added ✨

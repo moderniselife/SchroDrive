@@ -7,10 +7,15 @@ export type ProwlarrResult = {
   magnetUrl?: string;
   link?: string;
   downloadUrl?: string;
+  download?: string;
   seeders?: number;
   leechers?: number;
   size?: number;
   indexer?: string;
+  indexerId?: number | string;
+  infoHash?: string;
+  infohash?: string;
+  hash?: string;
   categories?: number[] | string[];
   [key: string]: any;
 };
@@ -224,10 +229,25 @@ export function pickBestResult(results: ProwlarrResult[]): ProwlarrResult | unde
 
 export function getMagnet(r: ProwlarrResult | undefined): string | undefined {
   if (!r) return undefined;
-  const magnet = r.magnetUrl || r.guid || r.link;
-  const ok = typeof magnet === "string" && magnet.startsWith("magnet:");
-  console.log(`[${new Date().toISOString()}][prowlarr] getMagnet`, { hasCandidate: !!magnet, ok });
-  if (ok) return magnet;
+  const direct = r.magnetUrl || r.guid || r.link;
+  const ok = typeof direct === "string" && direct.startsWith("magnet:");
+  console.log(`[${new Date().toISOString()}][prowlarr] getMagnet`, { hasCandidate: !!direct, ok });
+  if (ok) return direct as string;
+
+  // Try to build a magnet from info hash if present
+  const hashCand = (r.infoHash || r.infohash || r.hash || "").toString().trim();
+  if (hashCand) {
+    // Accept 40-hex or 32-base32 hashes
+    const hex40 = /^[a-fA-F0-9]{40}$/;
+    const b32 = /^[A-Z2-7]{32,39}$/i; // some providers use longer base32
+    if (hex40.test(hashCand) || b32.test(hashCand)) {
+      const hashUpper = hashCand.toUpperCase();
+      const dn = r.title ? `&dn=${encodeURIComponent(r.title)}` : "";
+      const built = `magnet:?xt=urn:btih:${hashUpper}${dn}`;
+      console.log(`[${new Date().toISOString()}][prowlarr] getMagnet built from infoHash`, { built: true });
+      return built;
+    }
+  }
   return undefined;
 }
 

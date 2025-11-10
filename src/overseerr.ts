@@ -186,12 +186,24 @@ export function startOverseerrPoller() {
           console.log(`[${new Date().toISOString()}][poller->prowlarr] results`, { id, count: results.length, ms: Date.now() - t0 });
           const best = pickBestResult(results);
           console.log(`[${new Date().toISOString()}][poller->prowlarr] chosen`, { id, title: (best as any)?.title, seeders: (best as any)?.seeders, size: (best as any)?.size });
-          let magnet = getMagnet(best);
-          if (!magnet) {
-            try {
-              magnet = await getMagnetOrResolve(best);
-            } catch (e: any) {
-              console.warn(`[${new Date().toISOString()}][poller] magnet resolve failed`, { id, err: e?.message || String(e) });
+          // Try best first, then scan other candidates until a magnet is found
+          let magnet: string | undefined = undefined;
+          let chosenUsed: any = best;
+          const sorted = results
+            .slice()
+            .sort((a, b) => (Number(b.seeders) || 0) - (Number(a.seeders) || 0) || (Number(b.size) || 0) - (Number(a.size) || 0));
+          for (const cand of [best, ...sorted.filter((x) => x !== best)]) {
+            magnet = getMagnet(cand);
+            if (!magnet) {
+              try {
+                magnet = await getMagnetOrResolve(cand);
+              } catch (e: any) {
+                console.warn(`[${new Date().toISOString()}][poller] magnet resolve failed`, { id, err: e?.message || String(e) });
+              }
+            }
+            if (magnet) {
+              chosenUsed = cand;
+              break;
             }
           }
           if (!magnet) {
@@ -201,7 +213,7 @@ export function startOverseerrPoller() {
           }
           
           // Check for existing torrents before adding
-          const torrentTitle = (best as any)?.title || built.query;
+          const torrentTitle = (chosenUsed as any)?.title || built.query;
           const hasExisting = await checkExistingTorrents(torrentTitle);
           if (hasExisting) {
             console.log(`[${new Date().toISOString()}][poller] skipping duplicate torrent`, { id, title: torrentTitle });
