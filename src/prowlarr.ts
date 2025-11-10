@@ -71,6 +71,7 @@ export async function searchProwlarr(query: string, opts?: {
   
   const res = await axios.get<ProwlarrResult[]>(url.toString(), {
     params,
+    headers: { "X-Api-Key": config.prowlarrApiKey },
     timeout: 15000, // Reduced to 15s for faster feedback on connection issues
   }).catch((err: any) => {
     console.error(`[${new Date().toISOString()}][prowlarr] request failed`, {
