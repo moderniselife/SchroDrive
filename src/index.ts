@@ -4,6 +4,7 @@ import { searchProwlarr, pickBestResult, getMagnet } from "./prowlarr";
 import { addMagnetToTorbox } from "./torbox";
 import { mountVirtualDrive } from "./mount";
 import { scanDeadOnce, startDeadScanner } from "./deadScanner";
+import { config } from "./config";
 
 const program = new Command();
 program
@@ -14,8 +15,36 @@ program
 program
   .command("serve")
   .description("Start the webhook HTTP server")
-  .action(() => {
+  .action(async () => {
+    // Start additional services if enabled via environment variables
+    const promises: Promise<void>[] = [];
+    
+    if (config.runMount) {
+      console.log("[serve] Starting virtual drive mount (RUN_MOUNT=true)");
+      promises.push(mountVirtualDrive());
+    }
+    
+    if (config.runDeadScannerWatch) {
+      console.log("[serve] Starting dead scanner watch (RUN_DEAD_SCANNER_WATCH=true)");
+      promises.push(Promise.resolve(startDeadScanner()));
+    } else if (config.runDeadScanner) {
+      console.log("[serve] Running dead scanner once (RUN_DEAD_SCANNER=true)");
+      promises.push(scanDeadOnce().then(() => {}));
+    }
+    
+    // Start the main server
     startServer();
+    
+    // If additional services are running, handle their errors
+    if (promises.length > 0) {
+      Promise.allSettled(promises).then(results => {
+        results.forEach((result, index) => {
+          if (result.status === 'rejected') {
+            console.error(`[serve] Additional service ${index} failed:`, result.reason);
+          }
+        });
+      });
+    }
   });
 
 program

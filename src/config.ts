@@ -52,6 +52,10 @@ export const config = {
   // Dead scanner
   deadScanIntervalSeconds: Number(process.env.DEAD_SCAN_INTERVAL_S || 600),
   deadIdleMinutes: Number(process.env.DEAD_IDLE_MIN || 120),
+  // Runtime toggles for additional services
+  runMount: String(process.env.RUN_MOUNT ?? "false").toLowerCase() === "true",
+  runDeadScanner: String(process.env.RUN_DEAD_SCANNER ?? "false").toLowerCase() === "true",
+  runDeadScannerWatch: String(process.env.RUN_DEAD_SCANNER_WATCH ?? "false").toLowerCase() === "true",
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {

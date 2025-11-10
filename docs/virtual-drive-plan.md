@@ -94,3 +94,8 @@ Updated: 2025-11-11 09:47:00 +11:00
 Updated: 2025-11-11 09:52:00 +11:00
 
 - Added GitHub Actions workflow to build/push a `develop` image on pushes to the `develop` branch: `.github/workflows/build-push-develop.yml`. Tags: `develop` and `develop-<sha>`.
+
+Updated: 2025-06-20 20:23 UTC - Added dev version tag to develop workflow
+- Added a step to extract package version from package.json in the develop build workflow
+- Added a dev version tag `develop:<version>-dev` alongside existing tags in build-push-develop.yml
+- This ensures the develop image is tagged with both `develop`, `develop-<sha>`, and `develop:0.1.25-dev` style tags

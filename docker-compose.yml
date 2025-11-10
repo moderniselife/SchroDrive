@@ -1,5 +1,5 @@
 services:
-  torbox-updater:
+  schrodrive:
     build: .
     image: ghcr.io/moderniselife/schrodrive:latest
     container_name: schrodrive
