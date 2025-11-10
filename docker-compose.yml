@@ -20,6 +20,12 @@ services:
       - RUN_WEBHOOK=${RUN_WEBHOOK:-true}
       - RUN_POLLER=${RUN_POLLER:-false}
       - PORT=${PORT:-8978}
+      # Auto-update configuration
+      - AUTO_UPDATE_ENABLED=${AUTO_UPDATE_ENABLED:-false}
+      - AUTO_UPDATE_INTERVAL_S=${AUTO_UPDATE_INTERVAL_S:-3600}
+      - AUTO_UPDATE_STRATEGY=${AUTO_UPDATE_STRATEGY:-exit}
+      - REPO_OWNER=${REPO_OWNER:-moderniselife}
+      - REPO_NAME=${REPO_NAME:-SchroDrive}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8978/health"]
       interval: 30s

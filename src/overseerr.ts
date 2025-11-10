@@ -13,6 +13,30 @@ interface MediaLike {
   tmdbId?: number | string;
 }
 
+function defaultCategoriesFor(mediaType: any): string[] | undefined {
+  const map: Record<string, string[]> = {
+    movie: ["5000"],
+    tv: ["5000"],
+  };
+  const key = String(mediaType || '').toLowerCase();
+  return map[key];
+}
+
+async function fetchTitleYearFromOverseerr(mediaType: string, tmdbId: number): Promise<{ title: string; year?: number } | undefined> {
+  if (!config.overseerrUrl || !config.overseerrApiKey) return undefined;
+  const base = config.overseerrUrl.replace(/\/$/, "");
+  const path = mediaType?.toLowerCase() === 'movie' ? `/movie/${tmdbId}` : `/tv/${tmdbId}`;
+  const url = `${base}${path}`;
+  console.log(`[${new Date().toISOString()}][poller->overseerr] GET ${url} (details)`);
+  const res = await axios.get(url, { headers: { "X-Api-Key": config.overseerrApiKey }, timeout: 15000 });
+  const data = res?.data || {};
+  const title = (data as any)?.title || (data as any)?.name;
+  const dateStr = (data as any)?.releaseDate || (data as any)?.firstAirDate || (data as any)?.first_air_date || (data as any)?.release_date;
+  const year = dateStr ? Number(String(dateStr).slice(0, 4)) : undefined;
+  if (title) return { title, year: Number.isFinite(year) ? year : undefined };
+  return undefined;
+}
+
 interface MediaRequestLike {
   id?: number;
   mediaId?: number;
@@ -36,6 +60,11 @@ function buildSearchFromRequest(r: MediaRequestLike): { query: string; categorie
     if (tmdbId && Number.isInteger(Number(tmdbId))) {
       query += ` TMDB${tmdbId}`;
     }
+  }
+
+  // Fallback: if no title available, still allow TMDB-only queries
+  if (!query && tmdbId && Number.isInteger(Number(tmdbId))) {
+    query = `TMDB${tmdbId}`;
   }
 
   if (!query) return undefined;
@@ -90,10 +119,45 @@ export function startOverseerrPoller() {
           continue;
         }
 
-        const built = buildSearchFromRequest(r);
+        let built = buildSearchFromRequest(r);
         if (!built) {
           console.warn(`[${new Date().toISOString()}][poller] could not build query from request`, { id, media: r?.media });
-          continue;
+          // Try to enrich from Overseerr details
+          const media = r?.media || {};
+          const tmdbId = (media as any)?.tmdbId ?? r?.mediaId;
+          const mediaType = (media as any)?.mediaType ?? (media as any)?.type;
+          if (tmdbId) {
+            try {
+              const enriched = await fetchTitleYearFromOverseerr(String(mediaType || ''), Number(tmdbId));
+              if (enriched?.title) {
+                const year = enriched.year ? ` ${enriched.year}` : '';
+                built = { query: `${enriched.title}${year} TMDB${tmdbId}`, categories: mediaType ? defaultCategoriesFor(mediaType) : undefined };
+                console.log(`[${new Date().toISOString()}][poller] enriched query from Overseerr`, { id, query: built.query });
+              }
+            } catch (e: any) {
+              console.warn(`[${new Date().toISOString()}][poller] enrich failed`, { id, err: e?.message || String(e) });
+            }
+          }
+          if (!built) {
+            continue;
+          }
+        }
+
+        // If query is TMDB-only, attempt to enrich with title/year for better search
+        try {
+          const media = r?.media || {};
+          const tmdbId = (media as any)?.tmdbId ?? r?.mediaId;
+          const mediaType = (media as any)?.mediaType ?? (media as any)?.type;
+          if (tmdbId && built.query.trim() === `TMDB${tmdbId}`) {
+            const enriched = await fetchTitleYearFromOverseerr(String(mediaType || ''), Number(tmdbId));
+            if (enriched?.title) {
+              const year = enriched.year ? ` ${enriched.year}` : '';
+              built = { query: `${enriched.title}${year} TMDB${tmdbId}`, categories: mediaType ? defaultCategoriesFor(mediaType) : undefined };
+              console.log(`[${new Date().toISOString()}][poller] upgraded TMDB-only query`, { id, query: built.query });
+            }
+          }
+        } catch (e: any) {
+          console.warn(`[${new Date().toISOString()}][poller] upgrade TMDB-only failed`, { err: e?.message || String(e) });
         }
 
         try {

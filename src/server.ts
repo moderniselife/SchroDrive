@@ -3,6 +3,7 @@ import { config, requireEnv } from "./config";
 import { searchProwlarr, pickBestResult, getMagnet } from "./prowlarr";
 import { addMagnetToTorbox } from "./torbox";
 import { startOverseerrPoller } from "./overseerr";
+import { startAutoUpdater } from "./autoUpdate";
 
 export function startServer() {
   const app = express();
@@ -93,6 +94,9 @@ export function startServer() {
   if (config.runPoller) {
     startOverseerrPoller();
   }
+
+  // Optional: start auto-updater
+  startAutoUpdater();
 }
 
 export function buildQueryFromPayload(payload: any): { query: string; categories?: string[] } | undefined {

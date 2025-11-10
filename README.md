@@ -52,6 +52,37 @@ The ultimate media automation orchestrator. SchröDrive seamlessly integrates wi
   - Enable with `RUN_POLLER=true` (and optionally set `RUN_WEBHOOK=false`).
   - Poll interval configurable via `POLL_INTERVAL_S` (default 30s).
 
+## Auto-Update
+- SchröDrive can check GitHub Releases and auto-restart when a newer version is available.
+- Works best with Docker using a supervisor (e.g., restart policy) plus Watchtower to pull the new image.
+
+Environment:
+- `AUTO_UPDATE_ENABLED` (default `false`)
+- `AUTO_UPDATE_INTERVAL_S` (default `3600`)
+- `AUTO_UPDATE_STRATEGY` = `exit` | `git`
+  - `exit`: process exits when an update is found; your supervisor/Compose restarts it. For Docker, add Watchtower to pull new images.
+  - `git`: runs `git pull --ff-only` then exits (for bare-metal/git installs).
+- `REPO_OWNER` (default `moderniselife`)
+- `REPO_NAME` (default `SchroDrive`)
+
+Example (Docker Compose .env):
+```
+AUTO_UPDATE_ENABLED=true
+AUTO_UPDATE_INTERVAL_S=1800
+AUTO_UPDATE_STRATEGY=exit
+```
+
+Watchtower service (optional):
+```yaml
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    command: --interval 900 --cleanup
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+This will pull `ghcr.io/moderniselife/schrodrive` updates automatically and restart the container when the app exits.
+
 ## Requirements
 - Node.js 18+
 - Prowlarr URL and API key
