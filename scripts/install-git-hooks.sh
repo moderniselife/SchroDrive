@@ -21,3 +21,4 @@ chmod +x .git/hooks/pre-push
 
 echo "Git hooks installation complete!"
 echo "The pre-push hook will automatically increment the version when pushing to main/master."
+echo "It uses npm/node if available, otherwise falls back to manual version parsing."
