@@ -24,12 +24,15 @@ function defaultCategoriesFor(mediaType: any): string[] | undefined {
 }
 
 async function fetchTitleYearFromOverseerr(mediaType: string, tmdbId: number): Promise<{ title: string; year?: number } | undefined> {
-  if (!config.overseerrUrl || !config.overseerrApiKey) return undefined;
+  if (!config.overseerrUrl || (!config.overseerrApiKey && !config.overseerrAuth)) return undefined;
   const base = config.overseerrUrl.replace(/\/$/, "");
   const path = mediaType?.toLowerCase() === 'movie' ? `/movie/${tmdbId}` : `/tv/${tmdbId}`;
   const url = `${base}${path}`;
   console.log(`[${new Date().toISOString()}][poller->overseerr] GET ${url} (details)`);
-  const res = await axios.get(url, { headers: { "X-Api-Key": config.overseerrApiKey }, timeout: 15000 });
+  const headers: any = {};
+  if (config.overseerrApiKey) headers["X-Api-Key"] = config.overseerrApiKey;
+  if (config.overseerrAuth) headers["Authorization"] = config.overseerrAuth.startsWith("Bearer ") ? config.overseerrAuth : `Bearer ${config.overseerrAuth}`;
+  const res = await axios.get(url, { headers, timeout: 15000 });
   const data = res?.data || {};
   const title = (data as any)?.title || (data as any)?.name;
   const dateStr = (data as any)?.releaseDate || (data as any)?.firstAirDate || (data as any)?.first_air_date || (data as any)?.release_date;
@@ -89,9 +92,12 @@ async function fetchApprovedRequests(): Promise<MediaRequestLike[]> {
   console.log(`[${new Date().toISOString()}][poller->overseerr] GET ${url}`, {
     params: { filter: "approved", sort: "modified", take: 50, skip: 0 },
   });
+  const headers: any = {};
+  if (config.overseerrApiKey) headers["X-Api-Key"] = config.overseerrApiKey;
+  if (config.overseerrAuth) headers["Authorization"] = config.overseerrAuth.startsWith("Bearer ") ? config.overseerrAuth : `Bearer ${config.overseerrAuth}`;
   const res = await axios.get(url, {
     params: { filter: "approved", sort: "modified", take: 50, skip: 0 },
-    headers: { "X-Api-Key": config.overseerrApiKey },
+    headers,
     timeout: 30000,
   });
   const results = res?.data?.results || [];
@@ -101,7 +107,10 @@ async function fetchApprovedRequests(): Promise<MediaRequestLike[]> {
 
 export function startOverseerrPoller() {
   requireEnv("prowlarrUrl", "prowlarrApiKey", "torboxApiKey");
-  requireEnv("overseerrUrl", "overseerrApiKey");
+  // Accept either Overseerr API key or Bearer token
+  if (!config.overseerrUrl || (!config.overseerrApiKey && !config.overseerrAuth)) {
+    throw new Error("Missing Overseerr credentials. Set OVERSEERR_URL and either OVERSEERR_API_KEY or OVERSEERR_AUTH.");
+  }
 
   const processed = new Set<string>();
   const intervalMs = Math.max(5, Number(config.pollIntervalSeconds || 30)) * 1000;
