@@ -59,13 +59,18 @@ The ultimate media automation orchestrator. SchröDrive seamlessly integrates wi
 - Optional secret for Overseerr webhook Authorization
 
 ## Environment Variables
-- `PORT` (default `8080`)
+- `PORT` (default `8978`)
 - `PROWLARR_URL` (e.g. `http://localhost:9696`)
 - `PROWLARR_API_KEY`
 - `PROWLARR_CATEGORIES` (comma-separated category IDs, optional)
 - `TORBOX_API_KEY`
 - `TORBOX_BASE_URL` (default `https://api.torbox.app`)
 - `OVERSEERR_AUTH` (optional Authorization value to require on webhook)
+- `OVERSEERR_URL` (must include `/api/v1`)
+- `OVERSEERR_API_KEY`
+- `POLL_INTERVAL_S` (default 30s)
+- `RUN_WEBHOOK` (default true)
+- `RUN_POLLER` (default false)
 
 ## Install & Build
 ```bash
