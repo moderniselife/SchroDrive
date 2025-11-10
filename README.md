@@ -268,3 +268,34 @@ docker run --rm -p 8080:8080 \
 ## Notes
 - The webhook handler derives the search query from `subject` or `media.title/name` and `media.year/releaseYear`.
 - Prowlarr categories can be constrained via `PROWLARR_CATEGORIES`.
+
+## Troubleshooting
+### Webhook returns 503 "Service not configured"
+This means required environment variables are missing. Check your container logs and ensure:
+- `PROWLARR_URL` is set (e.g., `http://prowlarr:9696`)
+- `PROWLARR_API_KEY` is set to a valid Prowlarr API key
+- `TORBOX_API_KEY` is set to a valid TorBox API key
+
+For Docker Compose, edit your `.env` file and restart:
+```bash
+docker-compose down
+docker-compose up -d
+```
+
+### Webhook returns 504 "Request timed out while searching Prowlarr"
+The search request exceeded 45 seconds. This can happen if:
+- Prowlarr is slow or has many indexers
+- Network connectivity issues
+- Indexers are unresponsive
+
+Try:
+1. Test Prowlarr directly: `curl http://localhost:9696/api/v1/search?query=test&apikey=YOUR_KEY`
+2. Reduce `PROWLARR_CATEGORIES` to fewer indexers
+3. Check Prowlarr logs for indexer issues
+4. Retry the webhook request
+
+### Health check fails
+Ensure the service is running and accessible:
+```bash
+curl http://localhost:8080/health
+```

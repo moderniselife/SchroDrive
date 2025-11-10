@@ -13,7 +13,19 @@ export function startServer() {
 
   app.post("/webhook/overseerr", async (req, res) => {
     try {
-      requireEnv("prowlarrUrl", "prowlarrApiKey", "torboxApiKey");
+      // Check required environment variables early and return a helpful error
+      const missing = ["prowlarrUrl", "prowlarrApiKey", "torboxApiKey"].filter(
+        (key) => !String(config[key as keyof typeof config] || "").trim()
+      );
+      if (missing.length) {
+        return res.status(503).json({
+          ok: false,
+          error: "Service not configured. Set the following environment variables:",
+          missing,
+          documentation: "See README.md for configuration instructions.",
+        });
+      }
+
       if (config.overseerrAuth && req.get("authorization") !== config.overseerrAuth) {
         return res.status(401).json({ ok: false, error: "Unauthorized" });
       }
@@ -36,7 +48,11 @@ export function startServer() {
       const added = await addMagnetToTorbox(magnet, best?.title);
       res.json({ ok: true, query: built.query, categories: built.categories, chosen: best, torbox: added });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message || String(e) });
+      if (e?.code === 'ECONNABORTED' || e?.message?.includes('timeout')) {
+        res.status(504).json({ ok: false, error: "Request timed out while searching Prowlarr. Try again or check your indexer configuration." });
+      } else {
+        res.status(500).json({ ok: false, error: e?.message || String(e) });
+      }
     }
   });
 

@@ -46,7 +46,7 @@ export async function searchProwlarr(query: string, opts?: {
 
   const res = await axios.get<ProwlarrResult[]>(url.toString(), {
     params,
-    timeout: 20000,
+    timeout: 45000, // Increased from 20s to 45s
   });
 
   return Array.isArray(res.data) ? res.data : [];
