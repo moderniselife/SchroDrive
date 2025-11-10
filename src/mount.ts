@@ -58,6 +58,28 @@ function splitArgs(opts: string): string[] {
   return s.split(/\s+/);
 }
 
+function testRemote(remote: string, cfgPath: string): boolean {
+  try {
+    const res = spawnSync(
+      config.rclonePath,
+      ["lsd", remote, "--config", cfgPath, "--log-level=DEBUG"],
+      { encoding: "utf8" }
+    );
+    if (res.status === 0) return true;
+    console.error(
+      `[${new Date().toISOString()}][mount] rclone test for ${remote} failed`,
+      { status: res.status, stderr: res.stderr }
+    );
+    return false;
+  } catch (e: any) {
+    console.error(
+      `[${new Date().toISOString()}][mount] rclone test error for ${remote}`,
+      { err: e?.message }
+    );
+    return false;
+  }
+}
+
 export async function mountVirtualDrive(): Promise<void> {
   const cfg = buildRcloneConfigFile();
   const base = config.mountBase;
@@ -72,22 +94,22 @@ export async function mountVirtualDrive(): Promise<void> {
 
   for (const m of mounts) {
     ensureDir(m.path);
-    // Build args - use either individual options OR MOUNT_OPTIONS, not both
+    if (!testRemote(m.remote, cfg)) {
+      continue;
+    }
     const args = [
       "mount",
       m.remote,
       m.path,
       "--config",
       cfg,
-      "--allow-other",  // Allow other users to access the mount
-      "--allow-non-empty",  // Allow mounting over non-empty directory
+      "--allow-other",
+      "--allow-non-empty",
     ];
-    
-    // If custom MOUNT_OPTIONS are provided, use those; otherwise use individual settings
+
     if (config.mountOptions && config.mountOptions.trim()) {
       args.push(...splitArgs(config.mountOptions));
     } else {
-      // Use individual environment variables
       args.push(`--poll-interval=${config.mountPollInterval}`);
       args.push(`--dir-cache-time=${config.mountDirCacheTime}`);
       args.push(`--vfs-cache-mode=${config.mountVfsCacheMode}`);
@@ -97,34 +119,16 @@ export async function mountVirtualDrive(): Promise<void> {
       if ((config.mountVfsCacheMaxAge || "").trim()) args.push(`--vfs-cache-max-age=${config.mountVfsCacheMaxAge}`);
       if ((config.mountVfsCacheMaxSize || "").trim()) args.push(`--vfs-cache-max-size=${config.mountVfsCacheMaxSize}`);
     }
-    
-    // Don't daemonize so we can see errors
+
+    args.push("--daemon");
     console.log(`[${new Date().toISOString()}][mount] rclone ${args.join(" ")}`);
-    
-    // Test mount first (non-daemon) to see connection issues
-    const testArgs = [...args, "--verbose", "--log-level=DEBUG"];
-    const testProcess = spawn(config.rclonePath, testArgs, { stdio: "pipe", timeout: 10000 });
-    
-    let output = "";
-    let errorOutput = "";
-    testProcess.stdout?.on("data", (data) => output += data.toString());
-    testProcess.stderr?.on("data", (data) => errorOutput += data.toString());
-    
-    testProcess.on("close", (code) => {
+    const p = spawn(config.rclonePath, args, { stdio: "inherit" });
+    p.on("error", (e) => {
+      console.error(`[${new Date().toISOString()}][mount] failed`, { remote: m.remote, err: (e as any)?.message });
+    });
+    p.on("close", (code) => {
       if (code !== 0) {
-        console.error(`[${new Date().toISOString()}][mount] Test mount failed for ${m.remote}:`, errorOutput);
-      } else {
-        // If test passes, start daemon mount
-        const daemonArgs = [...args, "--daemon"];
-        const p = spawn(config.rclonePath, daemonArgs, { stdio: "inherit" });
-        p.on("error", (e) => {
-          console.error(`[${new Date().toISOString()}][mount] failed`, { remote: m.remote, err: (e as any)?.message });
-        });
-        p.on("close", (code) => {
-          if (code !== 0) {
-            console.error(`[${new Date().toISOString()}][mount] daemon exited with code ${code} for ${m.remote}`);
-          }
-        });
+        console.error(`[${new Date().toISOString()}][mount] daemon exited with code ${code} for ${m.remote}`);
       }
     });
   }
