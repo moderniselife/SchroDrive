@@ -35,10 +35,12 @@ The ultimate media automation orchestrator. SchröDrive seamlessly integrates wi
 - CLI for manual search/add
 - Docker image
 
-## 🚀 Coming Soon
-**Virtual Drive Mount Integration** - Seamlessly manage your downloaded content with automatic virtual drive mounting. SchröDrive will intelligently organize and mount completed downloads as virtual drives, providing instant access to your media library across your network. Experience transparent file management with zero manual intervention.
+- Virtual Drive mounts via rclone (WebDAV): TorBox and Real‑Debrid
+- Dead‑torrent scanner: searches Prowlarr and re‑adds to the opposite provider
+- Multi‑provider support: TorBox and Real‑Debrid
 
-**Multi-Provider Debrid Support** - Expand your download ecosystem beyond TorBox. SchröDrive will soon integrate with leading debrid services including Real-Debrid, All-Debrid, and Premiumize, giving you the flexibility to choose the optimal provider for your content needs. Switch between providers effortlessly or use multiple services in parallel for maximum availability and speed.
+## 🚀 Future
+- Additional providers (e.g., All‑Debrid, Premiumize)
 
 ## Modes
 - **Webhook mode (default)**
@@ -103,6 +105,25 @@ This will pull `ghcr.io/moderniselife/schrodrive` updates automatically and rest
 - `RUN_WEBHOOK` (default true)
 - `RUN_POLLER` (default false)
 
+Virtual Drive and multi‑provider configuration:
+
+- `PROVIDERS` (default `torbox,realdebrid`)
+- Real‑Debrid API: `RD_API_BASE` (default `https://api.real-debrid.com/rest/1.0`), `RD_ACCESS_TOKEN`
+- Real‑Debrid WebDAV: `RD_WEBDAV_URL` (default `https://dav.real-debrid.com`), `RD_WEBDAV_USERNAME`, `RD_WEBDAV_PASSWORD`
+- TorBox WebDAV: `TORBOX_WEBDAV_URL` (default `https://webdav.torbox.app`), `TORBOX_WEBDAV_USERNAME`, `TORBOX_WEBDAV_PASSWORD`
+- Mount settings: `MOUNT_BASE` (default `/Volumes/SchroDrive` on macOS or `/mnt/schrodrive` on Linux), `RCLONE_PATH` (default `rclone`)
+- Mount flags (fully configurable):
+  - `MOUNT_VFS_CACHE_MODE` (default `full`)
+  - `MOUNT_DIR_CACHE_TIME` (default `12h`)
+  - `MOUNT_POLL_INTERVAL` (default `0`)
+  - `MOUNT_BUFFER_SIZE` (default `64M`)
+  - `MOUNT_VFS_READ_CHUNK_SIZE` (optional)
+  - `MOUNT_VFS_READ_CHUNK_SIZE_LIMIT` (optional)
+  - `MOUNT_VFS_CACHE_MAX_AGE` (optional)
+  - `MOUNT_VFS_CACHE_MAX_SIZE` (optional)
+  - `MOUNT_OPTIONS` (optional extra flags appended)
+- Dead scanner: `DEAD_SCAN_INTERVAL_S` (default `600`), `DEAD_IDLE_MIN` (default `120`)
+
 ## Install & Build
 ```bash
 npm ci
@@ -119,7 +140,7 @@ node dist/index.js serve
 
 Health check:
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:8978/health
 ```
 
 ## Overseerr Webhook Setup
@@ -188,6 +209,20 @@ Search and add the best result automatically:
 node dist/index.js add --query "Ubuntu 24.04"
 ```
 
+Mount configured WebDAV providers via rclone (requires rclone + FUSE on host/container):
+```bash
+node dist/index.js mount
+```
+
+Scan for dead torrents and attempt re‑add via Prowlarr to the opposite provider:
+```bash
+# One‑shot
+node dist/index.js scan-dead
+
+# Watch mode (interval from DEAD_SCAN_INTERVAL_S)
+node dist/index.js scan-dead --watch
+```
+
 ## Docker Compose
 ### Prerequisites
 - Docker and Docker Compose installed
@@ -215,6 +250,36 @@ PROWLARR_CATEGORIES=5000,2000
 # TorBox Configuration
 TORBOX_API_KEY=tb_your_torbox_api_key_here
 TORBOX_BASE_URL=https://api.torbox.app
+
+# Providers (comma separated)
+PROVIDERS=torbox,realdebrid
+
+# Real‑Debrid API (optional but required for RD re‑add and scanner)
+# RD_API_BASE=https://api.real-debrid.com/rest/1.0
+# RD_ACCESS_TOKEN=your_rd_access_token
+
+# Real‑Debrid WebDAV (for mounting)
+# RD_WEBDAV_URL=https://dav.real-debrid.com
+# RD_WEBDAV_USERNAME=your_rd_username
+# RD_WEBDAV_PASSWORD=your_rd_webdav_password
+
+# TorBox WebDAV (for mounting)
+# TORBOX_WEBDAV_URL=https://webdav.torbox.app
+# TORBOX_WEBDAV_USERNAME=you@example.com
+# TORBOX_WEBDAV_PASSWORD=your_torbox_password
+
+# Mount settings (rclone must be available in container or on host)
+# MOUNT_BASE=/mnt/schrodrive
+# RCLONE_PATH=rclone
+# MOUNT_VFS_CACHE_MODE=full
+# MOUNT_DIR_CACHE_TIME=12h
+# MOUNT_POLL_INTERVAL=0
+# MOUNT_BUFFER_SIZE=64M
+# MOUNT_VFS_READ_CHUNK_SIZE=
+# MOUNT_VFS_READ_CHUNK_SIZE_LIMIT=
+# MOUNT_VFS_CACHE_MAX_AGE=
+# MOUNT_VFS_CACHE_MAX_SIZE=
+# MOUNT_OPTIONS=--no-modtime
 
 # Overseerr Webhook (optional)
 OVERSEERR_AUTH=your_secret_auth_header_value
@@ -302,6 +367,30 @@ curl -X POST http://localhost:8978/webhook/overseerr \
 - `prowlarr` on port 9696 (LinuxServer image)
 - Shared `media` network
 - Persistent `prowlarr_config` volume
+
+### Optional: Mounting WebDAV inside Docker
+If you plan to run `node dist/index.js mount` inside the container, you need rclone and FUSE available in the container and permissions to use `/dev/fuse`.
+
+You can either:
+
+- Build a custom image that installs rclone and fuse3, or
+- Install rclone and fuse3 at runtime (not recommended for production), and
+- Add the following to your compose service (security sensitive):
+
+```yaml
+    devices:
+      - "/dev/fuse:/dev/fuse"
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    # privileged: true  # last resort; prefer fine-grained caps above
+    # Ensure your mount base exists and is bind-mounted as needed
+    # volumes:
+    #   - /mnt/schrodrive:/mnt/schrodrive:rshared
+```
+
+Note: In many deployments it’s simpler to run the mount on the host and only use the app for scanning/automation.
 
 ### Stop and clean up
 ```bash

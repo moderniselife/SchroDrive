@@ -2,6 +2,8 @@ import { Command } from "commander";
 import { startServer } from "./server";
 import { searchProwlarr, pickBestResult, getMagnet } from "./prowlarr";
 import { addMagnetToTorbox } from "./torbox";
+import { mountVirtualDrive } from "./mount";
+import { scanDeadOnce, startDeadScanner } from "./deadScanner";
 
 const program = new Command();
 program
@@ -14,6 +16,13 @@ program
   .description("Start the webhook HTTP server")
   .action(() => {
     startServer();
+  });
+
+program
+  .command("mount")
+  .description("Mount configured WebDAV providers (TorBox/Real-Debrid) via rclone")
+  .action(async () => {
+    await mountVirtualDrive();
   });
 
 program
@@ -56,6 +65,19 @@ program
 
     const added = await addMagnetToTorbox(magnet, chosen?.title);
     console.log(JSON.stringify({ ok: true, chosen, torbox: added }, null, 2));
+  });
+
+program
+  .command("scan-dead")
+  .description("Scan providers for dead torrents and attempt re-add via Prowlarr to the opposite provider")
+  .option("-w, --watch", "Run continuously on an interval")
+  .action(async (opts: any) => {
+    if (opts.watch) {
+      startDeadScanner();
+    } else {
+      const res = await scanDeadOnce();
+      console.log(JSON.stringify(res, null, 2));
+    }
   });
 
 program.parseAsync(process.argv);

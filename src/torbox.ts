@@ -78,3 +78,28 @@ export async function addMagnetToTorbox(magnet: string, name?: string) {
   console.log(`[${new Date().toISOString()}][torbox] createTorrent done`, { ms: Date.now() - started });
   return res;
 }
+
+export async function listTorboxTorrents(): Promise<any[]> {
+  const c = getClient();
+  try {
+    const res = await c.torrents.getTorrentList({ limit: 100 });
+    const list = Array.isArray(res?.data) ? res.data : [res?.data].filter(Boolean);
+    return list as any[];
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][torbox] list torrents failed`, {
+      error: err?.message || String(err),
+      status: err?.response?.status,
+      statusText: err?.response?.statusText,
+    });
+    return [];
+  }
+}
+
+export function isTorboxTorrentDead(t: any): boolean {
+  const status = String(t?.status || t?.state || "").toLowerCase();
+  if (typeof t?.progress === "number" && t.progress >= 100) return false;
+  if (status.includes("failed")) return true;
+  if (status.includes("stalled")) return true;
+  if (status.includes("inactive")) return true;
+  return false;
+}

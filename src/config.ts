@@ -23,6 +23,35 @@ export const config = {
   autoUpdateStrategy: (process.env.AUTO_UPDATE_STRATEGY || "exit") as "exit" | "git",
   repoOwner: process.env.REPO_OWNER || "moderniselife",
   repoName: process.env.REPO_NAME || "SchroDrive",
+  // Providers
+  providers: (process.env.PROVIDERS || "torbox,realdebrid").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
+  // Real-Debrid API
+  rdApiBase: process.env.RD_API_BASE || "https://api.real-debrid.com/rest/1.0",
+  rdAccessToken: process.env.RD_ACCESS_TOKEN || "",
+  // Real-Debrid WebDAV
+  rdWebdavUrl: process.env.RD_WEBDAV_URL || "https://dav.real-debrid.com",
+  rdWebdavUsername: process.env.RD_WEBDAV_USERNAME || "",
+  rdWebdavPassword: process.env.RD_WEBDAV_PASSWORD || "",
+  // TorBox WebDAV
+  torboxWebdavUrl: process.env.TORBOX_WEBDAV_URL || "https://webdav.torbox.app",
+  torboxWebdavUsername: process.env.TORBOX_WEBDAV_USERNAME || "",
+  torboxWebdavPassword: process.env.TORBOX_WEBDAV_PASSWORD || "",
+  // Mount settings
+  mountBase: process.env.MOUNT_BASE || (process.platform === 'darwin' ? "/Volumes/SchroDrive" : "/mnt/schrodrive"),
+  rclonePath: process.env.RCLONE_PATH || "rclone",
+  mountOptions: process.env.MOUNT_OPTIONS || "--vfs-cache-mode=full --dir-cache-time=12h --poll-interval=0 --buffer-size=64M",
+  // Mount cache flags (individually configurable)
+  mountDirCacheTime: process.env.MOUNT_DIR_CACHE_TIME || "12h",
+  mountVfsCacheMode: process.env.MOUNT_VFS_CACHE_MODE || "full",
+  mountPollInterval: process.env.MOUNT_POLL_INTERVAL || "0",
+  mountBufferSize: process.env.MOUNT_BUFFER_SIZE || "64M",
+  mountVfsReadChunkSize: process.env.MOUNT_VFS_READ_CHUNK_SIZE || "",
+  mountVfsReadChunkSizeLimit: process.env.MOUNT_VFS_READ_CHUNK_SIZE_LIMIT || "",
+  mountVfsCacheMaxAge: process.env.MOUNT_VFS_CACHE_MAX_AGE || "",
+  mountVfsCacheMaxSize: process.env.MOUNT_VFS_CACHE_MAX_SIZE || "",
+  // Dead scanner
+  deadScanIntervalSeconds: Number(process.env.DEAD_SCAN_INTERVAL_S || 600),
+  deadIdleMinutes: Number(process.env.DEAD_IDLE_MIN || 120),
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {
@@ -32,4 +61,8 @@ export function requireEnv(...keys: (keyof typeof config)[]) {
             `Missing required configuration: ${missing.join(", ")}. Set environment variables accordingly.`
         );
     }
+}
+
+export function providersSet(): Set<string> {
+  return new Set((config.providers || []).map((s) => s.toLowerCase()));
 }

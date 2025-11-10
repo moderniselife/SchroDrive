@@ -16,6 +16,7 @@ RUN npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apk add --no-cache rclone fuse3 curl ca-certificates && update-ca-certificates
 COPY package*.json ./
 RUN npm install --omit=dev
 COPY --from=build /app/dist ./dist

@@ -12,6 +12,33 @@ services:
       - PROWLARR_CATEGORIES=${PROWLARR_CATEGORIES:-}
       - TORBOX_API_KEY=${TORBOX_API_KEY}
       - TORBOX_BASE_URL=${TORBOX_BASE_URL:-https://api.torbox.app}
+      # Providers and Virtual Drive (optional)
+      - PROVIDERS=${PROVIDERS:-torbox,realdebrid}
+      # Real‑Debrid API + WebDAV (optional)
+      - RD_API_BASE=${RD_API_BASE:-https://api.real-debrid.com/rest/1.0}
+      - RD_ACCESS_TOKEN=${RD_ACCESS_TOKEN:-}
+      - RD_WEBDAV_URL=${RD_WEBDAV_URL:-https://dav.real-debrid.com}
+      - RD_WEBDAV_USERNAME=${RD_WEBDAV_USERNAME:-}
+      - RD_WEBDAV_PASSWORD=${RD_WEBDAV_PASSWORD:-}
+      # TorBox WebDAV (optional)
+      - TORBOX_WEBDAV_URL=${TORBOX_WEBDAV_URL:-https://webdav.torbox.app}
+      - TORBOX_WEBDAV_USERNAME=${TORBOX_WEBDAV_USERNAME:-}
+      - TORBOX_WEBDAV_PASSWORD=${TORBOX_WEBDAV_PASSWORD:-}
+      # Mount settings (rclone must be available in container/host)
+      - MOUNT_BASE=${MOUNT_BASE:-/mnt/schrodrive}
+      - RCLONE_PATH=${RCLONE_PATH:-rclone}
+      - MOUNT_VFS_CACHE_MODE=${MOUNT_VFS_CACHE_MODE:-full}
+      - MOUNT_DIR_CACHE_TIME=${MOUNT_DIR_CACHE_TIME:-12h}
+      - MOUNT_POLL_INTERVAL=${MOUNT_POLL_INTERVAL:-0}
+      - MOUNT_BUFFER_SIZE=${MOUNT_BUFFER_SIZE:-64M}
+      - MOUNT_VFS_READ_CHUNK_SIZE=${MOUNT_VFS_READ_CHUNK_SIZE:-}
+      - MOUNT_VFS_READ_CHUNK_SIZE_LIMIT=${MOUNT_VFS_READ_CHUNK_SIZE_LIMIT:-}
+      - MOUNT_VFS_CACHE_MAX_AGE=${MOUNT_VFS_CACHE_MAX_AGE:-}
+      - MOUNT_VFS_CACHE_MAX_SIZE=${MOUNT_VFS_CACHE_MAX_SIZE:-}
+      - MOUNT_OPTIONS=${MOUNT_OPTIONS:-}
+      # Dead scanner
+      - DEAD_SCAN_INTERVAL_S=${DEAD_SCAN_INTERVAL_S:-600}
+      - DEAD_IDLE_MIN=${DEAD_IDLE_MIN:-120}
       - OVERSEERR_AUTH=${OVERSEERR_AUTH:-}
       # Overseerr API poller configuration and toggles
       - OVERSEERR_URL=${OVERSEERR_URL:-}
