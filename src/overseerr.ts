@@ -1,7 +1,8 @@
 import axios from "axios";
 import { config, requireEnv } from "./config";
 import { searchProwlarr, pickBestResult, getMagnet } from "./prowlarr";
-import { addMagnetToTorbox } from "./torbox";
+import { addMagnetToTorbox, checkExistingTorrents } from "./torbox";
+import { testProwlarrConnection } from "./prowlarr";
 
 interface MediaLike {
   title?: string;
@@ -106,6 +107,15 @@ export function startOverseerrPoller() {
   const intervalMs = Math.max(5, Number(config.pollIntervalSeconds || 30)) * 1000;
   console.log(`[${new Date().toISOString()}][poller] starting`, { intervalSeconds: Math.round(intervalMs / 1000) });
 
+  // Test Prowlarr connection on startup
+  testProwlarrConnection().then(connected => {
+    if (!connected) {
+      console.warn(`[${new Date().toISOString()}][poller] WARNING: Prowlarr connection test failed. Searches may timeout.`);
+    }
+  }).catch(err => {
+    console.error(`[${new Date().toISOString()}][poller] Prowlarr connection test error`, err?.message || String(err));
+  });
+
   const runOnce = async () => {
     try {
       console.log(`[${new Date().toISOString()}][poller] tick`);
@@ -173,9 +183,19 @@ export function startOverseerrPoller() {
             processed.add(id);
             continue;
           }
+          
+          // Check for existing torrents before adding
+          const torrentTitle = (best as any)?.title || built.query;
+          const hasExisting = await checkExistingTorrents(torrentTitle);
+          if (hasExisting) {
+            console.log(`[${new Date().toISOString()}][poller] skipping duplicate torrent`, { id, title: torrentTitle });
+            processed.add(id);
+            continue;
+          }
+          
           const teaser = magnet.slice(0, 80) + '...';
-          console.log(`[${new Date().toISOString()}][poller->torbox] adding magnet`, { id, title: (best as any)?.title, teaser });
-          await addMagnetToTorbox(magnet, (best as any)?.title);
+          console.log(`[${new Date().toISOString()}][poller->torbox] adding magnet`, { id, title: torrentTitle, teaser });
+          await addMagnetToTorbox(magnet, torrentTitle);
           console.log(`[${new Date().toISOString()}][poller->torbox] added`, { id });
           processed.add(id);
           if (processed.size > 1000) {
@@ -186,7 +206,8 @@ export function startOverseerrPoller() {
             }
           }
         } catch (err: any) {
-          console.error(`[${new Date().toISOString()}][poller] processing error`, err?.message || String(err));
+          console.error(`[${new Date().toISOString()}][poller] processing error`, { id, query: built.query, error: err?.message || String(err), stack: err?.stack });
+          // Don't add to processed set on error so it will be retried
         }
       }
     } catch (e: any) {
