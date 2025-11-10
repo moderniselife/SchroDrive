@@ -337,7 +337,7 @@ docker run --rm -p 8978:8978 \
 ## Notes
 - The webhook handler derives the search query from `subject` or `media.title/name` and `media.year/releaseYear`.
 - Prowlarr categories can be constrained via `PROWLARR_CATEGORIES`.
-- A git pre-push hook automatically increments the package version when pushing to main/master branches to prevent auto-update conflicts.
+- A git pre-commit hook automatically increments the package version when committing to main/master branches to prevent auto-update conflicts.
 
 ## Troubleshooting
 ### Webhook returns 503 "Service not configured"

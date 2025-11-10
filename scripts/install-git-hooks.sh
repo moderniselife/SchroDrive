@@ -6,20 +6,20 @@ echo "Installing SchroDrive git hooks..."
 # Make sure the .git/hooks directory exists
 mkdir -p .git/hooks
 
-# Copy the pre-push hook if it exists in the scripts directory
-if [ -f "pre-push" ]; then
-  cp pre-push .git/hooks/
-  echo "Installed pre-push hook from scripts directory"
-elif [ -f ".git/hooks/pre-push" ]; then
-  echo "Pre-push hook already exists"
+# Copy the pre-commit hook if it exists in the scripts directory
+if [ -f "pre-commit" ]; then
+  cp pre-commit .git/hooks/
+  echo "Installed pre-commit hook from scripts directory"
+elif [ -f ".git/hooks/pre-commit" ]; then
+  echo "Pre-commit hook already exists"
 else
-  echo "Warning: pre-push hook not found"
+  echo "Warning: pre-commit hook not found"
 fi
 
 # Make the hook executable
-chmod +x .git/hooks/pre-push
+chmod +x .git/hooks/pre-commit
 
 echo "Git hooks installation complete!"
-echo "The pre-push hook will automatically increment the version when pushing to main/master."
+echo "The pre-commit hook will automatically increment the version when committing to main/master."
 echo "It uses npm/node if available, otherwise falls back to manual version parsing."
-echo "For single commits, it amends the current commit to avoid requiring a second push."
+echo "This ensures the version bump is part of the original commit, eliminating push conflicts."
