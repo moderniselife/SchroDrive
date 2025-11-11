@@ -10,6 +10,7 @@ const config_1 = require("./config");
 const prowlarr_1 = require("./prowlarr");
 const torbox_1 = require("./torbox");
 const overseerr_1 = require("./overseerr");
+const autoUpdate_1 = require("./autoUpdate");
 function startServer() {
     const app = (0, express_1.default)();
     app.use(express_1.default.json({ limit: "1mb" }));
@@ -19,9 +20,11 @@ function startServer() {
     if (config_1.config.runWebhook) {
         app.post("/webhook/overseerr", async (req, res) => {
             try {
+                console.log(`[${new Date().toISOString()}][webhook] hit /webhook/overseerr`);
                 // Check required environment variables early and return a helpful error
                 const missing = ["prowlarrUrl", "prowlarrApiKey", "torboxApiKey"].filter((key) => !String(config_1.config[key] || "").trim());
                 if (missing.length) {
+                    console.warn(`[${new Date().toISOString()}][webhook] missing env`, { missing });
                     return res.status(503).json({
                         ok: false,
                         error: "Service not configured. Set the following environment variables:",
@@ -30,37 +33,50 @@ function startServer() {
                     });
                 }
                 if (config_1.config.overseerrAuth && req.get("authorization") !== config_1.config.overseerrAuth) {
+                    console.warn(`[${new Date().toISOString()}][webhook] unauthorized request (bad auth header)`);
                     return res.status(401).json({ ok: false, error: "Unauthorized" });
                 }
                 const payload = req.body || {};
                 const built = buildQueryFromPayload(payload);
                 if (!built || !built.query) {
+                    console.warn(`[${new Date().toISOString()}][webhook] could not derive query from payload`, { subject: payload?.subject, media: payload?.media });
                     return res.status(400).json({ ok: false, error: "No query could be derived from payload." });
                 }
+                console.log(`[${new Date().toISOString()}][webhook] built query`, { query: built.query, categories: built.categories });
                 // Respond immediately to avoid Overseerr's 20s timeout; process in background
                 res.status(202).json({ ok: true, accepted: true, query: built.query, categories: built.categories });
+                console.log(`[${new Date().toISOString()}][webhook] responded 202, processing async...`);
                 (async () => {
                     try {
+                        console.log(`[${new Date().toISOString()}][webhook->prowlarr] searching`, { query: built.query, categories: built.categories });
+                        const started = Date.now();
                         const results = await (0, prowlarr_1.searchProwlarr)(built.query, { categories: built.categories });
+                        console.log(`[${new Date().toISOString()}][webhook->prowlarr] results`, { count: results.length, ms: Date.now() - started });
                         const best = (0, prowlarr_1.pickBestResult)(results);
+                        console.log(`[${new Date().toISOString()}][webhook->prowlarr] chosen`, { title: best?.title, seeders: best?.seeders, size: best?.size });
                         const magnet = (0, prowlarr_1.getMagnet)(best);
                         if (!magnet) {
-                            console.warn("No magnet found in search results.", { query: built.query, best });
+                            console.warn(`[${new Date().toISOString()}][webhook] no magnet found in search results`, { query: built.query });
                             return;
                         }
+                        const teaser = typeof magnet === 'string' ? magnet.slice(0, 80) + '...' : undefined;
+                        console.log(`[${new Date().toISOString()}][webhook->torbox] adding magnet`, { title: best?.title, teaser });
                         await (0, torbox_1.addMagnetToTorbox)(magnet, best?.title);
+                        console.log(`[${new Date().toISOString()}][webhook->torbox] added`);
                     }
                     catch (err) {
-                        console.error("Async webhook processing error:", err?.message || String(err));
+                        console.error(`[${new Date().toISOString()}][webhook] async processing error`, err?.message || String(err));
                     }
                 })();
             }
             catch (e) {
                 if (!res.headersSent) {
                     if (e?.code === 'ECONNABORTED' || e?.message?.includes('timeout')) {
+                        console.error(`[${new Date().toISOString()}][webhook] timeout while searching prowlarr`);
                         res.status(504).json({ ok: false, error: "Request timed out while searching Prowlarr. Try again or check your indexer configuration." });
                     }
                     else {
+                        console.error(`[${new Date().toISOString()}][webhook] unexpected error`, e?.message || String(e));
                         res.status(500).json({ ok: false, error: e?.message || String(e) });
                     }
                 }
@@ -74,6 +90,8 @@ function startServer() {
     if (config_1.config.runPoller) {
         (0, overseerr_1.startOverseerrPoller)();
     }
+    // Optional: start auto-updater
+    (0, autoUpdate_1.startAutoUpdater)();
 }
 function buildQueryFromPayload(payload) {
     const subject = payload?.subject;

@@ -4,6 +4,10 @@ const commander_1 = require("commander");
 const server_1 = require("./server");
 const prowlarr_1 = require("./prowlarr");
 const torbox_1 = require("./torbox");
+const mount_1 = require("./mount");
+const deadScanner_1 = require("./deadScanner");
+const organizer_1 = require("./organizer");
+const config_1 = require("./config");
 const program = new commander_1.Command();
 program
     .name("schrodrive")
@@ -12,8 +16,43 @@ program
 program
     .command("serve")
     .description("Start the webhook HTTP server")
-    .action(() => {
+    .action(async () => {
+    // Start additional services if enabled via environment variables
+    const promises = [];
+    if (config_1.config.runMount) {
+        console.log("[serve] Starting virtual drive mount (RUN_MOUNT=true)");
+        promises.push((0, mount_1.mountVirtualDrive)());
+    }
+    if (config_1.config.runDeadScannerWatch) {
+        console.log("[serve] Starting dead scanner watch (RUN_DEAD_SCANNER_WATCH=true)");
+        promises.push(Promise.resolve((0, deadScanner_1.startDeadScanner)()));
+    }
+    else if (config_1.config.runDeadScanner) {
+        console.log("[serve] Running dead scanner once (RUN_DEAD_SCANNER=true)");
+        promises.push((0, deadScanner_1.scanDeadOnce)().then(() => { }));
+    }
+    if (config_1.config.runOrganizerWatch) {
+        console.log("[serve] Starting organizer watch (RUN_ORGANIZER_WATCH=true)");
+        promises.push(Promise.resolve((0, organizer_1.startOrganizerWatch)()));
+    }
+    // Start the main server
     (0, server_1.startServer)();
+    // If additional services are running, handle their errors
+    if (promises.length > 0) {
+        Promise.allSettled(promises).then(results => {
+            results.forEach((result, index) => {
+                if (result.status === 'rejected') {
+                    console.error(`[serve] Additional service ${index} failed:`, result.reason);
+                }
+            });
+        });
+    }
+});
+program
+    .command("mount")
+    .description("Mount configured WebDAV providers (TorBox/Real-Debrid) via rclone")
+    .action(async () => {
+    await (0, mount_1.mountVirtualDrive)();
 });
 program
     .command("search")
@@ -50,5 +89,31 @@ program
         throw new Error("No magnet found");
     const added = await (0, torbox_1.addMagnetToTorbox)(magnet, chosen?.title);
     console.log(JSON.stringify({ ok: true, chosen, torbox: added }, null, 2));
+});
+program
+    .command("scan-dead")
+    .description("Scan providers for dead torrents and attempt re-add via Prowlarr to the opposite provider")
+    .option("-w, --watch", "Run continuously on an interval")
+    .action(async (opts) => {
+    if (opts.watch) {
+        (0, deadScanner_1.startDeadScanner)();
+    }
+    else {
+        const res = await (0, deadScanner_1.scanDeadOnce)();
+        console.log(JSON.stringify(res, null, 2));
+    }
+});
+program
+    .command("organize")
+    .description("Classify media and create a symlinked organized view under ORGANIZED_BASE")
+    .option("-w, --watch", "Watch periodically and keep the organized view updated")
+    .option("-n, --dry-run", "Don't create links, just log what would happen")
+    .action(async (opts) => {
+    if (opts.watch) {
+        (0, organizer_1.startOrganizerWatch)();
+    }
+    else {
+        await (0, organizer_1.organizeOnce)({ dryRun: !!opts.dryRun });
+    }
 });
 program.parseAsync(process.argv);

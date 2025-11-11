@@ -99,3 +99,14 @@ Updated: 2025-06-20 20:23 UTC - Added dev version tag to develop workflow
 - Added a step to extract package version from package.json in the develop build workflow
 - Added a dev version tag `develop:<version>-dev` alongside existing tags in build-push-develop.yml
 - This ensures the develop image is tagged with both `develop`, `develop-<sha>`, and `develop:0.1.25-dev` style tags
+
+Updated: 2025-11-11 10:48:00 +11:00
+
+- Added Organizer feature to classify media and expose a symlinked organized view under `ORGANIZED_BASE` (default `${MOUNT_BASE}/organized`).
+- Organizer supports TMDB (if `TMDB_API_KEY` is set) and no-key fallback via TVMaze (TV) and iTunes Search (Movies).
+- Folder layout:
+  - Movies → `organized/Movies/Title (Year)/Title (Year).ext`
+  - TV → `organized/TV/Show Name (Year)/Season 01/Show Name S01E02.ext`
+  - Anime/absolute episodes → `organized/TV/Show Name/Show Name - 0637.ext`
+- New envs: `TMDB_API_KEY`, `ORGANIZED_BASE`, `ORGANIZER_MODE` (symlink|copy|move), `RUN_ORGANIZER_WATCH`, `ORG_SCAN_INTERVAL_S`.
+- New CLI: `schrodrive organize [--watch] [--dry-run]` and integrated watch into `serve` via `RUN_ORGANIZER_WATCH=true`.

@@ -4,6 +4,7 @@ import { searchProwlarr, pickBestResult, getMagnet } from "./prowlarr";
 import { addMagnetToTorbox } from "./torbox";
 import { mountVirtualDrive } from "./mount";
 import { scanDeadOnce, startDeadScanner } from "./deadScanner";
+import { organizeOnce, startOrganizerWatch } from "./organizer";
 import { config } from "./config";
 
 const program = new Command();
@@ -30,6 +31,11 @@ program
     } else if (config.runDeadScanner) {
       console.log("[serve] Running dead scanner once (RUN_DEAD_SCANNER=true)");
       promises.push(scanDeadOnce().then(() => {}));
+    }
+
+    if (config.runOrganizerWatch) {
+      console.log("[serve] Starting organizer watch (RUN_ORGANIZER_WATCH=true)");
+      promises.push(Promise.resolve(startOrganizerWatch()));
     }
     
     // Start the main server
@@ -106,6 +112,19 @@ program
     } else {
       const res = await scanDeadOnce();
       console.log(JSON.stringify(res, null, 2));
+    }
+  });
+
+program
+  .command("organize")
+  .description("Classify media and create a symlinked organized view under ORGANIZED_BASE")
+  .option("-w, --watch", "Watch periodically and keep the organized view updated")
+  .option("-n, --dry-run", "Don't create links, just log what would happen")
+  .action(async (opts: any) => {
+    if (opts.watch) {
+      startOrganizerWatch();
+    } else {
+      await organizeOnce({ dryRun: !!opts.dryRun });
     }
   });
 

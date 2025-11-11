@@ -1,3 +1,5 @@
+const defaultMountBase = (process.env.MOUNT_BASE || (process.platform === 'darwin' ? "/Volumes/SchroDrive" : "/mnt/schrodrive"));
+
 export const config = {
   port: Number(process.env.PORT || 8978),
   prowlarrUrl: process.env.PROWLARR_URL || "",
@@ -37,7 +39,7 @@ export const config = {
   torboxWebdavUsername: process.env.TORBOX_WEBDAV_USERNAME || "",
   torboxWebdavPassword: process.env.TORBOX_WEBDAV_PASSWORD || "",
   // Mount settings
-  mountBase: process.env.MOUNT_BASE || (process.platform === 'darwin' ? "/Volumes/SchroDrive" : "/mnt/schrodrive"),
+  mountBase: defaultMountBase,
   rclonePath: process.env.RCLONE_PATH || "rclone",
   mountOptions: process.env.MOUNT_OPTIONS || "--vfs-cache-mode=full --dir-cache-time=12h --poll-interval=0 --buffer-size=64M",
   // Mount cache flags (individually configurable)
@@ -56,6 +58,12 @@ export const config = {
   runMount: String(process.env.RUN_MOUNT ?? "false").toLowerCase() === "true",
   runDeadScanner: String(process.env.RUN_DEAD_SCANNER ?? "false").toLowerCase() === "true",
   runDeadScannerWatch: String(process.env.RUN_DEAD_SCANNER_WATCH ?? "false").toLowerCase() === "true",
+  // Organizer (symlinked view)
+  tmdbApiKey: process.env.TMDB_API_KEY || "",
+  organizedBase: process.env.ORGANIZED_BASE || `${defaultMountBase}/organized`,
+  organizerMode: (process.env.ORGANIZER_MODE || "symlink") as "symlink" | "copy" | "move",
+  runOrganizerWatch: String(process.env.RUN_ORGANIZER_WATCH ?? "false").toLowerCase() === "true",
+  orgScanIntervalSeconds: Number(process.env.ORG_SCAN_INTERVAL_S || 300),
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {
