@@ -23,7 +23,8 @@ function cleanupMountPath(p: string) {
   } catch {}
 }
 
-function ensureDir(p: string) {
+function ensureDir(p: string, opts?: { cleanupOnStale?: boolean }) {
+  const cleanupOnStale = opts?.cleanupOnStale ?? true;
   try {
     if (!fs.existsSync(p)) {
       fs.mkdirSync(p, { recursive: true });
@@ -32,11 +33,9 @@ function ensureDir(p: string) {
       fs.readdirSync(p);
     }
   } catch (e: any) {
-    if (isStaleMountErr(e)) {
+    if (cleanupOnStale && isStaleMountErr(e)) {
       console.warn(`[${new Date().toISOString()}][mount] detected stale/busy mount at ${p}, attempting cleanup`);
       cleanupMountPath(p);
-      const parent = path.dirname(p);
-      if (parent && parent !== p) cleanupMountPath(parent);
       // Retry creation/access
       try {
         if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
@@ -100,6 +99,25 @@ function splitArgs(opts: string): string[] {
   return s.split(/\s+/);
 }
 
+function hasUserLogFlags(opts: string | undefined): boolean {
+  const tokens = splitArgs(opts || "");
+  return tokens.some((t) => t === "-v" || t === "-vv" || t === "-vvv" || t.startsWith("--log-level"));
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function canAllowOther(): boolean {
+  try {
+    const s = fs.readFileSync("/etc/fuse.conf", "utf8");
+    // consider uncommented presence of user_allow_other sufficient
+    return /(^|\n)\s*user_allow_other\s*($|#)/.test(s);
+  } catch {
+    return false;
+  }
+}
+
 function testRemote(remote: string, cfgPath: string): boolean {
   try {
     const res = spawnSync(
@@ -125,7 +143,10 @@ function testRemote(remote: string, cfgPath: string): boolean {
 export async function mountVirtualDrive(): Promise<void> {
   const cfg = buildRcloneConfigFile();
   const base = config.mountBase;
-  ensureDir(base);
+  // Never attempt to unmount/cleanup the base, it is a bind from host
+  ensureDir(base, { cleanupOnStale: false });
+  const tmpDir = path.join(os.tmpdir(), "schrodrive");
+  ensureDir(tmpDir, { cleanupOnStale: false });
 
   const mounts: Array<{ remote: string; path: string }> = [];
   const ps = providersSet();
@@ -135,7 +156,8 @@ export async function mountVirtualDrive(): Promise<void> {
   if (!mounts.length) throw new Error("Nothing to mount. Check PROVIDERS and credentials.");
 
   for (const m of mounts) {
-    ensureDir(m.path);
+    // Safe to cleanup the leaf mount path only
+    ensureDir(m.path, { cleanupOnStale: true });
     if (!testRemote(m.remote, cfg)) {
       continue;
     }
@@ -145,9 +167,14 @@ export async function mountVirtualDrive(): Promise<void> {
       m.path,
       "--config",
       cfg,
-      "--allow-other",
-      "--allow-non-empty",
     ];
+
+    if (canAllowOther()) {
+      args.push("--allow-other");
+    } else {
+      console.log(`[${new Date().toISOString()}][mount] skipping --allow-other (no user_allow_other in /etc/fuse.conf)`);
+    }
+    args.push("--allow-non-empty");
 
     if (config.mountOptions && config.mountOptions.trim()) {
       args.push(...splitArgs(config.mountOptions));
@@ -162,6 +189,13 @@ export async function mountVirtualDrive(): Promise<void> {
       if ((config.mountVfsCacheMaxSize || "").trim()) args.push(`--vfs-cache-max-size=${config.mountVfsCacheMaxSize}`);
     }
 
+    // Ensure we capture rclone logs without conflicting with user-provided verbosity
+    const logFile = path.join(tmpDir, `rclone-${m.remote.replace(":", "")}.log`);
+    if (!hasUserLogFlags(config.mountOptions)) {
+      args.push(`--log-level=INFO`);
+    }
+    args.push(`--log-file=${logFile}`);
+
     args.push("--daemon");
     console.log(`[${new Date().toISOString()}][mount] rclone ${args.join(" ")}`);
     const p = spawn(config.rclonePath, args, { stdio: "inherit" });
@@ -173,6 +207,16 @@ export async function mountVirtualDrive(): Promise<void> {
         console.error(`[${new Date().toISOString()}][mount] daemon exited with code ${code} for ${m.remote}`);
       }
     });
+
+    // Quick post-mount verification (best-effort)
+    try {
+      await sleep(1500);
+      const items = fs.readdirSync(m.path);
+      console.log(`[${new Date().toISOString()}][mount] verify ${m.remote} at ${m.path} -> entries=${items.length}`);
+    } catch (e: any) {
+      console.warn(`[${new Date().toISOString()}][mount] verify error for ${m.remote} at ${m.path}`, { err: e?.message });
+      console.warn(`[${new Date().toISOString()}][mount] see rclone log: ${logFile}`);
+    }
   }
 
   console.log(`[${new Date().toISOString()}][mount] mounts initiated at ${base}`);

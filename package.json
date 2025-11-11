@@ -1,6 +1,6 @@
 {
   "name": "schrodrive",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "private": true,
   "description": "CLI/Webhook service to listen for Overseerr requests, search Prowlarr, and add torrents to TorBox",
   "main": "dist/index.js",
@@ -14,7 +14,7 @@
     "serve": "node dist/index.js serve"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "axios": "^1.13.2",
