@@ -17,6 +17,9 @@ const VIDEO_EXTS = new Set([
   ".webm",
   ".mpg",
   ".mpeg",
+  ".m2ts",
+  ".ts",
+  ".iso",
 ]);
 
 function isVideo(file: string): boolean {
@@ -33,6 +36,40 @@ function sanitize(input: string): string {
     .trim();
   s = s.replace(/[\\/:*?"<>|]/g, "-");
   return s;
+}
+
+function isLikelyTvContext(fullPath: string): boolean {
+  const segs: string[] = [];
+  let cur = path.dirname(fullPath);
+  for (let i = 0; i < 3; i++) {
+    const b = path.basename(cur);
+    if (!b || b === "/" || b === ".") break;
+    segs.push(b);
+    const next = path.dirname(cur);
+    if (next === cur) break;
+    cur = next;
+  }
+  return segs.some((s) => /\bseason\s*\d+\b/i.test(s) || /\bs\d{1,2}\b/i.test(s) || /\bepisode\b/i.test(s));
+}
+
+// Prefer a meaningful directory name (release folder) as a movie title candidate
+function pickCandidateTitleFromPath(fullPath: string): string | undefined {
+  const stop = new Set(["links"]);
+  const bad = [/^_?more_\d+$/i, /^\d+$/, /^-+$/];
+  let cur = path.dirname(fullPath);
+  for (let i = 0; i < 5; i++) {
+    const name = path.basename(cur);
+    if (!name || name === "/" || name === ".") break;
+    const lower = name.toLowerCase();
+    const isBad = bad.some((r) => r.test(name));
+    if (!stop.has(lower) && !isBad && name.length > 2) {
+      return guessTitleFromFilename(name);
+    }
+    const next = path.dirname(cur);
+    if (next === cur) break;
+    cur = next;
+  }
+  return undefined;
 }
 
 function pad2(n: number): string { return n < 10 ? `0${n}` : String(n); }
@@ -141,8 +178,8 @@ function parseFilename(fileName: string, fullPath: string): Parsed {
     }
   }
 
-  // Fallback to unknown, try parent hints
-  if (parentHints.show) {
+  // Fallback: only treat as TV if surrounding folders strongly suggest TV context
+  if (parentHints.show && isLikelyTvContext(fullPath)) {
     return { type: "tv", show: parentHints.show, year: parentHints.year, ext };
   }
 
@@ -286,10 +323,19 @@ async function walkDir(root: string, acc: string[], limit: number) {
   const entries = await fsp.readdir(root, { withFileTypes: true }).catch(() => [] as fs.Dirent[]);
   for (const ent of entries) {
     const full = path.join(root, ent.name);
-    if (ent.isDirectory()) {
+    let isDir = ent.isDirectory();
+    let isFil = ent.isFile();
+    if (!isDir && !isFil) {
+      const st = await fsp.lstat(full).catch(() => null as any);
+      if (st) {
+        isDir = st.isDirectory();
+        isFil = st.isFile();
+      }
+    }
+    if (isDir) {
       await walkDir(full, acc, limit);
       if (acc.length >= limit) return;
-    } else if (ent.isFile()) {
+    } else if (isFil) {
       if (isVideo(ent.name)) {
         acc.push(full);
         if (acc.length >= limit) return;
@@ -325,8 +371,13 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
       }
     } catch (_) { /* ignore */ }
   }
+  console.log(`[${new Date().toISOString()}][organize] scan`, { roots, files: files.length });
 
   let processed = 0;
+  let movieCount = 0;
+  let tvCount = 0;
+  let unknownCount = 0;
+  const unknownSamples: string[] = [];
   for (const src of files) {
     const base = path.basename(src);
     let parsed = parseFilename(base, src);
@@ -344,15 +395,49 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
       if (meta.canonicalTitle) parsed.show = meta.canonicalTitle;
       if (meta.canonicalYear) parsed.year = meta.canonicalYear;
     } else if (parsed.type === "unknown") {
-      const guess = guessTitleFromFilename(base.slice(0, -path.extname(base).length));
-      if (guess) {
+      const baseNoExt = base.slice(0, -path.extname(base).length);
+      const guess1 = guessTitleFromFilename(baseNoExt);
+      const parentName = path.basename(path.dirname(src));
+      const guess2 = guessTitleFromFilename(parentName);
+      const dirGuess = pickCandidateTitleFromPath(src);
+
+      const tryGuess = async (g: string | undefined) => {
+        if (!g) return null as any;
         const meta = config.tmdbApiKey
-          ? await tmdbSearch(guess, "movie")
-          : await itunesMovieSearch(guess);
-        if (meta.confirmedType === "movie" || meta.canonicalTitle) {
-          parsed = { type: "movie", title: meta.canonicalTitle || guess, year: meta.canonicalYear, ext: path.extname(base) } as Parsed;
-        }
+          ? await tmdbSearch(g, "movie")
+          : await itunesMovieSearch(g);
+        return meta;
+      };
+
+      let meta = await tryGuess(guess1);
+      if (!(meta?.confirmedType === "movie" || meta?.canonicalTitle)) {
+        meta = await tryGuess(guess2);
       }
+      if (!(meta?.confirmedType === "movie" || meta?.canonicalTitle)) {
+        meta = await tryGuess(dirGuess);
+      }
+      if (meta?.confirmedType === "movie" || meta?.canonicalTitle) {
+        parsed = { type: "movie", title: meta.canonicalTitle || dirGuess || guess2 || guess1, year: meta.canonicalYear, ext: path.extname(base) } as Parsed;
+      } else {
+        // Size-based fallback: large standalone video, no TV context -> treat as movie
+        try {
+          const st = await fsp.stat(src);
+          const isVideoFile = isVideo(base);
+          const notTv = !isLikelyTvContext(src);
+          const large = st?.size && st.size > 300 * 1024 * 1024; // >300MB
+          if (isVideoFile && notTv && large) {
+            const title = dirGuess || guess2 || guess1;
+            if (title) {
+              parsed = { type: "movie", title, ext: path.extname(base) } as Parsed;
+            }
+          }
+        } catch {}
+      }
+    }
+
+    if (parsed.type === "movie") movieCount++; else if (parsed.type === "tv") tvCount++; else {
+      unknownCount++;
+      if (unknownSamples.length < 10) unknownSamples.push(src);
     }
 
     const dst = computeTarget(parsed, base);
@@ -362,7 +447,10 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
     processed++;
   }
 
-  console.log(`[${new Date().toISOString()}][organize] complete`, { count: processed, dryRun, organizedBase: config.organizedBase });
+  console.log(
+    `[${new Date().toISOString()}][organize] complete`,
+    { count: processed, movies: movieCount, tv: tvCount, unknown: unknownCount, dryRun, organizedBase: config.organizedBase, unknownSamples }
+  );
 }
 
 let organizerTimer: NodeJS.Timeout | null = null;

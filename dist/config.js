@@ -46,6 +46,18 @@ exports.config = {
     mountBase: defaultMountBase,
     rclonePath: process.env.RCLONE_PATH || "rclone",
     mountOptions: process.env.MOUNT_OPTIONS || "--vfs-cache-mode=full --dir-cache-time=12h --poll-interval=0 --buffer-size=64M",
+    // Mount permissions/ownership
+    mountAllowOther: String(process.env.MOUNT_ALLOW_OTHER ?? "true").toLowerCase() === "true",
+    mountUid: (() => {
+        const v = process.env.MOUNT_UID || process.env.PUID || "";
+        return v ? Number(v) : undefined;
+    })(),
+    mountGid: (() => {
+        const v = process.env.MOUNT_GID || process.env.PGID || "";
+        return v ? Number(v) : undefined;
+    })(),
+    mountDirPerms: process.env.MOUNT_DIR_PERMS || "",
+    mountFilePerms: process.env.MOUNT_FILE_PERMS || "",
     // Mount cache flags (individually configurable)
     mountDirCacheTime: process.env.MOUNT_DIR_CACHE_TIME || "12h",
     mountVfsCacheMode: process.env.MOUNT_VFS_CACHE_MODE || "full",

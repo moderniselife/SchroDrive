@@ -39,9 +39,54 @@ const os = __importStar(require("os"));
 const path = __importStar(require("path"));
 const child_process_1 = require("child_process");
 const config_1 = require("./config");
-function ensureDir(p) {
-    if (!fs.existsSync(p))
-        fs.mkdirSync(p, { recursive: true });
+function isStaleMountErr(e) {
+    const code = (e?.code || "").toString();
+    return code === "ENOTCONN" || code === "EBUSY" || code === "EIO";
+}
+function cleanupMountPath(p) {
+    try {
+        if (process.platform === "linux") {
+            // Try to lazily unmount FUSE mounts
+            (0, child_process_1.spawnSync)("fusermount3", ["-uz", p], { stdio: "ignore" });
+            (0, child_process_1.spawnSync)("fusermount", ["-uz", p], { stdio: "ignore" });
+            (0, child_process_1.spawnSync)("umount", ["-l", p], { stdio: "ignore" });
+        }
+        else if (process.platform === "darwin") {
+            (0, child_process_1.spawnSync)("umount", ["-f", p], { stdio: "ignore" });
+            (0, child_process_1.spawnSync)("diskutil", ["unmount", "force", p], { stdio: "ignore" });
+        }
+    }
+    catch { }
+}
+function ensureDir(p, opts) {
+    const cleanupOnStale = opts?.cleanupOnStale ?? true;
+    try {
+        if (!fs.existsSync(p)) {
+            fs.mkdirSync(p, { recursive: true });
+        }
+        else {
+            // Touch directory to detect stale FUSE mountpoints
+            fs.readdirSync(p);
+        }
+    }
+    catch (e) {
+        if (cleanupOnStale && isStaleMountErr(e)) {
+            console.warn(`[${new Date().toISOString()}][mount] detected stale/busy mount at ${p}, attempting cleanup`);
+            cleanupMountPath(p);
+            // Retry creation/access
+            try {
+                if (!fs.existsSync(p))
+                    fs.mkdirSync(p, { recursive: true });
+                fs.readdirSync(p);
+            }
+            catch (e2) {
+                throw e2;
+            }
+        }
+        else {
+            throw e;
+        }
+    }
 }
 function obscurePassword(password) {
     if (!password)
@@ -90,6 +135,23 @@ function splitArgs(opts) {
         return [];
     return s.split(/\s+/);
 }
+function hasUserLogFlags(opts) {
+    const tokens = splitArgs(opts || "");
+    return tokens.some((t) => t === "-v" || t === "-vv" || t === "-vvv" || t.startsWith("--log-level"));
+}
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function canAllowOther() {
+    try {
+        const s = fs.readFileSync("/etc/fuse.conf", "utf8");
+        // consider uncommented presence of user_allow_other sufficient
+        return /(^|\n)\s*user_allow_other\s*($|#)/.test(s);
+    }
+    catch {
+        return false;
+    }
+}
 function testRemote(remote, cfgPath) {
     try {
         const res = (0, child_process_1.spawnSync)(config_1.config.rclonePath, ["lsd", remote, "--config", cfgPath, "--log-level=DEBUG"], { encoding: "utf8" });
@@ -106,7 +168,10 @@ function testRemote(remote, cfgPath) {
 async function mountVirtualDrive() {
     const cfg = buildRcloneConfigFile();
     const base = config_1.config.mountBase;
-    ensureDir(base);
+    // Never attempt to unmount/cleanup the base, it is a bind from host
+    ensureDir(base, { cleanupOnStale: false });
+    const tmpDir = path.join(os.tmpdir(), "schrodrive");
+    ensureDir(tmpDir, { cleanupOnStale: false });
     const mounts = [];
     const ps = (0, config_1.providersSet)();
     if (ps.has("realdebrid") && config_1.config.rdWebdavUsername)
@@ -116,7 +181,8 @@ async function mountVirtualDrive() {
     if (!mounts.length)
         throw new Error("Nothing to mount. Check PROVIDERS and credentials.");
     for (const m of mounts) {
-        ensureDir(m.path);
+        // Safe to cleanup the leaf mount path only
+        ensureDir(m.path, { cleanupOnStale: true });
         if (!testRemote(m.remote, cfg)) {
             continue;
         }
@@ -126,9 +192,14 @@ async function mountVirtualDrive() {
             m.path,
             "--config",
             cfg,
-            "--allow-other",
-            "--allow-non-empty",
         ];
+        if (canAllowOther()) {
+            args.push("--allow-other");
+        }
+        else {
+            console.log(`[${new Date().toISOString()}][mount] skipping --allow-other (no user_allow_other in /etc/fuse.conf)`);
+        }
+        args.push("--allow-non-empty");
         if (config_1.config.mountOptions && config_1.config.mountOptions.trim()) {
             args.push(...splitArgs(config_1.config.mountOptions));
         }
@@ -146,6 +217,29 @@ async function mountVirtualDrive() {
             if ((config_1.config.mountVfsCacheMaxSize || "").trim())
                 args.push(`--vfs-cache-max-size=${config_1.config.mountVfsCacheMaxSize}`);
         }
+        // Ownership and permissions presentation for FUSE mount
+        if (typeof config_1.config.mountUid === "number") {
+            args.push("--uid", String(config_1.config.mountUid));
+        }
+        if (typeof config_1.config.mountGid === "number") {
+            args.push("--gid", String(config_1.config.mountGid));
+        }
+        if ((config_1.config.mountDirPerms || "").trim()) {
+            args.push(`--dir-perms=${config_1.config.mountDirPerms}`);
+        }
+        if ((config_1.config.mountFilePerms || "").trim()) {
+            args.push(`--file-perms=${config_1.config.mountFilePerms}`);
+        }
+        // Provide a sensible default umask if no explicit perms given
+        if (!(config_1.config.mountDirPerms || config_1.config.mountFilePerms)) {
+            args.push("--umask", "0022");
+        }
+        // Ensure we capture rclone logs without conflicting with user-provided verbosity
+        const logFile = path.join(tmpDir, `rclone-${m.remote.replace(":", "")}.log`);
+        if (!hasUserLogFlags(config_1.config.mountOptions)) {
+            args.push(`--log-level=INFO`);
+        }
+        args.push(`--log-file=${logFile}`);
         args.push("--daemon");
         console.log(`[${new Date().toISOString()}][mount] rclone ${args.join(" ")}`);
         const p = (0, child_process_1.spawn)(config_1.config.rclonePath, args, { stdio: "inherit" });
@@ -157,6 +251,16 @@ async function mountVirtualDrive() {
                 console.error(`[${new Date().toISOString()}][mount] daemon exited with code ${code} for ${m.remote}`);
             }
         });
+        // Quick post-mount verification (best-effort)
+        try {
+            await sleep(1500);
+            const items = fs.readdirSync(m.path);
+            console.log(`[${new Date().toISOString()}][mount] verify ${m.remote} at ${m.path} -> entries=${items.length}`);
+        }
+        catch (e) {
+            console.warn(`[${new Date().toISOString()}][mount] verify error for ${m.remote} at ${m.path}`, { err: e?.message });
+            console.warn(`[${new Date().toISOString()}][mount] see rclone log: ${logFile}`);
+        }
     }
     console.log(`[${new Date().toISOString()}][mount] mounts initiated at ${base}`);
 }
