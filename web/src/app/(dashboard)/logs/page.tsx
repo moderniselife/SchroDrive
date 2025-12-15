@@ -267,24 +267,28 @@ export default function LogsPage() {
                 </p>
               </div>
             ) : (
-              <div className="bg-black/50 p-4 font-mono text-xs space-y-0.5">
-                {filteredLogs.map((log) => (
-                  <div key={log.id} className="hover:bg-muted/20 px-2 py-0.5 flex items-start gap-2">
-                    <span className="text-muted-foreground whitespace-nowrap">
-                      {new Date(log.timestamp).toLocaleTimeString("en-US", {
-                        hour12: false,
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        second: "2-digit",
-                      })}
-                    </span>
-                    <span className={`${levelColors[log.level]} whitespace-nowrap`}>
-                      [{log.level.toUpperCase().padEnd(5)}]
-                    </span>
-                    <span className="text-purple-400 whitespace-nowrap">[{log.service}]</span>
-                    <span className="break-all">{log.message}</span>
+              <div className="bg-black/50 p-4 font-mono text-xs">
+                <div className="overflow-x-auto">
+                  <div className="min-w-max space-y-0.5">
+                    {filteredLogs.map((log) => (
+                      <div key={log.id} className="hover:bg-muted/20 px-2 py-0.5 flex items-start gap-2">
+                        <span className="text-muted-foreground whitespace-nowrap">
+                          {new Date(log.timestamp).toLocaleTimeString("en-US", {
+                            hour12: false,
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            second: "2-digit",
+                          })}
+                        </span>
+                        <span className={`${levelColors[log.level]} whitespace-nowrap`}>
+                          [{log.level.toUpperCase().padEnd(5)}]
+                        </span>
+                        <span className="text-purple-400 whitespace-nowrap">[{log.service}]</span>
+                        <span className="whitespace-pre-wrap break-words">{log.message}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </div>
               </div>
             )}
           </ScrollArea>

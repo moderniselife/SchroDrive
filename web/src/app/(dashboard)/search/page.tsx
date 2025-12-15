@@ -171,21 +171,22 @@ export default function SearchPage() {
                   const isAdding = addingId === id
                   
                   return (
-                    <div key={id} className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted/50">
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{result.title}</p>
-                        <div className="flex flex-wrap gap-2 mt-1">
-                          <Badge variant="outline">{result.indexer}</Badge>
-                          <span className="text-xs text-muted-foreground">{formatBytes(result.size)}</span>
-                          <span className="text-xs text-green-500">↑ {result.seeders}</span>
-                          <span className="text-xs text-red-500">↓ {result.leechers}</span>
+                    <div key={id} className="rounded-lg border p-4 hover:bg-muted/50">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium break-words">{result.title}</p>
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            <Badge variant="outline">{result.indexer}</Badge>
+                            <span className="text-xs text-muted-foreground">{formatBytes(result.size)}</span>
+                            <span className="text-xs text-green-500">↑ {result.seeders}</span>
+                            <span className="text-xs text-red-500">↓ {result.leechers}</span>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-2 ml-4">
                         <Button 
                           size="sm" 
                           onClick={() => handleAdd(result)}
                           disabled={isAdding || !result.magnetUrl}
+                          className="shrink-0"
                         >
                           {isAdding ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
