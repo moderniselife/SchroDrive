@@ -1,6 +1,6 @@
 import express from "express";
 import { config, requireEnv } from "./config";
-import { searchProwlarr, pickBestResult, getMagnet } from "./prowlarr";
+import { searchIndexer, pickBestResult, getMagnet, getProviderName, isIndexerConfigured } from "./indexer";
 import { addMagnetToTorbox } from "./torbox";
 import { startOverseerrPoller } from "./overseerr";
 import { startAutoUpdater } from "./autoUpdate";
@@ -18,15 +18,19 @@ export function startServer() {
       try {
         console.log(`[${new Date().toISOString()}][webhook] hit /webhook/overseerr`);
         // Check required environment variables early and return a helpful error
-        const missing = ["prowlarrUrl", "prowlarrApiKey", "torboxApiKey"].filter(
-          (key) => !String(config[key as keyof typeof config] || "").trim()
-        );
-        if (missing.length) {
-          console.warn(`[${new Date().toISOString()}][webhook] missing env`, { missing });
+        if (!isIndexerConfigured()) {
+          console.warn(`[${new Date().toISOString()}][webhook] no indexer configured`);
           return res.status(503).json({
             ok: false,
-            error: "Service not configured. Set the following environment variables:",
-            missing,
+            error: "No indexer configured. Set JACKETT_URL/JACKETT_API_KEY or PROWLARR_URL/PROWLARR_API_KEY.",
+            documentation: "See README.md for configuration instructions.",
+          });
+        }
+        if (!config.torboxApiKey) {
+          console.warn(`[${new Date().toISOString()}][webhook] missing TORBOX_API_KEY`);
+          return res.status(503).json({
+            ok: false,
+            error: "TORBOX_API_KEY not configured.",
             documentation: "See README.md for configuration instructions.",
           });
         }
@@ -51,12 +55,13 @@ export function startServer() {
 
         (async () => {
           try {
-            console.log(`[${new Date().toISOString()}][webhook->prowlarr] searching`, { query: built.query, categories: built.categories });
+            const provider = getProviderName();
+            console.log(`[${new Date().toISOString()}][webhook->${provider}] searching`, { query: built.query, categories: built.categories });
             const started = Date.now();
-            const results = await searchProwlarr(built.query, { categories: built.categories });
-            console.log(`[${new Date().toISOString()}][webhook->prowlarr] results`, { count: results.length, ms: Date.now() - started });
+            const results = await searchIndexer(built.query, { categories: built.categories });
+            console.log(`[${new Date().toISOString()}][webhook->${provider}] results`, { count: results.length, ms: Date.now() - started });
             const best = pickBestResult(results);
-            console.log(`[${new Date().toISOString()}][webhook->prowlarr] chosen`, { title: best?.title, seeders: best?.seeders, size: best?.size });
+            console.log(`[${new Date().toISOString()}][webhook->${provider}] chosen`, { title: best?.title, seeders: best?.seeders, size: best?.size });
             const magnet = getMagnet(best);
 
             if (!magnet) {
@@ -75,8 +80,8 @@ export function startServer() {
       } catch (e: any) {
         if (!res.headersSent) {
           if (e?.code === 'ECONNABORTED' || e?.message?.includes('timeout')) {
-            console.error(`[${new Date().toISOString()}][webhook] timeout while searching prowlarr`);
-            res.status(504).json({ ok: false, error: "Request timed out while searching Prowlarr. Try again or check your indexer configuration." });
+            console.error(`[${new Date().toISOString()}][webhook] timeout while searching indexer`);
+            res.status(504).json({ ok: false, error: "Request timed out while searching indexer. Try again or check your indexer configuration." });
           } else {
             console.error(`[${new Date().toISOString()}][webhook] unexpected error`, e?.message || String(e));
             res.status(500).json({ ok: false, error: e?.message || String(e) });

@@ -1,5 +1,5 @@
 import { config, providersSet } from "./config";
-import { searchProwlarr, pickBestResult, getMagnet, getMagnetOrResolve } from "./prowlarr";
+import { searchIndexer, pickBestResult, getMagnet, getMagnetOrResolve, getProviderName } from "./indexer";
 import { addMagnetToTorbox } from "./torbox";
 import { listRDTorrents, isRDTorrentDead, addMagnetToRD, selectAllFilesRD } from "./realdebrid";
 import { listTorboxTorrents, isTorboxTorrentDead } from "./torbox";
@@ -10,8 +10,8 @@ function torrentTitleLike(t: any): string {
   );
 }
 
-async function tryReaddViaProwlarr(title: string, prefer: "torbox" | "realdebrid" | "any" = "any") {
-  const results = await searchProwlarr(title);
+async function tryReaddViaIndexer(title: string, prefer: "torbox" | "realdebrid" | "any" = "any") {
+  const results = await searchIndexer(title);
   const best = pickBestResult(results);
   let magnet = getMagnet(best);
   if (!magnet) {
@@ -58,7 +58,7 @@ export async function scanDeadOnce() {
     summary.scanned.realdebrid = { total: list.length, dead: dead.length };
     for (const t of dead) {
       const title = torrentTitleLike(t);
-      const ok = await tryReaddViaProwlarr(title, "torbox");
+      const ok = await tryReaddViaIndexer(title, "torbox");
       if (ok) summary.readded.push({ provider: "torbox", title });
     }
   }
@@ -70,7 +70,7 @@ export async function scanDeadOnce() {
     summary.scanned.torbox = { total: list.length, dead: dead.length };
     for (const t of dead) {
       const title = torrentTitleLike(t);
-      const ok = await tryReaddViaProwlarr(title, "realdebrid");
+      const ok = await tryReaddViaIndexer(title, "realdebrid");
       if (ok) summary.readded.push({ provider: "realdebrid", title });
     }
   }

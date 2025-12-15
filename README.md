@@ -21,7 +21,7 @@
 
 # SchröDrive
 
-The ultimate media automation orchestrator. SchröDrive seamlessly integrates with Overseerr to automatically search Prowlarr for the best torrents and deliver them to your preferred debrid service. Currently supporting TorBox with upcoming support for Real-Debrid, All-Debrid, and Premiumize.
+The ultimate media automation orchestrator. SchröDrive seamlessly integrates with Overseerr to automatically search Prowlarr or Jackett for the best torrents and deliver them to your preferred debrid service. Currently supporting TorBox with upcoming support for Real-Debrid, All-Debrid, and Premiumize.
 
 ## Releases
 - [Latest Release](https://github.com/moderniselife/SchroDrive/releases/latest) - Auto-incremented version and release notes
@@ -30,14 +30,15 @@ The ultimate media automation orchestrator. SchröDrive seamlessly integrates wi
 
 ## Features
 - Webhook endpoint for Overseerr notifications
-- Prowlarr search using `/api/v1/search`
+- **Dual indexer support**: Prowlarr (`/api/v1/search`) and Jackett (`/api/v2.0/indexers`)
+- Auto-detection: configure one or both indexers, SchroDrive picks the active one
 - Picks best result by seeders (fallback by size)
 - Adds magnet to TorBox
 - CLI for manual search/add
 - Docker image
 
 - Virtual Drive mounts via rclone (WebDAV): TorBox and Real‑Debrid
-- Dead‑torrent scanner: searches Prowlarr and re‑adds to the opposite provider
+- Dead‑torrent scanner: searches indexer and re‑adds to the opposite provider
 - Multi‑provider support: TorBox and Real‑Debrid
 
 ## 🚀 Future
@@ -88,15 +89,36 @@ This will pull `ghcr.io/moderniselife/schrodrive` updates automatically and rest
 
 ## Requirements
 - Node.js 18+
-- Prowlarr URL and API key
+- **Indexer**: Either Prowlarr OR Jackett (URL and API key)
 - TorBox API key
 - Optional secret for Overseerr webhook Authorization
 
 ## Environment Variables
-- `PORT` (default `8978`)
+
+### Indexer Selection
+- `INDEXER_PROVIDER` (`auto` | `prowlarr` | `jackett`, default `auto`)
+  - `auto`: Uses Jackett if configured, otherwise Prowlarr
+  - `prowlarr`: Force Prowlarr
+  - `jackett`: Force Jackett
+
+### Prowlarr Configuration
 - `PROWLARR_URL` (e.g. `http://localhost:9696`)
 - `PROWLARR_API_KEY`
 - `PROWLARR_CATEGORIES` (comma-separated category IDs, optional)
+- `PROWLARR_INDEXER_IDS` (comma-separated indexer IDs, optional)
+- `PROWLARR_SEARCH_LIMIT` (default `100`)
+- `PROWLARR_TIMEOUT_MS` (default `120000`)
+
+### Jackett Configuration
+- `JACKETT_URL` (e.g. `http://localhost:9117`)
+- `JACKETT_API_KEY`
+- `JACKETT_CATEGORIES` (comma-separated category IDs, optional)
+- `JACKETT_INDEXER_IDS` (comma-separated indexer IDs, optional)
+- `JACKETT_SEARCH_LIMIT` (default `100`)
+- `JACKETT_TIMEOUT_MS` (default `120000`)
+
+### General
+- `PORT` (default `8978`)
 - `TORBOX_API_KEY`
 - `TORBOX_BASE_URL` (default `https://api.torbox.app`)
 - `OVERSEERR_AUTH` (optional Authorization value to require on webhook)
@@ -133,6 +155,13 @@ npm run build
 
 ## Run (Local)
 ```bash
+# With Jackett
+JACKETT_URL=http://localhost:9117 \
+JACKETT_API_KEY=xxxxx \
+TORBOX_API_KEY=tb_xxxxx \
+node dist/index.js serve
+
+# Or with Prowlarr
 PROWLARR_URL=http://localhost:9696 \
 PROWLARR_API_KEY=xxxxx \
 TORBOX_API_KEY=tb_xxxxx \
@@ -195,7 +224,7 @@ curl http://localhost:8978/health
 - Recommended events: Request Approved (or as desired)
 
 ## CLI
-Search Prowlarr and print the best result:
+Search indexer (Prowlarr or Jackett) and print the best result:
 ```bash
 node dist/index.js search "Big Buck Bunny 2008"
 ```
@@ -215,7 +244,7 @@ Mount configured WebDAV providers via rclone (requires rclone + FUSE on host/con
 node dist/index.js mount
 ```
 
-Scan for dead torrents and attempt re‑add via Prowlarr to the opposite provider:
+Scan for dead torrents and attempt re‑add via indexer to the opposite provider:
 ```bash
 # One‑shot
 node dist/index.js scan-dead
@@ -433,8 +462,7 @@ docker run --rm -p 8978:8978 \
 ## Troubleshooting
 ### Webhook returns 503 "Service not configured"
 This means required environment variables are missing. Check your container logs and ensure:
-- `PROWLARR_URL` is set (e.g., `http://prowlarr:9696`)
-- `PROWLARR_API_KEY` is set to a valid Prowlarr API key
+- **Indexer configured**: Either set `JACKETT_URL` + `JACKETT_API_KEY` OR `PROWLARR_URL` + `PROWLARR_API_KEY`
 - `TORBOX_API_KEY` is set to a valid TorBox API key
 
 For Docker Compose, edit your `.env` file and restart:
@@ -443,17 +471,20 @@ docker-compose down
 docker-compose up -d
 ```
 
-### Webhook returns 504 "Request timed out while searching Prowlarr"
-The search request exceeded 45 seconds. This can happen if:
-- Prowlarr is slow or has many indexers
+### Webhook returns 504 "Request timed out while searching indexer"
+The search request exceeded the timeout. This can happen if:
+- Your indexer (Prowlarr/Jackett) is slow or has many trackers
 - Network connectivity issues
 - Indexers are unresponsive
 
 Try:
-1. Test Prowlarr directly: `curl http://localhost:9696/api/v1/search?query=test&apikey=YOUR_KEY`
-2. Reduce `PROWLARR_CATEGORIES` to fewer indexers
-3. Check Prowlarr logs for indexer issues
-4. Retry the webhook request
+1. Test your indexer directly:
+   - Prowlarr: `curl http://localhost:9696/api/v1/search?query=test&apikey=YOUR_KEY`
+   - Jackett: `curl "http://localhost:9117/api/v2.0/indexers/all/results?apikey=YOUR_KEY&Query=test"`
+2. Reduce categories or indexers
+3. Increase timeout via `PROWLARR_TIMEOUT_MS` or `JACKETT_TIMEOUT_MS`
+4. Check indexer logs for issues
+5. Retry the webhook request
 
 ### Health check fails
 Ensure the service is running and accessible:
