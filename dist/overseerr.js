@@ -6,9 +6,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.startOverseerrPoller = startOverseerrPoller;
 const axios_1 = __importDefault(require("axios"));
 const config_1 = require("./config");
-const prowlarr_1 = require("./prowlarr");
+const indexer_1 = require("./indexer");
 const torbox_1 = require("./torbox");
-const prowlarr_2 = require("./prowlarr");
 function defaultCategoriesFor(mediaType) {
     const map = {
         movie: ["5000"],
@@ -90,7 +89,11 @@ async function fetchApprovedRequests() {
     return Array.isArray(results) ? results : [];
 }
 function startOverseerrPoller() {
-    (0, config_1.requireEnv)("prowlarrUrl", "prowlarrApiKey", "torboxApiKey");
+    // Validate indexer is configured
+    if (!(0, indexer_1.isIndexerConfigured)()) {
+        throw new Error("No indexer configured. Set JACKETT_URL/JACKETT_API_KEY or PROWLARR_URL/PROWLARR_API_KEY.");
+    }
+    (0, config_1.requireEnv)("torboxApiKey");
     // Accept either Overseerr API key or Bearer token
     if (!config_1.config.overseerrUrl || (!config_1.config.overseerrApiKey && !config_1.config.overseerrAuth)) {
         throw new Error("Missing Overseerr credentials. Set OVERSEERR_URL and either OVERSEERR_API_KEY or OVERSEERR_AUTH.");
@@ -98,13 +101,14 @@ function startOverseerrPoller() {
     const processed = new Set();
     const intervalMs = Math.max(5, Number(config_1.config.pollIntervalSeconds || 30)) * 1000;
     console.log(`[${new Date().toISOString()}][poller] starting`, { intervalSeconds: Math.round(intervalMs / 1000) });
-    // Test Prowlarr connection on startup
-    (0, prowlarr_2.testProwlarrConnection)().then(connected => {
+    // Test indexer connection on startup
+    const provider = (0, indexer_1.getProviderName)();
+    (0, indexer_1.testIndexerConnection)().then(connected => {
         if (!connected) {
-            console.warn(`[${new Date().toISOString()}][poller] WARNING: Prowlarr connection test failed. Searches may timeout.`);
+            console.warn(`[${new Date().toISOString()}][poller] WARNING: ${provider} connection test failed. Searches may timeout.`);
         }
     }).catch(err => {
-        console.error(`[${new Date().toISOString()}][poller] Prowlarr connection test error`, err?.message || String(err));
+        console.error(`[${new Date().toISOString()}][poller] ${provider} connection test error`, err?.message || String(err));
     });
     const runOnce = async () => {
         try {
@@ -161,12 +165,13 @@ function startOverseerrPoller() {
                     console.warn(`[${new Date().toISOString()}][poller] upgrade TMDB-only failed`, { err: e?.message || String(e) });
                 }
                 try {
-                    console.log(`[${new Date().toISOString()}][poller->prowlarr] searching`, { id, query: built.query, categories: built.categories });
+                    const indexerName = (0, indexer_1.getProviderName)();
+                    console.log(`[${new Date().toISOString()}][poller->${indexerName}] searching`, { id, query: built.query, categories: built.categories });
                     const t0 = Date.now();
-                    const results = await (0, prowlarr_1.searchProwlarr)(built.query, { categories: built.categories });
-                    console.log(`[${new Date().toISOString()}][poller->prowlarr] results`, { id, count: results.length, ms: Date.now() - t0 });
-                    const best = (0, prowlarr_1.pickBestResult)(results);
-                    console.log(`[${new Date().toISOString()}][poller->prowlarr] chosen`, { id, title: best?.title, seeders: best?.seeders, size: best?.size });
+                    const results = await (0, indexer_1.searchIndexer)(built.query, { categories: built.categories });
+                    console.log(`[${new Date().toISOString()}][poller->${indexerName}] results`, { id, count: results.length, ms: Date.now() - t0 });
+                    const best = (0, indexer_1.pickBestResult)(results);
+                    console.log(`[${new Date().toISOString()}][poller->${indexerName}] chosen`, { id, title: best?.title, seeders: best?.seeders, size: best?.size });
                     // Try best first, then scan other candidates until a magnet is found
                     let magnet = undefined;
                     let chosenUsed = best;
@@ -174,10 +179,10 @@ function startOverseerrPoller() {
                         .slice()
                         .sort((a, b) => (Number(b.seeders) || 0) - (Number(a.seeders) || 0) || (Number(b.size) || 0) - (Number(a.size) || 0));
                     for (const cand of [best, ...sorted.filter((x) => x !== best)]) {
-                        magnet = (0, prowlarr_1.getMagnet)(cand);
+                        magnet = (0, indexer_1.getMagnet)(cand);
                         if (!magnet) {
                             try {
-                                magnet = await (0, prowlarr_1.getMagnetOrResolve)(cand);
+                                magnet = await (0, indexer_1.getMagnetOrResolve)(cand);
                             }
                             catch (e) {
                                 console.warn(`[${new Date().toISOString()}][poller] magnet resolve failed`, { id, err: e?.message || String(e) });

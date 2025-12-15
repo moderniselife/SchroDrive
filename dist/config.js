@@ -13,6 +13,16 @@ exports.config = {
     prowlarrSearchLimit: Number(process.env.PROWLARR_SEARCH_LIMIT || 100),
     prowlarrTimeoutMs: Number(process.env.PROWLARR_TIMEOUT_MS || 120000),
     prowlarrRedirectMaxHops: Number(process.env.PROWLARR_REDIRECT_MAX_HOPS || 5),
+    // Jackett configuration
+    jackettUrl: process.env.JACKETT_URL || "",
+    jackettApiKey: process.env.JACKETT_API_KEY || "",
+    jackettCategories: (process.env.JACKETT_CATEGORIES || "").split(",").filter(Boolean),
+    jackettIndexerIds: (process.env.JACKETT_INDEXER_IDS || "").split(",").map((s) => s.trim()).filter(Boolean),
+    jackettSearchLimit: Number(process.env.JACKETT_SEARCH_LIMIT || 100),
+    jackettTimeoutMs: Number(process.env.JACKETT_TIMEOUT_MS || 120000),
+    jackettRedirectMaxHops: Number(process.env.JACKETT_REDIRECT_MAX_HOPS || 5),
+    // Indexer selection: "prowlarr" | "jackett" | "auto" (auto tries jackett first if configured, then prowlarr)
+    indexerProvider: (process.env.INDEXER_PROVIDER || "auto"),
     torboxApiKey: process.env.TORBOX_API_KEY || "",
     torboxBaseUrl: process.env.TORBOX_BASE_URL || "https://api.torbox.app",
     overseerrAuth: process.env.OVERSEERR_AUTH || "",

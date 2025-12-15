@@ -7,7 +7,7 @@ exports.startServer = startServer;
 exports.buildQueryFromPayload = buildQueryFromPayload;
 const express_1 = __importDefault(require("express"));
 const config_1 = require("./config");
-const prowlarr_1 = require("./prowlarr");
+const indexer_1 = require("./indexer");
 const torbox_1 = require("./torbox");
 const overseerr_1 = require("./overseerr");
 const autoUpdate_1 = require("./autoUpdate");
@@ -22,13 +22,19 @@ function startServer() {
             try {
                 console.log(`[${new Date().toISOString()}][webhook] hit /webhook/overseerr`);
                 // Check required environment variables early and return a helpful error
-                const missing = ["prowlarrUrl", "prowlarrApiKey", "torboxApiKey"].filter((key) => !String(config_1.config[key] || "").trim());
-                if (missing.length) {
-                    console.warn(`[${new Date().toISOString()}][webhook] missing env`, { missing });
+                if (!(0, indexer_1.isIndexerConfigured)()) {
+                    console.warn(`[${new Date().toISOString()}][webhook] no indexer configured`);
                     return res.status(503).json({
                         ok: false,
-                        error: "Service not configured. Set the following environment variables:",
-                        missing,
+                        error: "No indexer configured. Set JACKETT_URL/JACKETT_API_KEY or PROWLARR_URL/PROWLARR_API_KEY.",
+                        documentation: "See README.md for configuration instructions.",
+                    });
+                }
+                if (!config_1.config.torboxApiKey) {
+                    console.warn(`[${new Date().toISOString()}][webhook] missing TORBOX_API_KEY`);
+                    return res.status(503).json({
+                        ok: false,
+                        error: "TORBOX_API_KEY not configured.",
                         documentation: "See README.md for configuration instructions.",
                     });
                 }
@@ -48,13 +54,14 @@ function startServer() {
                 console.log(`[${new Date().toISOString()}][webhook] responded 202, processing async...`);
                 (async () => {
                     try {
-                        console.log(`[${new Date().toISOString()}][webhook->prowlarr] searching`, { query: built.query, categories: built.categories });
+                        const provider = (0, indexer_1.getProviderName)();
+                        console.log(`[${new Date().toISOString()}][webhook->${provider}] searching`, { query: built.query, categories: built.categories });
                         const started = Date.now();
-                        const results = await (0, prowlarr_1.searchProwlarr)(built.query, { categories: built.categories });
-                        console.log(`[${new Date().toISOString()}][webhook->prowlarr] results`, { count: results.length, ms: Date.now() - started });
-                        const best = (0, prowlarr_1.pickBestResult)(results);
-                        console.log(`[${new Date().toISOString()}][webhook->prowlarr] chosen`, { title: best?.title, seeders: best?.seeders, size: best?.size });
-                        const magnet = (0, prowlarr_1.getMagnet)(best);
+                        const results = await (0, indexer_1.searchIndexer)(built.query, { categories: built.categories });
+                        console.log(`[${new Date().toISOString()}][webhook->${provider}] results`, { count: results.length, ms: Date.now() - started });
+                        const best = (0, indexer_1.pickBestResult)(results);
+                        console.log(`[${new Date().toISOString()}][webhook->${provider}] chosen`, { title: best?.title, seeders: best?.seeders, size: best?.size });
+                        const magnet = (0, indexer_1.getMagnet)(best);
                         if (!magnet) {
                             console.warn(`[${new Date().toISOString()}][webhook] no magnet found in search results`, { query: built.query });
                             return;
@@ -72,8 +79,8 @@ function startServer() {
             catch (e) {
                 if (!res.headersSent) {
                     if (e?.code === 'ECONNABORTED' || e?.message?.includes('timeout')) {
-                        console.error(`[${new Date().toISOString()}][webhook] timeout while searching prowlarr`);
-                        res.status(504).json({ ok: false, error: "Request timed out while searching Prowlarr. Try again or check your indexer configuration." });
+                        console.error(`[${new Date().toISOString()}][webhook] timeout while searching indexer`);
+                        res.status(504).json({ ok: false, error: "Request timed out while searching indexer. Try again or check your indexer configuration." });
                     }
                     else {
                         console.error(`[${new Date().toISOString()}][webhook] unexpected error`, e?.message || String(e));

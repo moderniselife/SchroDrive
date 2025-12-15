@@ -3,20 +3,20 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.scanDeadOnce = scanDeadOnce;
 exports.startDeadScanner = startDeadScanner;
 const config_1 = require("./config");
-const prowlarr_1 = require("./prowlarr");
+const indexer_1 = require("./indexer");
 const torbox_1 = require("./torbox");
 const realdebrid_1 = require("./realdebrid");
 const torbox_2 = require("./torbox");
 function torrentTitleLike(t) {
     return (t?.name || t?.filename || t?.title || t?.originalName || t?.displayName || "");
 }
-async function tryReaddViaProwlarr(title, prefer = "any") {
-    const results = await (0, prowlarr_1.searchProwlarr)(title);
-    const best = (0, prowlarr_1.pickBestResult)(results);
-    let magnet = (0, prowlarr_1.getMagnet)(best);
+async function tryReaddViaIndexer(title, prefer = "any") {
+    const results = await (0, indexer_1.searchIndexer)(title);
+    const best = (0, indexer_1.pickBestResult)(results);
+    let magnet = (0, indexer_1.getMagnet)(best);
     if (!magnet) {
         try {
-            magnet = await (0, prowlarr_1.getMagnetOrResolve)(best);
+            magnet = await (0, indexer_1.getMagnetOrResolve)(best);
         }
         catch { }
     }
@@ -60,7 +60,7 @@ async function scanDeadOnce() {
         summary.scanned.realdebrid = { total: list.length, dead: dead.length };
         for (const t of dead) {
             const title = torrentTitleLike(t);
-            const ok = await tryReaddViaProwlarr(title, "torbox");
+            const ok = await tryReaddViaIndexer(title, "torbox");
             if (ok)
                 summary.readded.push({ provider: "torbox", title });
         }
@@ -72,7 +72,7 @@ async function scanDeadOnce() {
         summary.scanned.torbox = { total: list.length, dead: dead.length };
         for (const t of dead) {
             const title = torrentTitleLike(t);
-            const ok = await tryReaddViaProwlarr(title, "realdebrid");
+            const ok = await tryReaddViaIndexer(title, "realdebrid");
             if (ok)
                 summary.readded.push({ provider: "realdebrid", title });
         }

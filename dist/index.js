@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const commander_1 = require("commander");
 const server_1 = require("./server");
-const prowlarr_1 = require("./prowlarr");
+const indexer_1 = require("./indexer");
 const torbox_1 = require("./torbox");
 const mount_1 = require("./mount");
 const deadScanner_1 = require("./deadScanner");
@@ -11,7 +11,7 @@ const config_1 = require("./config");
 const program = new commander_1.Command();
 program
     .name("schrodrive")
-    .description("CLI/Webhook tool to integrate Overseerr with Prowlarr and TorBox (plus API poller mode)")
+    .description("CLI/Webhook tool to integrate Overseerr with Prowlarr/Jackett and TorBox (plus API poller mode)")
     .version("0.1.0");
 program
     .command("serve")
@@ -56,7 +56,7 @@ program
 });
 program
     .command("search")
-    .description("Search Prowlarr for a query and print the best result")
+    .description("Search indexer (Prowlarr/Jackett) for a query and print the best result")
     .argument("<query>", "Search terms")
     .option("-c, --categories <catComma>", "Comma separated category IDs")
     .option("-i, --indexer-ids <idsComma>", "Comma separated indexer IDs")
@@ -65,15 +65,16 @@ program
     const categories = (opts.categories ? String(opts.categories).split(",").filter(Boolean) : undefined);
     const indexerIds = (opts.indexerIds ? String(opts.indexerIds).split(",").filter(Boolean) : undefined);
     const limit = opts.limit && Number.isFinite(opts.limit) ? Number(opts.limit) : undefined;
-    const results = await (0, prowlarr_1.searchProwlarr)(query, { categories, indexerIds, limit });
-    const best = (0, prowlarr_1.pickBestResult)(results);
-    console.log(JSON.stringify({ query, best, resultsCount: results.length }, null, 2));
+    const results = await (0, indexer_1.searchIndexer)(query, { categories, indexerIds, limit });
+    const best = (0, indexer_1.pickBestResult)(results);
+    const provider = (0, indexer_1.getProviderName)();
+    console.log(JSON.stringify({ query, provider, best, resultsCount: results.length }, null, 2));
 });
 program
     .command("add")
-    .description("Add a torrent magnet to TorBox; if --query is provided, search Prowlarr and add the best magnet")
+    .description("Add a torrent magnet to TorBox; if --query is provided, search indexer and add the best magnet")
     .option("-m, --magnet <magnet>", "Magnet URI to add")
-    .option("-q, --query <query>", "Query to search in Prowlarr; best result will be added")
+    .option("-q, --query <query>", "Query to search in indexer; best result will be added")
     .action(async (opts) => {
     if (!opts.magnet && !opts.query) {
         throw new Error("Provide either --magnet or --query");
@@ -81,9 +82,9 @@ program
     let magnet = opts.magnet;
     let chosen = undefined;
     if (!magnet && opts.query) {
-        const results = await (0, prowlarr_1.searchProwlarr)(String(opts.query));
-        chosen = (0, prowlarr_1.pickBestResult)(results);
-        magnet = (0, prowlarr_1.getMagnet)(chosen);
+        const results = await (0, indexer_1.searchIndexer)(String(opts.query));
+        chosen = (0, indexer_1.pickBestResult)(results);
+        magnet = (0, indexer_1.getMagnet)(chosen);
     }
     if (!magnet)
         throw new Error("No magnet found");
@@ -92,7 +93,7 @@ program
 });
 program
     .command("scan-dead")
-    .description("Scan providers for dead torrents and attempt re-add via Prowlarr to the opposite provider")
+    .description("Scan providers for dead torrents and attempt re-add via indexer to the opposite provider")
     .option("-w, --watch", "Run continuously on an interval")
     .action(async (opts) => {
     if (opts.watch) {
