@@ -3,6 +3,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.isTorboxApiDisabled = isTorboxApiDisabled;
+exports.getTorboxApiDisabledReason = getTorboxApiDisabledReason;
 exports.isTorboxRateLimited = isTorboxRateLimited;
 exports.getTorboxWaitTime = getTorboxWaitTime;
 exports.checkExistingTorrents = checkExistingTorrents;
@@ -26,6 +28,25 @@ function getClient() {
     return client;
 }
 const PROVIDER_NAME = "torbox";
+// Track if API access is disabled due to plan limitations
+let apiDisabled = false;
+let apiDisabledReason = "";
+function isTorboxApiDisabled() {
+    return apiDisabled;
+}
+function getTorboxApiDisabledReason() {
+    return apiDisabledReason;
+}
+function checkPlanError(err) {
+    const msg = String(err?.message || err || "").toLowerCase();
+    if (msg.includes("403") && (msg.includes("plan") || msg.includes("upgrade"))) {
+        apiDisabled = true;
+        apiDisabledReason = "TorBox API requires a paid plan. Please upgrade at torbox.app";
+        console.error(`[${new Date().toISOString()}][torbox] API DISABLED: ${apiDisabledReason}`);
+        return true;
+    }
+    return false;
+}
 function isTorboxRateLimited() {
     return rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME);
 }
@@ -33,6 +54,10 @@ function getTorboxWaitTime() {
     return rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
 }
 async function checkExistingTorrents(searchTitle) {
+    // Check if API is disabled due to plan limitations
+    if (apiDisabled) {
+        return false;
+    }
     // Check rate limit before making request
     if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
         const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
@@ -75,6 +100,10 @@ async function checkExistingTorrents(searchTitle) {
     }
     catch (err) {
         const errorMsg = err?.message || String(err);
+        // Check if this is a plan limitation error
+        if (checkPlanError(err)) {
+            return false;
+        }
         // Check if this is a rate limit error
         if (rateLimiter_1.rateLimiter.isRateLimitError(err)) {
             rateLimiter_1.rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
@@ -90,6 +119,10 @@ async function checkExistingTorrents(searchTitle) {
     }
 }
 async function addMagnetToTorbox(magnet, name) {
+    // Check if API is disabled due to plan limitations
+    if (apiDisabled) {
+        throw new Error(apiDisabledReason);
+    }
     // Check rate limit before making request
     if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
         const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
@@ -111,6 +144,8 @@ async function addMagnetToTorbox(magnet, name) {
     }
     catch (err) {
         const errorMsg = err?.message || String(err);
+        // Check if this is a plan limitation error
+        checkPlanError(err);
         // Check if this is a rate limit error
         if (rateLimiter_1.rateLimiter.isRateLimitError(err)) {
             rateLimiter_1.rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
@@ -128,6 +163,10 @@ async function addMagnetToTorbox(magnet, name) {
 }
 const TORRENT_LIST_CACHE_KEY = "torbox_torrents";
 async function listTorboxTorrents() {
+    // Check if API is disabled due to plan limitations
+    if (apiDisabled) {
+        return [];
+    }
     // Check rate limit before making request - return cached data if available
     if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
         const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
@@ -155,6 +194,10 @@ async function listTorboxTorrents() {
         const isNetworkError = err?.code === 'ECONNREFUSED' || err?.code === 'ENOTFOUND' ||
             err?.code === 'ETIMEDOUT' || err?.code === 'ECONNRESET' ||
             errorMsg.includes('timeout') || errorMsg.includes('network');
+        // Check if this is a plan limitation error
+        if (checkPlanError(err)) {
+            return [];
+        }
         // Check if this is a rate limit error
         if (rateLimiter_1.rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
             rateLimiter_1.rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
@@ -196,6 +239,10 @@ const USENET_DOWNLOADS_CACHE_KEY = "torbox_usenetdownloads";
 async function listTorboxWebDownloads() {
     if (!config_1.config.torboxApiKey)
         return [];
+    // Check if API is disabled due to plan limitations
+    if (apiDisabled) {
+        return [];
+    }
     // Check rate limit before making request - return cached data if available
     if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
         const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
@@ -220,6 +267,10 @@ async function listTorboxWebDownloads() {
     }
     catch (err) {
         const errorMsg = err?.message || String(err);
+        // Check if this is a plan limitation error
+        if (checkPlanError(err)) {
+            return [];
+        }
         if (rateLimiter_1.rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
             rateLimiter_1.rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
         }
@@ -236,6 +287,10 @@ async function listTorboxWebDownloads() {
 async function listTorboxUsenetDownloads() {
     if (!config_1.config.torboxApiKey)
         return [];
+    // Check if API is disabled due to plan limitations
+    if (apiDisabled) {
+        return [];
+    }
     // Check rate limit before making request - return cached data if available
     if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
         const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
@@ -260,6 +315,10 @@ async function listTorboxUsenetDownloads() {
     }
     catch (err) {
         const errorMsg = err?.message || String(err);
+        // Check if this is a plan limitation error
+        if (checkPlanError(err)) {
+            return [];
+        }
         if (rateLimiter_1.rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
             rateLimiter_1.rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
         }

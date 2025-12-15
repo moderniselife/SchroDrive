@@ -17,6 +17,29 @@ function getClient(): TorboxClient {
 
 const PROVIDER_NAME = "torbox";
 
+// Track if API access is disabled due to plan limitations
+let apiDisabled = false;
+let apiDisabledReason = "";
+
+export function isTorboxApiDisabled(): boolean {
+  return apiDisabled;
+}
+
+export function getTorboxApiDisabledReason(): string {
+  return apiDisabledReason;
+}
+
+function checkPlanError(err: any): boolean {
+  const msg = String(err?.message || err || "").toLowerCase();
+  if (msg.includes("403") && (msg.includes("plan") || msg.includes("upgrade"))) {
+    apiDisabled = true;
+    apiDisabledReason = "TorBox API requires a paid plan. Please upgrade at torbox.app";
+    console.error(`[${new Date().toISOString()}][torbox] API DISABLED: ${apiDisabledReason}`);
+    return true;
+  }
+  return false;
+}
+
 export function isTorboxRateLimited(): boolean {
   return rateLimiter.isRateLimited(PROVIDER_NAME);
 }
@@ -26,6 +49,11 @@ export function getTorboxWaitTime(): number {
 }
 
 export async function checkExistingTorrents(searchTitle: string): Promise<boolean> {
+  // Check if API is disabled due to plan limitations
+  if (apiDisabled) {
+    return false;
+  }
+  
   // Check rate limit before making request
   if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
     const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
@@ -76,6 +104,11 @@ export async function checkExistingTorrents(searchTitle: string): Promise<boolea
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
     
+    // Check if this is a plan limitation error
+    if (checkPlanError(err)) {
+      return false;
+    }
+    
     // Check if this is a rate limit error
     if (rateLimiter.isRateLimitError(err)) {
       rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
@@ -93,6 +126,11 @@ export async function checkExistingTorrents(searchTitle: string): Promise<boolea
 }
 
 export async function addMagnetToTorbox(magnet: string, name?: string) {
+  // Check if API is disabled due to plan limitations
+  if (apiDisabled) {
+    throw new Error(apiDisabledReason);
+  }
+  
   // Check rate limit before making request
   if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
     const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
@@ -117,6 +155,9 @@ export async function addMagnetToTorbox(magnet: string, name?: string) {
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
     
+    // Check if this is a plan limitation error
+    checkPlanError(err);
+    
     // Check if this is a rate limit error
     if (rateLimiter.isRateLimitError(err)) {
       rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
@@ -137,6 +178,11 @@ export async function addMagnetToTorbox(magnet: string, name?: string) {
 const TORRENT_LIST_CACHE_KEY = "torbox_torrents";
 
 export async function listTorboxTorrents(): Promise<any[]> {
+  // Check if API is disabled due to plan limitations
+  if (apiDisabled) {
+    return [];
+  }
+  
   // Check rate limit before making request - return cached data if available
   if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
     const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
@@ -165,6 +211,11 @@ export async function listTorboxTorrents(): Promise<any[]> {
     const isNetworkError = err?.code === 'ECONNREFUSED' || err?.code === 'ENOTFOUND' || 
                            err?.code === 'ETIMEDOUT' || err?.code === 'ECONNRESET' ||
                            errorMsg.includes('timeout') || errorMsg.includes('network');
+    
+    // Check if this is a plan limitation error
+    if (checkPlanError(err)) {
+      return [];
+    }
     
     // Check if this is a rate limit error
     if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
@@ -209,6 +260,11 @@ const USENET_DOWNLOADS_CACHE_KEY = "torbox_usenetdownloads";
 export async function listTorboxWebDownloads(): Promise<any[]> {
   if (!config.torboxApiKey) return [];
   
+  // Check if API is disabled due to plan limitations
+  if (apiDisabled) {
+    return [];
+  }
+  
   // Check rate limit before making request - return cached data if available
   if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
     const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
@@ -236,6 +292,11 @@ export async function listTorboxWebDownloads(): Promise<any[]> {
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
     
+    // Check if this is a plan limitation error
+    if (checkPlanError(err)) {
+      return [];
+    }
+    
     if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
       rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
     }
@@ -253,6 +314,11 @@ export async function listTorboxWebDownloads(): Promise<any[]> {
 
 export async function listTorboxUsenetDownloads(): Promise<any[]> {
   if (!config.torboxApiKey) return [];
+  
+  // Check if API is disabled due to plan limitations
+  if (apiDisabled) {
+    return [];
+  }
   
   // Check rate limit before making request - return cached data if available
   if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
@@ -280,6 +346,11 @@ export async function listTorboxUsenetDownloads(): Promise<any[]> {
     return list;
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
+    
+    // Check if this is a plan limitation error
+    if (checkPlanError(err)) {
+      return [];
+    }
     
     if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
       rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
