@@ -29,7 +29,7 @@ import {
   CircleDot,
 } from "lucide-react"
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8978"
+// Use Next.js API routes which proxy to the backend
 
 interface ConfigValue {
   value: string
@@ -183,7 +183,7 @@ export default function SettingsPage() {
   async function fetchConfig() {
     try {
       setLoading(true)
-      const res = await fetch(`${API_BASE}/api/config`)
+      const res = await fetch("/api/config")
       const data = await res.json()
       if (data.ok) {
         setConfig(data.config)
@@ -230,7 +230,7 @@ export default function SettingsPage() {
     
     try {
       setSaving(true)
-      const res = await fetch(`${API_BASE}/api/config`, {
+      const res = await fetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ config: changes }),
@@ -252,7 +252,7 @@ export default function SettingsPage() {
   async function handleRestart() {
     try {
       setRestarting(true)
-      const res = await fetch(`${API_BASE}/api/restart`, { method: "POST" })
+      const res = await fetch("/api/restart", { method: "POST" })
       const data = await res.json()
       if (data.ok) {
         toast.success(data.message)

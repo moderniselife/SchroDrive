@@ -6,41 +6,107 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Search, Loader2, Plus, ExternalLink } from "lucide-react"
+import { Search, Loader2, Plus, AlertCircle, CheckCircle2 } from "lucide-react"
+import { toast } from "sonner"
+
+interface SearchResult {
+  title: string
+  size: number
+  seeders: number
+  leechers: number
+  magnetUrl: string
+  infoHash: string
+  indexer: string
+  publishDate: string
+  categories: string[]
+}
 
 function formatBytes(bytes: number) {
+  if (!bytes || bytes === 0) return "0 B"
   const k = 1024
   const sizes = ["B", "KB", "MB", "GB", "TB"]
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i]
 }
 
-const mockResults = [
-  { id: 1, title: "Movie.Name.2024.1080p.BluRay.x264-GROUP", seeders: 234, leechers: 45, size: 8500000000, indexer: "1337x" },
-  { id: 2, title: "Movie.Name.2024.2160p.WEB-DL.x265-GROUP", seeders: 156, leechers: 23, size: 15200000000, indexer: "RARBG" },
-  { id: 3, title: "Movie.Name.2024.720p.WEB-DL.x264-GROUP", seeders: 89, leechers: 12, size: 3200000000, indexer: "YTS" },
-]
-
 export default function SearchPage() {
   const [query, setQuery] = useState("")
   const [isSearching, setIsSearching] = useState(false)
-  const [results, setResults] = useState<typeof mockResults>([])
+  const [results, setResults] = useState<SearchResult[]>([])
   const [hasSearched, setHasSearched] = useState(false)
+  const [provider, setProvider] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [addingId, setAddingId] = useState<string | null>(null)
 
   const handleSearch = async () => {
-    if (!query) return
+    if (!query.trim()) return
+    
     setIsSearching(true)
     setHasSearched(true)
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-    setResults(mockResults)
-    setIsSearching(false)
+    setError(null)
+    
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`)
+      const data = await res.json()
+      
+      if (data.ok === false) {
+        setError(data.error || "Search failed")
+        setResults([])
+      } else {
+        setResults(data.results || [])
+        setProvider(data.provider || null)
+        if (data.results?.length === 0) {
+          toast.info("No results found")
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to search")
+      setResults([])
+    } finally {
+      setIsSearching(false)
+    }
+  }
+
+  const handleAdd = async (result: SearchResult) => {
+    if (!result.magnetUrl) {
+      toast.error("No magnet URL available for this result")
+      return
+    }
+
+    setAddingId(result.infoHash || result.title)
+    
+    try {
+      const res = await fetch("/api/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          magnet: result.magnetUrl,
+          name: result.title,
+        }),
+      })
+      
+      const data = await res.json()
+      
+      if (data.ok) {
+        toast.success(`Added to ${data.provider}`)
+      } else {
+        toast.error(data.error || "Failed to add")
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to add")
+    } finally {
+      setAddingId(null)
+    }
   }
 
   return (
     <div className="space-y-6 h-full flex flex-col">
       <div>
         <h1 className="text-2xl font-bold">Search</h1>
-        <p className="text-muted-foreground">Search for content across indexers</p>
+        <p className="text-muted-foreground">
+          Search for content across indexers
+          {provider && <span className="ml-2">• Using {provider}</span>}
+        </p>
       </div>
 
       <Card>
@@ -56,7 +122,7 @@ export default function SearchPage() {
                 className="pl-9"
               />
             </div>
-            <Button onClick={handleSearch} disabled={!query || isSearching}>
+            <Button onClick={handleSearch} disabled={!query.trim() || isSearching}>
               {isSearching ? (
                 <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Searching...</>
               ) : (
@@ -86,25 +152,51 @@ export default function SearchPage() {
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 <p className="mt-4 text-sm text-muted-foreground">Searching indexers...</p>
               </div>
+            ) : error ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <AlertCircle className="h-12 w-12 text-red-500/50" />
+                <p className="mt-4 text-lg font-medium text-red-500">Search Failed</p>
+                <p className="text-sm text-muted-foreground">{error}</p>
+              </div>
+            ) : results.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <Search className="h-12 w-12 text-muted-foreground/50" />
+                <p className="mt-4 text-lg font-medium">No Results</p>
+                <p className="text-sm text-muted-foreground">Try a different search query</p>
+              </div>
             ) : (
               <div className="space-y-2">
-                {results.map((result) => (
-                  <div key={result.id} className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted/50">
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">{result.title}</p>
-                      <div className="flex flex-wrap gap-2 mt-1">
-                        <Badge variant="outline">{result.indexer}</Badge>
-                        <span className="text-xs text-muted-foreground">{formatBytes(result.size)}</span>
-                        <span className="text-xs text-green-500">↑ {result.seeders}</span>
-                        <span className="text-xs text-red-500">↓ {result.leechers}</span>
+                {results.map((result, idx) => {
+                  const id = result.infoHash || result.title || String(idx)
+                  const isAdding = addingId === id
+                  
+                  return (
+                    <div key={id} className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted/50">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium truncate">{result.title}</p>
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          <Badge variant="outline">{result.indexer}</Badge>
+                          <span className="text-xs text-muted-foreground">{formatBytes(result.size)}</span>
+                          <span className="text-xs text-green-500">↑ {result.seeders}</span>
+                          <span className="text-xs text-red-500">↓ {result.leechers}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 ml-4">
+                        <Button 
+                          size="sm" 
+                          onClick={() => handleAdd(result)}
+                          disabled={isAdding || !result.magnetUrl}
+                        >
+                          {isAdding ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <><Plus className="mr-2 h-4 w-4" />Add</>
+                          )}
+                        </Button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 ml-4">
-                      <Button size="sm" variant="outline"><ExternalLink className="h-4 w-4" /></Button>
-                      <Button size="sm"><Plus className="mr-2 h-4 w-4" />Add</Button>
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </ScrollArea>

@@ -1,90 +1,281 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { 
   HardDrive, 
   Download, 
-  Upload, 
   Activity,
   Server,
   Clock,
   CheckCircle2,
+  AlertCircle,
+  Loader2,
+  RefreshCw,
 } from "lucide-react"
+import { Button } from "@/components/ui/button"
 
-const stats = [
-  {
-    title: "Total Downloads",
-    value: "1,234",
-    description: "Last 30 days",
-    icon: Download,
-    trend: "+12%",
-  },
-  {
-    title: "Active Transfers",
-    value: "8",
-    description: "In progress",
-    icon: Upload,
-    trend: "Live",
-  },
-  {
-    title: "Storage Used",
-    value: "2.4 TB",
-    description: "Across all providers",
-    icon: HardDrive,
-    trend: "85%",
-  },
-  {
-    title: "Uptime",
-    value: "99.9%",
-    description: "Last 7 days",
-    icon: Activity,
-    trend: "Healthy",
-  },
-]
+interface Provider {
+  name: string
+  id: string
+  configured: boolean
+  connected: boolean
+  torrentCount?: number
+  error?: string
+  webdav: {
+    configured: boolean
+    url: string | null
+  }
+}
 
-const recentActivity = [
-  { id: 1, title: "Movie Name 2024", status: "completed", provider: "TorBox", time: "2 min ago" },
-  { id: 2, title: "TV Show S01E05", status: "downloading", provider: "Real-Debrid", time: "5 min ago" },
-  { id: 3, title: "Documentary 2023", status: "completed", provider: "TorBox", time: "12 min ago" },
-  { id: 4, title: "Anime Series EP10", status: "queued", provider: "TorBox", time: "15 min ago" },
-  { id: 5, title: "Movie Classic 1995", status: "completed", provider: "Real-Debrid", time: "1 hour ago" },
-]
+interface Torrent {
+  id: string
+  name: string
+  status: string
+  progress: number
+  size: number
+  provider: string
+  addedAt: string
+  downloadSpeed: number
+  seeds: number
+}
 
-const services = [
-  { name: "Webhook Server", status: "running", port: 8978 },
-  { name: "Overseerr Poller", status: "running", port: null },
-  { name: "Dead Scanner", status: "stopped", port: null },
-  { name: "Organizer", status: "stopped", port: null },
-]
+interface ServiceStatus {
+  webhook: boolean
+  poller: boolean
+  mount: boolean
+  deadScanner: boolean
+  deadScannerWatch: boolean
+  organizerWatch: boolean
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B"
+  const k = 1024
+  const sizes = ["B", "KB", "MB", "GB", "TB"]
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
+}
+
+function formatRelativeTime(dateString: string): string {
+  if (!dateString) return "Unknown"
+  const date = new Date(dateString)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMins / 60)
+  const diffDays = Math.floor(diffHours / 24)
+  
+  if (diffMins < 1) return "Just now"
+  if (diffMins < 60) return `${diffMins} min ago`
+  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? "s" : ""} ago`
+  return `${diffDays} day${diffDays > 1 ? "s" : ""} ago`
+}
+
+function getStatusIcon(status: string, progress: number) {
+  const normalizedStatus = status.toLowerCase()
+  if (progress >= 100 || normalizedStatus.includes("completed") || normalizedStatus.includes("downloaded")) {
+    return <CheckCircle2 className="h-4 w-4 text-green-500" />
+  }
+  if (normalizedStatus.includes("download") || normalizedStatus.includes("active")) {
+    return <Download className="h-4 w-4 text-blue-500 animate-pulse" />
+  }
+  if (normalizedStatus.includes("error") || normalizedStatus.includes("failed")) {
+    return <AlertCircle className="h-4 w-4 text-red-500" />
+  }
+  return <Clock className="h-4 w-4 text-yellow-500" />
+}
+
+function getStatusBadgeVariant(status: string, progress: number): "default" | "secondary" | "outline" | "destructive" {
+  const normalizedStatus = status.toLowerCase()
+  if (progress >= 100 || normalizedStatus.includes("completed") || normalizedStatus.includes("downloaded")) {
+    return "default"
+  }
+  if (normalizedStatus.includes("download") || normalizedStatus.includes("active")) {
+    return "secondary"
+  }
+  if (normalizedStatus.includes("error") || normalizedStatus.includes("failed")) {
+    return "destructive"
+  }
+  return "outline"
+}
 
 export default function DashboardPage() {
+  const [providers, setProviders] = useState<Provider[]>([])
+  const [torrents, setTorrents] = useState<Torrent[]>([])
+  const [services, setServices] = useState<ServiceStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+
+  async function fetchData() {
+    try {
+      const [providersRes, torrentsRes, statusRes] = await Promise.all([
+        fetch("/api/providers"),
+        fetch("/api/torrents"),
+        fetch("/api/status"),
+      ])
+
+      const [providersData, torrentsData, statusData] = await Promise.all([
+        providersRes.json(),
+        torrentsRes.json(),
+        statusRes.json(),
+      ])
+
+      if (providersData.ok !== false) setProviders(providersData.providers || [])
+      if (torrentsData.ok !== false) setTorrents(torrentsData.torrents || [])
+      if (statusData.ok !== false) setServices(statusData.services || null)
+    } catch (error) {
+      console.error("Failed to fetch dashboard data:", error)
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchData()
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchData, 30000)
+    return () => clearInterval(interval)
+  }, [])
+
+  function handleRefresh() {
+    setRefreshing(true)
+    fetchData()
+  }
+
+  // Calculate stats from real data
+  const totalTorrents = torrents.length
+  const activeTorrents = torrents.filter(t => 
+    t.progress < 100 && !t.status.toLowerCase().includes("error")
+  ).length
+  const totalSize = torrents.reduce((acc, t) => acc + (t.size || 0), 0)
+  const connectedProviders = providers.filter(p => p.connected).length
+
+  const servicesList = services ? [
+    { name: "Webhook Server", status: services.webhook ? "running" : "stopped", port: 8978 },
+    { name: "Overseerr Poller", status: services.poller ? "running" : "stopped", port: null },
+    { name: "WebDAV Mount", status: services.mount ? "running" : "stopped", port: null },
+    { name: "Dead Scanner", status: services.deadScanner || services.deadScannerWatch ? "running" : "stopped", port: null },
+    { name: "Organizer", status: services.organizerWatch ? "running" : "stopped", port: null },
+  ] : []
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">Dashboard</h1>
+            <p className="text-muted-foreground">Loading...</p>
+          </div>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => (
+            <Card key={i}>
+              <CardHeader className="pb-2">
+                <Skeleton className="h-4 w-24" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-8 w-16" />
+                <Skeleton className="h-3 w-32 mt-2" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Card>
+            <CardHeader><Skeleton className="h-6 w-32" /></CardHeader>
+            <CardContent><Skeleton className="h-48" /></CardContent>
+          </Card>
+          <Card>
+            <CardHeader><Skeleton className="h-6 w-32" /></CardHeader>
+            <CardContent><Skeleton className="h-48" /></CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Dashboard</h1>
-        <p className="text-muted-foreground">Overview of your SchröDrive system</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Dashboard</h1>
+          <p className="text-muted-foreground">Overview of your SchröDrive system</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
+          {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          <span className="ml-2">Refresh</span>
+        </Button>
       </div>
 
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {stats.map((stat) => (
-          <Card key={stat.title}>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                {stat.title}
-              </CardTitle>
-              <stat.icon className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stat.value}</div>
-              <p className="text-xs text-muted-foreground">
-                {stat.description}
-                <span className="ml-2 text-green-500">{stat.trend}</span>
-              </p>
-            </CardContent>
-          </Card>
-        ))}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Total Torrents
+            </CardTitle>
+            <Download className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{totalTorrents}</div>
+            <p className="text-xs text-muted-foreground">
+              Across all providers
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Active Transfers
+            </CardTitle>
+            <Activity className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{activeTorrents}</div>
+            <p className="text-xs text-muted-foreground">
+              In progress
+              {activeTorrents > 0 && <span className="ml-2 text-blue-500">Live</span>}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Total Size
+            </CardTitle>
+            <HardDrive className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatBytes(totalSize)}</div>
+            <p className="text-xs text-muted-foreground">
+              Across all torrents
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Providers
+            </CardTitle>
+            <Server className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{connectedProviders}/{providers.length}</div>
+            <p className="text-xs text-muted-foreground">
+              Connected
+              {connectedProviders === providers.length && providers.length > 0 && (
+                <span className="ml-2 text-green-500">Healthy</span>
+              )}
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -95,39 +286,35 @@ export default function DashboardPage() {
             <CardDescription>Latest downloads and transfers</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {recentActivity.map((item) => (
-                <div key={item.id} className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    {item.status === "completed" ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-500" />
-                    ) : item.status === "downloading" ? (
-                      <Download className="h-4 w-4 text-blue-500 animate-pulse" />
-                    ) : (
-                      <Clock className="h-4 w-4 text-yellow-500" />
-                    )}
-                    <div>
-                      <p className="text-sm font-medium">{item.title}</p>
-                      <p className="text-xs text-muted-foreground">{item.provider}</p>
+            {torrents.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Download className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p>No torrents found</p>
+                <p className="text-sm">Add content to see activity here</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {torrents.slice(0, 5).map((torrent) => (
+                  <div key={torrent.id} className="flex items-center justify-between">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      {getStatusIcon(torrent.status, torrent.progress)}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">{torrent.name}</p>
+                        <p className="text-xs text-muted-foreground capitalize">{torrent.provider}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 ml-2">
+                      <Badge variant={getStatusBadgeVariant(torrent.status, torrent.progress)}>
+                        {torrent.progress >= 100 ? "completed" : torrent.status}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">
+                        {formatRelativeTime(torrent.addedAt)}
+                      </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge
-                      variant={
-                        item.status === "completed"
-                          ? "default"
-                          : item.status === "downloading"
-                          ? "secondary"
-                          : "outline"
-                      }
-                    >
-                      {item.status}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">{item.time}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -138,24 +325,31 @@ export default function DashboardPage() {
             <CardDescription>Background service status</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {services.map((service) => (
-                <div key={service.name} className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Server className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="text-sm font-medium">{service.name}</p>
-                      {service.port && (
-                        <p className="text-xs text-muted-foreground">Port {service.port}</p>
-                      )}
+            {servicesList.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Server className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p>Unable to fetch service status</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {servicesList.map((service) => (
+                  <div key={service.name} className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Server className="h-4 w-4 text-muted-foreground" />
+                      <div>
+                        <p className="text-sm font-medium">{service.name}</p>
+                        {service.port && (
+                          <p className="text-xs text-muted-foreground">Port {service.port}</p>
+                        )}
+                      </div>
                     </div>
+                    <Badge variant={service.status === "running" ? "default" : "secondary"}>
+                      {service.status}
+                    </Badge>
                   </div>
-                  <Badge variant={service.status === "running" ? "default" : "secondary"}>
-                    {service.status}
-                  </Badge>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -167,38 +361,49 @@ export default function DashboardPage() {
           <CardDescription>Connected debrid services</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="flex items-center justify-between rounded-lg border p-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10">
-                  <HardDrive className="h-5 w-5 text-blue-500" />
-                </div>
-                <div>
-                  <p className="font-medium">TorBox</p>
-                  <p className="text-sm text-muted-foreground">WebDAV Mounted</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-green-500" />
-                <span className="text-sm text-green-500">Connected</span>
-              </div>
+          {providers.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <HardDrive className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p>No providers configured</p>
+              <p className="text-sm">Configure TorBox or Real-Debrid in settings</p>
             </div>
-            <div className="flex items-center justify-between rounded-lg border p-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-500/10">
-                  <HardDrive className="h-5 w-5 text-purple-500" />
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              {providers.map((provider) => (
+                <div key={provider.id} className="flex items-center justify-between rounded-lg border p-4">
+                  <div className="flex items-center gap-3">
+                    <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${
+                      provider.id === "torbox" ? "bg-blue-500/10" : "bg-purple-500/10"
+                    }`}>
+                      <HardDrive className={`h-5 w-5 ${
+                        provider.id === "torbox" ? "text-blue-500" : "text-purple-500"
+                      }`} />
+                    </div>
+                    <div>
+                      <p className="font-medium">{provider.name}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {provider.connected 
+                          ? `${provider.torrentCount || 0} torrents`
+                          : provider.configured 
+                            ? "Connection failed" 
+                            : "Not configured"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className={`h-2 w-2 rounded-full ${
+                      provider.connected ? "bg-green-500" : provider.configured ? "bg-red-500" : "bg-gray-500"
+                    }`} />
+                    <span className={`text-sm ${
+                      provider.connected ? "text-green-500" : provider.configured ? "text-red-500" : "text-gray-500"
+                    }`}>
+                      {provider.connected ? "Connected" : provider.configured ? "Error" : "Disabled"}
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <p className="font-medium">Real-Debrid</p>
-                  <p className="text-sm text-muted-foreground">WebDAV Mounted</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-green-500" />
-                <span className="text-sm text-green-500">Connected</span>
-              </div>
+              ))}
             </div>
-          </div>
+          )}
         </CardContent>
       </Card>
     </div>

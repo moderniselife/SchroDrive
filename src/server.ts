@@ -2,7 +2,8 @@ import express from "express";
 import cors from "cors";
 import { config, requireEnv } from "./config";
 import { searchIndexer, pickBestResult, getMagnet, getProviderName, isIndexerConfigured } from "./indexer";
-import { addMagnetToTorbox } from "./torbox";
+import { addMagnetToTorbox, listTorboxTorrents } from "./torbox";
+import { listRDTorrents, isRDConfigured, addMagnetToRD, selectAllFilesRD } from "./realdebrid";
 import { startOverseerrPoller } from "./overseerr";
 import { startAutoUpdater } from "./autoUpdate";
 import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDocker, CONFIG_SCHEMA } from "./configApi";
@@ -72,6 +73,245 @@ export function startServer() {
         provider: isIndexerConfigured() ? getProviderName() : null,
       },
     });
+  });
+
+  // Provider status endpoint
+  app.get("/api/providers", async (_req, res) => {
+    try {
+      const providers: any[] = [];
+      const activeProviders = config.providers.length > 0 ? config.providers : ["torbox"];
+
+      // Check TorBox
+      if (activeProviders.includes("torbox") && config.torboxApiKey) {
+        try {
+          const torrents = await listTorboxTorrents();
+          providers.push({
+            name: "TorBox",
+            id: "torbox",
+            configured: true,
+            connected: true,
+            torrentCount: torrents.length,
+            webdav: {
+              configured: !!(config.torboxWebdavUrl && config.torboxWebdavUsername),
+              url: config.torboxWebdavUrl || null,
+            },
+          });
+        } catch (err: any) {
+          providers.push({
+            name: "TorBox",
+            id: "torbox",
+            configured: true,
+            connected: false,
+            error: err.message,
+            webdav: {
+              configured: !!(config.torboxWebdavUrl && config.torboxWebdavUsername),
+              url: config.torboxWebdavUrl || null,
+            },
+          });
+        }
+      } else if (activeProviders.includes("torbox")) {
+        providers.push({
+          name: "TorBox",
+          id: "torbox",
+          configured: false,
+          connected: false,
+          webdav: { configured: false, url: null },
+        });
+      }
+
+      // Check Real-Debrid
+      if (activeProviders.includes("realdebrid") && isRDConfigured()) {
+        try {
+          const torrents = await listRDTorrents();
+          providers.push({
+            name: "Real-Debrid",
+            id: "realdebrid",
+            configured: true,
+            connected: true,
+            torrentCount: torrents.length,
+            webdav: {
+              configured: !!(config.rdWebdavUrl && config.rdWebdavUsername),
+              url: config.rdWebdavUrl || null,
+            },
+          });
+        } catch (err: any) {
+          providers.push({
+            name: "Real-Debrid",
+            id: "realdebrid",
+            configured: true,
+            connected: false,
+            error: err.message,
+            webdav: {
+              configured: !!(config.rdWebdavUrl && config.rdWebdavUsername),
+              url: config.rdWebdavUrl || null,
+            },
+          });
+        }
+      } else if (activeProviders.includes("realdebrid")) {
+        providers.push({
+          name: "Real-Debrid",
+          id: "realdebrid",
+          configured: false,
+          connected: false,
+          webdav: { configured: false, url: null },
+        });
+      }
+
+      res.json({ ok: true, providers });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message, providers: [] });
+    }
+  });
+
+  // Torrents list endpoint
+  app.get("/api/torrents", async (_req, res) => {
+    try {
+      const allTorrents: any[] = [];
+      const activeProviders = config.providers.length > 0 ? config.providers : ["torbox"];
+
+      // Get TorBox torrents
+      if (activeProviders.includes("torbox") && config.torboxApiKey) {
+        try {
+          const torrents = await listTorboxTorrents();
+          for (const t of torrents) {
+            allTorrents.push({
+              id: t.id || t.hash,
+              name: t.name,
+              status: t.download_state || t.status || "unknown",
+              progress: typeof t.progress === "number" ? t.progress : 0,
+              size: t.size || 0,
+              provider: "torbox",
+              addedAt: t.created_at || t.added,
+              downloadSpeed: t.download_speed || 0,
+              uploadSpeed: t.upload_speed || 0,
+              seeds: t.seeds || 0,
+              peers: t.peers || 0,
+            });
+          }
+        } catch (err: any) {
+          console.error("[api/torrents] TorBox error:", err.message);
+        }
+      }
+
+      // Get Real-Debrid torrents
+      if (activeProviders.includes("realdebrid") && isRDConfigured()) {
+        try {
+          const torrents = await listRDTorrents();
+          for (const t of torrents) {
+            allTorrents.push({
+              id: t.id,
+              name: t.filename || t.original_filename,
+              status: t.status || "unknown",
+              progress: typeof t.progress === "number" ? t.progress : 0,
+              size: t.bytes || 0,
+              provider: "realdebrid",
+              addedAt: t.added,
+              downloadSpeed: t.speed || 0,
+              uploadSpeed: 0,
+              seeds: t.seeders || 0,
+              peers: 0,
+            });
+          }
+        } catch (err: any) {
+          console.error("[api/torrents] Real-Debrid error:", err.message);
+        }
+      }
+
+      // Sort by added date descending
+      allTorrents.sort((a, b) => {
+        const dateA = new Date(a.addedAt || 0).getTime();
+        const dateB = new Date(b.addedAt || 0).getTime();
+        return dateB - dateA;
+      });
+
+      res.json({ ok: true, torrents: allTorrents });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message, torrents: [] });
+    }
+  });
+
+  // Search endpoint
+  app.get("/api/search", async (req, res) => {
+    try {
+      const query = String(req.query.q || "").trim();
+      const categories = req.query.categories ? String(req.query.categories).split(",") : undefined;
+
+      if (!query) {
+        return res.status(400).json({ ok: false, error: "Missing query parameter 'q'" });
+      }
+
+      if (!isIndexerConfigured()) {
+        return res.status(503).json({ 
+          ok: false, 
+          error: "No indexer configured. Set Jackett or Prowlarr in settings.",
+          results: [],
+        });
+      }
+
+      console.log(`[${new Date().toISOString()}][api/search] searching`, { query, categories });
+      const results = await searchIndexer(query, { categories });
+      
+      // Map results to a consistent format
+      const mappedResults = results.map((r: any) => ({
+        title: r.title || r.Title,
+        size: r.size || r.Size || 0,
+        seeders: r.seeders || r.Seeders || 0,
+        leechers: r.leechers || r.Leechers || 0,
+        magnetUrl: r.magnetUrl || r.MagnetUrl || r.downloadUrl || r.DownloadUrl,
+        infoHash: r.infoHash || r.InfoHash,
+        indexer: r.indexer || r.Indexer || "Unknown",
+        publishDate: r.publishDate || r.PublishDate,
+        categories: r.categories || r.Categories || [],
+      }));
+
+      res.json({ 
+        ok: true, 
+        results: mappedResults,
+        provider: getProviderName(),
+        count: mappedResults.length,
+      });
+    } catch (err: any) {
+      console.error(`[${new Date().toISOString()}][api/search] error`, err.message);
+      res.status(500).json({ ok: false, error: err.message, results: [] });
+    }
+  });
+
+  // Add magnet endpoint
+  app.post("/api/add", async (req, res) => {
+    try {
+      const { magnet, name, provider: targetProvider } = req.body || {};
+
+      if (!magnet) {
+        return res.status(400).json({ ok: false, error: "Missing 'magnet' in request body" });
+      }
+
+      const activeProviders = config.providers.length > 0 ? config.providers : ["torbox"];
+      const selectedProvider = targetProvider || activeProviders[0];
+
+      if (selectedProvider === "torbox") {
+        if (!config.torboxApiKey) {
+          return res.status(503).json({ ok: false, error: "TorBox API key not configured" });
+        }
+        console.log(`[${new Date().toISOString()}][api/add] adding to TorBox`, { name });
+        const result = await addMagnetToTorbox(magnet, name);
+        res.json({ ok: true, provider: "torbox", result });
+      } else if (selectedProvider === "realdebrid") {
+        if (!isRDConfigured()) {
+          return res.status(503).json({ ok: false, error: "Real-Debrid not configured" });
+        }
+        console.log(`[${new Date().toISOString()}][api/add] adding to Real-Debrid`, { name });
+        const result = await addMagnetToRD(magnet);
+        if (result.id) {
+          await selectAllFilesRD(result.id);
+        }
+        res.json({ ok: true, provider: "realdebrid", result });
+      } else {
+        return res.status(400).json({ ok: false, error: `Unknown provider: ${selectedProvider}` });
+      }
+    } catch (err: any) {
+      console.error(`[${new Date().toISOString()}][api/add] error`, err.message);
+      res.status(500).json({ ok: false, error: err.message });
+    }
   });
 
   if (config.runWebhook) {
