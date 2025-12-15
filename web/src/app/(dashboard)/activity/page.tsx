@@ -1,13 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Download, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Globe, FileText, Link2 } from "lucide-react"
+import { Download, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Globe, FileText, Link2, Radio } from "lucide-react"
 
 interface DownloadItem {
   id: string
@@ -80,31 +80,90 @@ export default function ActivityPage() {
   const [downloads, setDownloads] = useState<DownloadItem[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [status, setStatus] = useState<string>("")
+  const [isStreaming, setIsStreaming] = useState(false)
+  const eventSourceRef = useRef<EventSource | null>(null)
 
-  async function fetchDownloads() {
-    try {
-      const res = await fetch("/api/downloads")
-      const data = await res.json()
-      if (data.ok !== false) {
-        setDownloads(data.downloads || [])
-      }
-    } catch (error) {
-      console.error("Failed to fetch downloads:", error)
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
+  const fetchDownloadsStream = useCallback(() => {
+    // Close existing connection
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
     }
-  }
+
+    setIsStreaming(true)
+    setStatus("Connecting...")
+    
+    const eventSource = new EventSource("/api/downloads/stream")
+    eventSourceRef.current = eventSource
+
+    eventSource.addEventListener("status", (e) => {
+      const data = JSON.parse(e.data)
+      setStatus(data.message || "Loading...")
+    })
+
+    eventSource.addEventListener("downloads", (e) => {
+      const data = JSON.parse(e.data)
+      setDownloads((prev) => {
+        // Merge new downloads, avoiding duplicates by id+provider+type
+        const newDownloads = [...prev]
+        for (const d of data.downloads || []) {
+          const key = `${d.provider}-${d.type}-${d.id}`
+          const existingIdx = newDownloads.findIndex((x) => `${x.provider}-${x.type}-${x.id}` === key)
+          if (existingIdx >= 0) {
+            newDownloads[existingIdx] = d
+          } else {
+            newDownloads.push(d)
+          }
+        }
+        // Sort by addedAt descending
+        newDownloads.sort((a, b) => new Date(b.addedAt || 0).getTime() - new Date(a.addedAt || 0).getTime())
+        return newDownloads
+      })
+      setLoading(false)
+      setStatus(`Loaded ${data.count} ${data.type} from ${data.provider}`)
+    })
+
+    eventSource.addEventListener("error", (e: any) => {
+      try {
+        const data = JSON.parse(e.data)
+        console.error("Stream error:", data)
+        setStatus(`Error: ${data.error || "Unknown error"}`)
+      } catch {
+        console.error("Stream connection error")
+      }
+    })
+
+    eventSource.addEventListener("done", () => {
+      setIsStreaming(false)
+      setRefreshing(false)
+      setStatus("")
+      eventSource.close()
+    })
+
+    eventSource.onerror = () => {
+      setIsStreaming(false)
+      setRefreshing(false)
+      setLoading(false)
+      eventSource.close()
+    }
+  }, [])
 
   useEffect(() => {
-    fetchDownloads()
-    const interval = setInterval(fetchDownloads, 10000)
-    return () => clearInterval(interval)
-  }, [])
+    fetchDownloadsStream()
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchDownloadsStream, 30000)
+    return () => {
+      clearInterval(interval)
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+      }
+    }
+  }, [fetchDownloadsStream])
 
   function handleRefresh() {
     setRefreshing(true)
-    fetchDownloads()
+    setDownloads([]) // Clear for fresh load
+    fetchDownloadsStream()
   }
 
   const activeCount = downloads.filter((d) => getStatus(d) === "downloading").length
@@ -140,13 +199,21 @@ export default function ActivityPage() {
         <div>
           <h1 className="text-2xl font-bold">Downloads</h1>
           <p className="text-muted-foreground">
-            Real-Debrid downloads & TorBox web/usenet downloads
+            {status || "Real-Debrid downloads & TorBox web/usenet downloads"}
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
-          {refreshing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          {isStreaming && (
+            <Badge variant="outline" className="gap-1">
+              <Radio className="h-3 w-3 animate-pulse" />
+              Loading
+            </Badge>
+          )}
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || isStreaming}>
+            {(refreshing || isStreaming) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">

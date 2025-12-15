@@ -321,6 +321,162 @@ function startServer() {
             res.status(500).json({ ok: false, error: err.message, downloads: [] });
         }
     });
+    // SSE Streaming endpoint for torrents - sends data as each provider responds
+    app.get("/api/torrents/stream", async (req, res) => {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders();
+        const send = (event, data) => {
+            res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+        try {
+            const activeProviders = config_1.config.providers.length > 0 ? config_1.config.providers : ["torbox"];
+            send("status", { message: "Fetching torrents...", providers: activeProviders });
+            // Fetch TorBox torrents
+            if (activeProviders.includes("torbox") && config_1.config.torboxApiKey) {
+                send("status", { message: "Fetching TorBox torrents..." });
+                try {
+                    const torrents = await (0, torbox_1.listTorboxTorrents)();
+                    const mapped = torrents.map((t) => ({
+                        id: t.id || t.hash,
+                        name: t.name,
+                        status: t.download_state || t.status || "unknown",
+                        progress: typeof t.progress === "number" ? t.progress : 0,
+                        size: t.size || 0,
+                        provider: "torbox",
+                        addedAt: t.created_at || t.added,
+                        downloadSpeed: t.download_speed || 0,
+                        uploadSpeed: t.upload_speed || 0,
+                        seeds: t.seeds || 0,
+                        peers: t.peers || 0,
+                    }));
+                    send("torrents", { provider: "torbox", torrents: mapped, count: mapped.length });
+                }
+                catch (err) {
+                    send("error", { provider: "torbox", error: err.message });
+                }
+            }
+            // Fetch Real-Debrid torrents
+            if (activeProviders.includes("realdebrid") && (0, realdebrid_1.isRDConfigured)()) {
+                send("status", { message: "Fetching Real-Debrid torrents..." });
+                try {
+                    const torrents = await (0, realdebrid_1.listRDTorrents)();
+                    const mapped = torrents.map((t) => ({
+                        id: t.id,
+                        name: t.filename || t.original_filename,
+                        status: t.status || "unknown",
+                        progress: typeof t.progress === "number" ? t.progress : 0,
+                        size: t.bytes || 0,
+                        provider: "realdebrid",
+                        addedAt: t.added,
+                        downloadSpeed: t.speed || 0,
+                        uploadSpeed: 0,
+                        seeds: t.seeders || 0,
+                        peers: 0,
+                    }));
+                    send("torrents", { provider: "realdebrid", torrents: mapped, count: mapped.length });
+                }
+                catch (err) {
+                    send("error", { provider: "realdebrid", error: err.message });
+                }
+            }
+            send("done", { message: "All providers fetched" });
+            res.end();
+        }
+        catch (err) {
+            send("error", { error: err.message });
+            res.end();
+        }
+    });
+    // SSE Streaming endpoint for downloads - sends data as each provider responds
+    app.get("/api/downloads/stream", async (req, res) => {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders();
+        const send = (event, data) => {
+            res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+        try {
+            const activeProviders = config_1.config.providers.length > 0 ? config_1.config.providers : ["torbox"];
+            send("status", { message: "Fetching downloads...", providers: activeProviders });
+            // Fetch Real-Debrid downloads
+            if (activeProviders.includes("realdebrid") && (0, realdebrid_1.isRDConfigured)()) {
+                send("status", { message: "Fetching Real-Debrid downloads..." });
+                try {
+                    const downloads = await (0, realdebrid_1.listRDDownloads)();
+                    const mapped = downloads.map((d) => ({
+                        id: d.id,
+                        name: d.filename,
+                        type: "download",
+                        status: "downloaded",
+                        progress: 100,
+                        size: d.filesize || 0,
+                        provider: "realdebrid",
+                        addedAt: d.generated,
+                        downloadUrl: d.download,
+                        host: d.host,
+                        link: d.link,
+                        streamable: d.streamable,
+                        mimeType: d.mimeType,
+                    }));
+                    send("downloads", { provider: "realdebrid", type: "download", downloads: mapped, count: mapped.length });
+                }
+                catch (err) {
+                    send("error", { provider: "realdebrid", error: err.message });
+                }
+            }
+            // Fetch TorBox web downloads
+            if (activeProviders.includes("torbox") && config_1.config.torboxApiKey) {
+                send("status", { message: "Fetching TorBox web downloads..." });
+                try {
+                    const webDownloads = await (0, torbox_1.listTorboxWebDownloads)();
+                    const mapped = webDownloads.map((d) => ({
+                        id: d.id,
+                        name: d.name,
+                        type: "web",
+                        status: d.download_state || d.status || "unknown",
+                        progress: typeof d.progress === "number" ? d.progress : 100,
+                        size: d.size || 0,
+                        provider: "torbox",
+                        addedAt: d.created_at || d.added,
+                        downloadSpeed: d.download_speed || 0,
+                    }));
+                    send("downloads", { provider: "torbox", type: "web", downloads: mapped, count: mapped.length });
+                }
+                catch (err) {
+                    send("error", { provider: "torbox", type: "web", error: err.message });
+                }
+                // Fetch TorBox usenet downloads
+                send("status", { message: "Fetching TorBox usenet downloads..." });
+                try {
+                    const usenetDownloads = await (0, torbox_1.listTorboxUsenetDownloads)();
+                    const mapped = usenetDownloads.map((d) => ({
+                        id: d.id,
+                        name: d.name,
+                        type: "usenet",
+                        status: d.download_state || d.status || "unknown",
+                        progress: typeof d.progress === "number" ? d.progress : 100,
+                        size: d.size || 0,
+                        provider: "torbox",
+                        addedAt: d.created_at || d.added,
+                        downloadSpeed: d.download_speed || 0,
+                    }));
+                    send("downloads", { provider: "torbox", type: "usenet", downloads: mapped, count: mapped.length });
+                }
+                catch (err) {
+                    send("error", { provider: "torbox", type: "usenet", error: err.message });
+                }
+            }
+            send("done", { message: "All providers fetched" });
+            res.end();
+        }
+        catch (err) {
+            send("error", { error: err.message });
+            res.end();
+        }
+    });
     // Search endpoint
     app.get("/api/search", async (req, res) => {
         try {

@@ -1,13 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Download, Upload, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Magnet, HardDrive } from "lucide-react"
+import { Download, Upload, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Magnet, HardDrive, Radio } from "lucide-react"
 
 interface Torrent {
   id: string
@@ -77,31 +77,90 @@ export default function TorrentsPage() {
   const [torrents, setTorrents] = useState<Torrent[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [status, setStatus] = useState<string>("")
+  const [isStreaming, setIsStreaming] = useState(false)
+  const eventSourceRef = useRef<EventSource | null>(null)
 
-  async function fetchTorrents() {
-    try {
-      const res = await fetch("/api/torrents")
-      const data = await res.json()
-      if (data.ok !== false) {
-        setTorrents(data.torrents || [])
-      }
-    } catch (error) {
-      console.error("Failed to fetch torrents:", error)
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
+  const fetchTorrentsStream = useCallback(() => {
+    // Close existing connection
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
     }
-  }
+
+    setIsStreaming(true)
+    setStatus("Connecting...")
+    
+    const eventSource = new EventSource("/api/torrents/stream")
+    eventSourceRef.current = eventSource
+
+    eventSource.addEventListener("status", (e) => {
+      const data = JSON.parse(e.data)
+      setStatus(data.message || "Loading...")
+    })
+
+    eventSource.addEventListener("torrents", (e) => {
+      const data = JSON.parse(e.data)
+      setTorrents((prev) => {
+        // Merge new torrents, avoiding duplicates by id+provider
+        const newTorrents = [...prev]
+        for (const t of data.torrents || []) {
+          const key = `${t.provider}-${t.id}`
+          const existingIdx = newTorrents.findIndex((x) => `${x.provider}-${x.id}` === key)
+          if (existingIdx >= 0) {
+            newTorrents[existingIdx] = t
+          } else {
+            newTorrents.push(t)
+          }
+        }
+        // Sort by addedAt descending
+        newTorrents.sort((a, b) => new Date(b.addedAt || 0).getTime() - new Date(a.addedAt || 0).getTime())
+        return newTorrents
+      })
+      setLoading(false)
+      setStatus(`Loaded ${data.count} from ${data.provider}`)
+    })
+
+    eventSource.addEventListener("error", (e: any) => {
+      try {
+        const data = JSON.parse(e.data)
+        console.error("Stream error:", data)
+        setStatus(`Error: ${data.error || "Unknown error"}`)
+      } catch {
+        console.error("Stream connection error")
+      }
+    })
+
+    eventSource.addEventListener("done", () => {
+      setIsStreaming(false)
+      setRefreshing(false)
+      setStatus("")
+      eventSource.close()
+    })
+
+    eventSource.onerror = () => {
+      setIsStreaming(false)
+      setRefreshing(false)
+      setLoading(false)
+      eventSource.close()
+    }
+  }, [])
 
   useEffect(() => {
-    fetchTorrents()
-    const interval = setInterval(fetchTorrents, 10000)
-    return () => clearInterval(interval)
-  }, [])
+    fetchTorrentsStream()
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchTorrentsStream, 30000)
+    return () => {
+      clearInterval(interval)
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+      }
+    }
+  }, [fetchTorrentsStream])
 
   function handleRefresh() {
     setRefreshing(true)
-    fetchTorrents()
+    setTorrents([]) // Clear for fresh load
+    fetchTorrentsStream()
   }
 
   const activeCount = torrents.filter((t) => getStatus(t) === "downloading").length
@@ -137,13 +196,21 @@ export default function TorrentsPage() {
         <div>
           <h1 className="text-2xl font-bold">Torrents</h1>
           <p className="text-muted-foreground">
-            Real-Debrid & TorBox torrent activity
+            {status || "Real-Debrid & TorBox torrent activity"}
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
-          {refreshing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          {isStreaming && (
+            <Badge variant="outline" className="gap-1">
+              <Radio className="h-3 w-3 animate-pulse" />
+              Loading
+            </Badge>
+          )}
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || isStreaming}>
+            {(refreshing || isStreaming) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
