@@ -42,6 +42,17 @@ interface Torrent {
   seeds: number
 }
 
+interface DownloadItem {
+  id: string
+  name: string
+  type: string
+  status: string
+  progress: number
+  size: number
+  provider: string
+  addedAt: string
+}
+
 interface ServiceStatus {
   webhook: boolean
   poller: boolean
@@ -105,26 +116,30 @@ function getStatusBadgeVariant(status: string, progress: number): "default" | "s
 export default function DashboardPage() {
   const [providers, setProviders] = useState<Provider[]>([])
   const [torrents, setTorrents] = useState<Torrent[]>([])
+  const [downloads, setDownloads] = useState<DownloadItem[]>([])
   const [services, setServices] = useState<ServiceStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
 
   async function fetchData() {
     try {
-      const [providersRes, torrentsRes, statusRes] = await Promise.all([
+      const [providersRes, torrentsRes, downloadsRes, statusRes] = await Promise.all([
         fetch("/api/providers"),
         fetch("/api/torrents"),
+        fetch("/api/downloads"),
         fetch("/api/status"),
       ])
 
-      const [providersData, torrentsData, statusData] = await Promise.all([
+      const [providersData, torrentsData, downloadsData, statusData] = await Promise.all([
         providersRes.json(),
         torrentsRes.json(),
+        downloadsRes.json(),
         statusRes.json(),
       ])
 
       if (providersData.ok !== false) setProviders(providersData.providers || [])
       if (torrentsData.ok !== false) setTorrents(torrentsData.torrents || [])
+      if (downloadsData.ok !== false) setDownloads(downloadsData.downloads || [])
       if (statusData.ok !== false) setServices(statusData.services || null)
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error)
@@ -146,13 +161,25 @@ export default function DashboardPage() {
     fetchData()
   }
 
-  // Calculate stats from real data
+  // Calculate stats from real data - combine torrents + downloads
   const totalTorrents = torrents.length
+  const totalDownloads = downloads.length
   const activeTorrents = torrents.filter(t => 
     t.progress < 100 && !t.status.toLowerCase().includes("error")
   ).length
-  const totalSize = torrents.reduce((acc, t) => acc + (t.size || 0), 0)
+  const activeDownloads = downloads.filter(d => 
+    d.progress < 100 && !d.status.toLowerCase().includes("error")
+  ).length
+  const totalTorrentSize = torrents.reduce((acc, t) => acc + (t.size || 0), 0)
+  const totalDownloadSize = downloads.reduce((acc, d) => acc + (d.size || 0), 0)
+  const totalSize = totalTorrentSize + totalDownloadSize
   const connectedProviders = providers.filter(p => p.connected).length
+  
+  // Combine recent activity from both sources
+  const allActivity = [
+    ...torrents.map(t => ({ ...t, source: "torrent" as const })),
+    ...downloads.map(d => ({ ...d, source: "download" as const, seeds: 0, downloadSpeed: 0 })),
+  ].sort((a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime())
 
   const servicesList = services ? [
     { name: "Webhook Server", status: services.webhook ? "running" : "stopped", port: 8978 },
@@ -216,14 +243,14 @@ export default function DashboardPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Total Torrents
+              Torrents
             </CardTitle>
             <Download className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{totalTorrents}</div>
             <p className="text-xs text-muted-foreground">
-              Across all providers
+              {activeTorrents > 0 ? `${activeTorrents} active` : "Across all providers"}
             </p>
           </CardContent>
         </Card>
@@ -231,15 +258,14 @@ export default function DashboardPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Active Transfers
+              Downloads
             </CardTitle>
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{activeTorrents}</div>
+            <div className="text-2xl font-bold">{totalDownloads}</div>
             <p className="text-xs text-muted-foreground">
-              In progress
-              {activeTorrents > 0 && <span className="ml-2 text-blue-500">Live</span>}
+              {activeDownloads > 0 ? `${activeDownloads} active` : "Ready to stream"}
             </p>
           </CardContent>
         </Card>
@@ -254,7 +280,7 @@ export default function DashboardPage() {
           <CardContent>
             <div className="text-2xl font-bold">{formatBytes(totalSize)}</div>
             <p className="text-xs text-muted-foreground">
-              Across all torrents
+              {totalTorrents + totalDownloads} items total
             </p>
           </CardContent>
         </Card>
@@ -286,29 +312,31 @@ export default function DashboardPage() {
             <CardDescription>Latest downloads and transfers</CardDescription>
           </CardHeader>
           <CardContent>
-            {torrents.length === 0 ? (
+            {allActivity.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <Download className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p>No torrents found</p>
+                <p>No activity found</p>
                 <p className="text-sm">Add content to see activity here</p>
               </div>
             ) : (
               <div className="space-y-4">
-                {torrents.slice(0, 5).map((torrent) => (
-                  <div key={torrent.id} className="flex items-center justify-between">
+                {allActivity.slice(0, 5).map((item) => (
+                  <div key={`${item.source}-${item.provider}-${item.id}`} className="flex items-center justify-between">
                     <div className="flex items-center gap-3 min-w-0 flex-1">
-                      {getStatusIcon(torrent.status, torrent.progress)}
+                      {getStatusIcon(item.status, item.progress)}
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium truncate">{torrent.name}</p>
-                        <p className="text-xs text-muted-foreground capitalize">{torrent.provider}</p>
+                        <p className="text-sm font-medium truncate">{item.name}</p>
+                        <p className="text-xs text-muted-foreground capitalize">
+                          {item.provider} • {item.source}
+                        </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 ml-2">
-                      <Badge variant={getStatusBadgeVariant(torrent.status, torrent.progress)}>
-                        {torrent.progress >= 100 ? "completed" : torrent.status}
+                      <Badge variant={getStatusBadgeVariant(item.status, item.progress)}>
+                        {item.progress >= 100 ? "completed" : item.status}
                       </Badge>
                       <span className="text-xs text-muted-foreground whitespace-nowrap">
-                        {formatRelativeTime(torrent.addedAt)}
+                        {formatRelativeTime(item.addedAt)}
                       </span>
                     </div>
                   </div>
