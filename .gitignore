@@ -6,3 +6,4 @@ package-lock.json
 .env.*
 !.env.example
 .DS_Store
+personal-stack.yml
