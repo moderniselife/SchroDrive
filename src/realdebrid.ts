@@ -52,6 +52,9 @@ export async function listRDTorrents(): Promise<any[]> {
     return arr;
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
+    const isNetworkError = err?.code === 'ECONNREFUSED' || err?.code === 'ENOTFOUND' || 
+                           err?.code === 'ETIMEDOUT' || err?.code === 'ECONNRESET' ||
+                           errorMsg.includes('timeout') || errorMsg.includes('network');
     
     // Check if this is a rate limit error
     if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
@@ -60,7 +63,10 @@ export async function listRDTorrents(): Promise<any[]> {
     
     console.error(`[${new Date().toISOString()}][rd] list torrents failed`, {
       error: errorMsg,
+      code: err?.code,
       status: err?.response?.status,
+      statusText: err?.response?.statusText,
+      isNetworkError,
       rateLimited: rateLimiter.isRateLimited(PROVIDER_NAME),
     });
     
@@ -189,6 +195,9 @@ export async function listRDDownloads(): Promise<any[]> {
     return arr;
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
+    const isNetworkError = err?.code === 'ECONNREFUSED' || err?.code === 'ENOTFOUND' || 
+                           err?.code === 'ETIMEDOUT' || err?.code === 'ECONNRESET' ||
+                           errorMsg.includes('timeout') || errorMsg.includes('network');
     
     // Check if this is a rate limit error
     if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
@@ -197,7 +206,10 @@ export async function listRDDownloads(): Promise<any[]> {
     
     console.error(`[${new Date().toISOString()}][rd] list downloads failed`, {
       error: errorMsg,
+      code: err?.code,
       status: err?.response?.status,
+      statusText: err?.response?.statusText,
+      isNetworkError,
       rateLimited: rateLimiter.isRateLimited(PROVIDER_NAME),
     });
     

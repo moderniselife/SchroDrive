@@ -162,16 +162,21 @@ export async function listTorboxTorrents(): Promise<any[]> {
     return list as any[];
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
+    const isNetworkError = err?.code === 'ECONNREFUSED' || err?.code === 'ENOTFOUND' || 
+                           err?.code === 'ETIMEDOUT' || err?.code === 'ECONNRESET' ||
+                           errorMsg.includes('timeout') || errorMsg.includes('network');
     
     // Check if this is a rate limit error
-    if (rateLimiter.isRateLimitError(err)) {
+    if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
       rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
     }
     
     console.error(`[${new Date().toISOString()}][torbox] list torrents failed`, {
       error: errorMsg,
+      code: err?.code,
       status: err?.response?.status,
       statusText: err?.response?.statusText,
+      isNetworkError,
       rateLimited: rateLimiter.isRateLimited(PROVIDER_NAME),
     });
     

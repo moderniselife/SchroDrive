@@ -24,8 +24,9 @@ class RateLimiter {
   ]);
   
   // Cache for last successful results
+  // Cache TTL must be >= max backoff to ensure cached data survives rate limit periods
   private cache: Map<string, { data: any; timestamp: number }> = new Map();
-  private cacheTtlMs = 60000; // Cache for 60 seconds
+  private cacheTtlMs = 20 * 60 * 1000; // Cache for 20 minutes (longer than max backoff of 15min)
 
   private getState(provider: string): RateLimitState {
     if (!this.states.has(provider)) {

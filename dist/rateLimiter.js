@@ -16,8 +16,9 @@ class RateLimiter {
             ["realdebrid", 500], // 500ms between RD requests (250/min limit)
         ]);
         // Cache for last successful results
+        // Cache TTL must be >= max backoff to ensure cached data survives rate limit periods
         this.cache = new Map();
-        this.cacheTtlMs = 60000; // Cache for 60 seconds
+        this.cacheTtlMs = 20 * 60 * 1000; // Cache for 20 minutes (longer than max backoff of 15min)
     }
     getState(provider) {
         if (!this.states.has(provider)) {
