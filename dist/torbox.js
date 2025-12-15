@@ -1,11 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.isTorboxRateLimited = isTorboxRateLimited;
+exports.getTorboxWaitTime = getTorboxWaitTime;
 exports.checkExistingTorrents = checkExistingTorrents;
 exports.addMagnetToTorbox = addMagnetToTorbox;
 exports.listTorboxTorrents = listTorboxTorrents;
 exports.isTorboxTorrentDead = isTorboxTorrentDead;
 const node_torbox_api_1 = require("node-torbox-api");
 const config_1 = require("./config");
+const rateLimiter_1 = require("./rateLimiter");
 let client = null;
 function getClient() {
     (0, config_1.requireEnv)("torboxApiKey");
@@ -16,7 +19,20 @@ function getClient() {
     }
     return client;
 }
+const PROVIDER_NAME = "torbox";
+function isTorboxRateLimited() {
+    return rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME);
+}
+function getTorboxWaitTime() {
+    return rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+}
 async function checkExistingTorrents(searchTitle) {
+    // Check rate limit before making request
+    if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
+        const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+        console.warn(`[${new Date().toISOString()}][torbox] rate limited, skipping check (wait ${waitTime}s)`);
+        return false; // Assume doesn't exist to avoid blocking
+    }
     const c = getClient();
     console.log(`[${new Date().toISOString()}][torbox] checking existing torrents`, { searchTitle });
     const started = Date.now();
@@ -25,6 +41,8 @@ async function checkExistingTorrents(searchTitle) {
         const res = await c.torrents.getTorrentList({
             limit: 100 // Get more torrents to check against
         });
+        // Record success
+        rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
         // Handle both single torrent and array responses
         const existingTorrents = Array.isArray(res.data) ? res.data : [res.data].filter(Boolean);
         console.log(`[${new Date().toISOString()}][torbox] existing torrents check`, {
@@ -48,9 +66,14 @@ async function checkExistingTorrents(searchTitle) {
         return hasExisting;
     }
     catch (err) {
+        const errorMsg = err?.message || String(err);
+        // Check if this is a rate limit error
+        if (rateLimiter_1.rateLimiter.isRateLimitError(err)) {
+            rateLimiter_1.rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+        }
         console.error(`[${new Date().toISOString()}][torbox] existing torrents check failed`, {
             searchTitle,
-            error: err?.message || String(err),
+            error: errorMsg,
             status: err?.response?.status,
             statusText: err?.response?.statusText,
         });
@@ -59,35 +82,65 @@ async function checkExistingTorrents(searchTitle) {
     }
 }
 async function addMagnetToTorbox(magnet, name) {
+    // Check rate limit before making request
+    if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
+        const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+        const error = new Error(`TorBox rate limited, retry in ${waitTime}s`);
+        console.warn(`[${new Date().toISOString()}][torbox] rate limited, cannot add magnet (wait ${waitTime}s)`);
+        throw error;
+    }
     const c = getClient();
     const teaser = magnet.slice(0, 80) + '...';
     console.log(`[${new Date().toISOString()}][torbox] createTorrent`, { name, teaser });
     const started = Date.now();
-    const res = await c.torrents.createTorrent({ magnet, name }).catch((err) => {
+    try {
+        const res = await c.torrents.createTorrent({ magnet, name });
+        rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
+        console.log(`[${new Date().toISOString()}][torbox] createTorrent done`, { ms: Date.now() - started });
+        return res;
+    }
+    catch (err) {
+        const errorMsg = err?.message || String(err);
+        // Check if this is a rate limit error
+        if (rateLimiter_1.rateLimiter.isRateLimitError(err)) {
+            rateLimiter_1.rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+        }
         console.error(`[${new Date().toISOString()}][torbox] createTorrent failed`, {
             name,
             teaser,
-            error: err?.message || String(err),
+            error: errorMsg,
             status: err?.response?.status,
             statusText: err?.response?.statusText,
+            rateLimited: rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME),
         });
         throw err;
-    });
-    console.log(`[${new Date().toISOString()}][torbox] createTorrent done`, { ms: Date.now() - started });
-    return res;
+    }
 }
 async function listTorboxTorrents() {
+    // Check rate limit before making request
+    if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
+        const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+        console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning empty list (wait ${waitTime}s)`);
+        return [];
+    }
     const c = getClient();
     try {
         const res = await c.torrents.getTorrentList({ limit: 100 });
+        rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
         const list = Array.isArray(res?.data) ? res.data : [res?.data].filter(Boolean);
         return list;
     }
     catch (err) {
+        const errorMsg = err?.message || String(err);
+        // Check if this is a rate limit error
+        if (rateLimiter_1.rateLimiter.isRateLimitError(err)) {
+            rateLimiter_1.rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+        }
         console.error(`[${new Date().toISOString()}][torbox] list torrents failed`, {
-            error: err?.message || String(err),
+            error: errorMsg,
             status: err?.response?.status,
             statusText: err?.response?.statusText,
+            rateLimited: rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME),
         });
         return [];
     }
