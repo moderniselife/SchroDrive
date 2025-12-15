@@ -7,7 +7,8 @@ services:
     network_mode: host
     dns: 1.1.1.1
     ports:
-      - "8978:8978"
+      - "8978:8978"   # Backend API
+      - "3000:3000"   # Web GUI (when RUN_WEB_GUI=true)
     volumes:
       - type: bind
         source: /home/joseph/schrodrive
@@ -21,21 +22,29 @@ services:
     security_opt:
       - apparmor:unconfined
     environment:
+      # ===== Web GUI =====
+      - RUN_WEB_GUI=${RUN_WEB_GUI:-true}
+      - WEB_PORT=${WEB_PORT:-3000}
+      - BACKEND_URL=${BACKEND_URL:-http://localhost:8978}
+      # ===== Indexer: Prowlarr =====
       - PROWLARR_URL=${PROWLARR_URL:-http://192.168.1.124:9696}
       - PROWLARR_API_KEY=${PROWLARR_API_KEY}
       - PROWLARR_TIMEOUT_MS=120000
       - PROWLARR_SEARCH_LIMIT=100
+      # ===== TorBox =====
       - TORBOX_API_KEY=${TORBOX_API_KEY}
       - TORBOX_BASE_URL=${TORBOX_BASE_URL:-https://api.torbox.app}
+      - TORBOX_WEBDAV_URL=${TORBOX_WEBDAV_URL:-https://webdav.torbox.app}
+      - TORBOX_WEBDAV_USERNAME=${TORBOX_WEBDAV_USERNAME}
+      - TORBOX_WEBDAV_PASSWORD=${TORBOX_WEBDAV_PASSWORD}
+      # ===== Real-Debrid =====
       - PROVIDERS=${PROVIDERS:-torbox,realdebrid}
       - RD_API_BASE=${RD_API_BASE:-https://api.real-debrid.com/rest/1.0}
       - RD_ACCESS_TOKEN=${RD_ACCESS_TOKEN}
       - RD_WEBDAV_URL=${RD_WEBDAV_URL:-https://webdav.real-debrid.com}
       - RD_WEBDAV_USERNAME=${RD_WEBDAV_USERNAME}
       - RD_WEBDAV_PASSWORD=${RD_WEBDAV_PASSWORD}
-      - TORBOX_WEBDAV_URL=${TORBOX_WEBDAV_URL:-https://webdav.torbox.app}
-      - TORBOX_WEBDAV_USERNAME=${TORBOX_WEBDAV_USERNAME}
-      - TORBOX_WEBDAV_PASSWORD=${TORBOX_WEBDAV_PASSWORD}
+      # ===== Mount Settings =====
       - MOUNT_BASE=${MOUNT_BASE:-/mnt/schrodrive}
       - RCLONE_PATH=${RCLONE_PATH:-/usr/local/bin/rclone}
       - MOUNT_VFS_CACHE_MODE=${MOUNT_VFS_CACHE_MODE:-full}
@@ -46,18 +55,21 @@ services:
       - MOUNT_VFS_READ_CHUNK_SIZE_LIMIT=${MOUNT_VFS_READ_CHUNK_SIZE_LIMIT:-}
       - MOUNT_VFS_CACHE_MAX_AGE=${MOUNT_VFS_CACHE_MAX_AGE:-}
       - MOUNT_VFS_CACHE_MAX_SIZE=${MOUNT_VFS_CACHE_MAX_SIZE:-}
-      - DEAD_SCAN_INTERVAL_S=${DEAD_SCAN_INTERVAL_S:-1800}
-      - DEAD_IDLE_MIN=${DEAD_IDLE_MIN:-30}
+      # ===== Services =====
       - RUN_MOUNT=${RUN_MOUNT:-false}
       - RUN_DEAD_SCANNER=${RUN_DEAD_SCANNER:-false}
       - RUN_DEAD_SCANNER_WATCH=${RUN_DEAD_SCANNER_WATCH:-false}
+      - DEAD_SCAN_INTERVAL_S=${DEAD_SCAN_INTERVAL_S:-1800}
+      - DEAD_IDLE_MIN=${DEAD_IDLE_MIN:-30}
+      - RUN_WEBHOOK=${RUN_WEBHOOK:-false}
+      - RUN_POLLER=${RUN_POLLER:-true}
+      - PORT=8978
+      # ===== Overseerr =====
       - OVERSEERR_AUTH=${OVERSEERR_AUTH:-}
       - OVERSEERR_API_KEY=${OVERSEERR_API_KEY:-}
       - OVERSEERR_URL=${OVERSEERR_URL:-http://192.168.1.124:5055/api/v1}
       - POLL_INTERVAL_S=${POLL_INTERVAL_S:-30}
-      - RUN_WEBHOOK=${RUN_WEBHOOK:-false}
-      - RUN_POLLER=${RUN_POLLER:-true}
-      - PORT=8978
+      # ===== Auto-Update =====
       - AUTO_UPDATE_ENABLED=${AUTO_UPDATE_ENABLED:-true}
       - AUTO_UPDATE_INTERVAL_S=${AUTO_UPDATE_INTERVAL_S:-3600}
       - AUTO_UPDATE_STRATEGY=${AUTO_UPDATE_STRATEGY:-exit} # exit | git
