@@ -1,8 +1,15 @@
 import axios from "axios";
+import https from "https";
+import http from "http";
 import { config } from "./config";
 import { rateLimiter } from "./rateLimiter";
 
 const PROVIDER_NAME = "realdebrid";
+
+// Force IPv4 to avoid IPv6 timeout issues in Docker containers
+const httpAgent = new http.Agent({ family: 4 });
+const httpsAgent = new https.Agent({ family: 4 });
+const axiosIPv4 = axios.create({ httpAgent, httpsAgent });
 
 export function isRDConfigured(): boolean {
   return !!config.rdAccessToken;
@@ -44,7 +51,7 @@ export async function listRDTorrents(): Promise<any[]> {
   const url = `${base}/torrents`;
   
   try {
-    const res = await axios.get(url, { headers: rdHeaders(), timeout: 20000 });
+    const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 20000 });
     rateLimiter.recordSuccess(PROVIDER_NAME);
     const arr = Array.isArray(res?.data) ? res?.data : [];
     // Cache the successful result
@@ -98,7 +105,7 @@ export async function addMagnetToRD(magnet: string): Promise<{ id?: string; uri?
   params.set("magnet", magnet);
   
   try {
-    const res = await axios.post(url, params, { headers: { ...rdHeaders(), "Content-Type": "application/x-www-form-urlencoded" }, timeout: 20000 });
+    const res = await axiosIPv4.post(url, params, { headers: { ...rdHeaders(), "Content-Type": "application/x-www-form-urlencoded" }, timeout: 20000 });
     rateLimiter.recordSuccess(PROVIDER_NAME);
     return res.data || {};
   } catch (err: any) {
@@ -137,7 +144,7 @@ export async function selectAllFilesRD(id: string): Promise<void> {
   params.set("files", "all");
   
   try {
-    await axios.post(url, params, { headers: { ...rdHeaders(), "Content-Type": "application/x-www-form-urlencoded" }, timeout: 20000 });
+    await axiosIPv4.post(url, params, { headers: { ...rdHeaders(), "Content-Type": "application/x-www-form-urlencoded" }, timeout: 20000 });
     rateLimiter.recordSuccess(PROVIDER_NAME);
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
@@ -187,7 +194,7 @@ export async function listRDDownloads(): Promise<any[]> {
   const url = `${base}/downloads`;
   
   try {
-    const res = await axios.get(url, { headers: rdHeaders(), timeout: 20000 });
+    const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 20000 });
     rateLimiter.recordSuccess(PROVIDER_NAME);
     const arr = Array.isArray(res?.data) ? res?.data : [];
     // Cache the successful result

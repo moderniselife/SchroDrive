@@ -12,9 +12,15 @@ exports.selectAllFilesRD = selectAllFilesRD;
 exports.isRDTorrentDead = isRDTorrentDead;
 exports.listRDDownloads = listRDDownloads;
 const axios_1 = __importDefault(require("axios"));
+const https_1 = __importDefault(require("https"));
+const http_1 = __importDefault(require("http"));
 const config_1 = require("./config");
 const rateLimiter_1 = require("./rateLimiter");
 const PROVIDER_NAME = "realdebrid";
+// Force IPv4 to avoid IPv6 timeout issues in Docker containers
+const httpAgent = new http_1.default.Agent({ family: 4 });
+const httpsAgent = new https_1.default.Agent({ family: 4 });
+const axiosIPv4 = axios_1.default.create({ httpAgent, httpsAgent });
 function isRDConfigured() {
     return !!config_1.config.rdAccessToken;
 }
@@ -47,7 +53,7 @@ async function listRDTorrents() {
     const base = (config_1.config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
     const url = `${base}/torrents`;
     try {
-        const res = await axios_1.default.get(url, { headers: rdHeaders(), timeout: 20000 });
+        const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 20000 });
         rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
         const arr = Array.isArray(res?.data) ? res?.data : [];
         // Cache the successful result
@@ -95,7 +101,7 @@ async function addMagnetToRD(magnet) {
     const params = new URLSearchParams();
     params.set("magnet", magnet);
     try {
-        const res = await axios_1.default.post(url, params, { headers: { ...rdHeaders(), "Content-Type": "application/x-www-form-urlencoded" }, timeout: 20000 });
+        const res = await axiosIPv4.post(url, params, { headers: { ...rdHeaders(), "Content-Type": "application/x-www-form-urlencoded" }, timeout: 20000 });
         rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
         return res.data || {};
     }
@@ -129,7 +135,7 @@ async function selectAllFilesRD(id) {
     const params = new URLSearchParams();
     params.set("files", "all");
     try {
-        await axios_1.default.post(url, params, { headers: { ...rdHeaders(), "Content-Type": "application/x-www-form-urlencoded" }, timeout: 20000 });
+        await axiosIPv4.post(url, params, { headers: { ...rdHeaders(), "Content-Type": "application/x-www-form-urlencoded" }, timeout: 20000 });
         rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
     }
     catch (err) {
@@ -174,7 +180,7 @@ async function listRDDownloads() {
     const base = (config_1.config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
     const url = `${base}/downloads`;
     try {
-        const res = await axios_1.default.get(url, { headers: rdHeaders(), timeout: 20000 });
+        const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 20000 });
         rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
         const arr = Array.isArray(res?.data) ? res?.data : [];
         // Cache the successful result
