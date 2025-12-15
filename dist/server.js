@@ -236,6 +236,91 @@ function startServer() {
             res.status(500).json({ ok: false, error: err.message, torrents: [] });
         }
     });
+    // Downloads list endpoint (Real-Debrid downloads + TorBox web/usenet downloads)
+    app.get("/api/downloads", async (_req, res) => {
+        try {
+            const allDownloads = [];
+            const activeProviders = config_1.config.providers.length > 0 ? config_1.config.providers : ["torbox"];
+            // Get Real-Debrid downloads
+            if (activeProviders.includes("realdebrid") && (0, realdebrid_1.isRDConfigured)()) {
+                try {
+                    const downloads = await (0, realdebrid_1.listRDDownloads)();
+                    for (const d of downloads) {
+                        allDownloads.push({
+                            id: d.id,
+                            name: d.filename,
+                            type: "download",
+                            status: "downloaded",
+                            progress: 100,
+                            size: d.filesize || 0,
+                            provider: "realdebrid",
+                            addedAt: d.generated,
+                            downloadUrl: d.download,
+                            host: d.host,
+                            link: d.link,
+                            streamable: d.streamable,
+                            mimeType: d.mimeType,
+                        });
+                    }
+                }
+                catch (err) {
+                    console.error("[api/downloads] Real-Debrid error:", err.message);
+                }
+            }
+            // Get TorBox web downloads
+            if (activeProviders.includes("torbox") && config_1.config.torboxApiKey) {
+                try {
+                    const webDownloads = await (0, torbox_1.listTorboxWebDownloads)();
+                    for (const d of webDownloads) {
+                        allDownloads.push({
+                            id: d.id,
+                            name: d.name,
+                            type: "web",
+                            status: d.download_state || d.status || "unknown",
+                            progress: typeof d.progress === "number" ? d.progress : 100,
+                            size: d.size || 0,
+                            provider: "torbox",
+                            addedAt: d.created_at || d.added,
+                            downloadSpeed: d.download_speed || 0,
+                        });
+                    }
+                }
+                catch (err) {
+                    console.error("[api/downloads] TorBox web downloads error:", err.message);
+                }
+                // Get TorBox usenet downloads
+                try {
+                    const usenetDownloads = await (0, torbox_1.listTorboxUsenetDownloads)();
+                    for (const d of usenetDownloads) {
+                        allDownloads.push({
+                            id: d.id,
+                            name: d.name,
+                            type: "usenet",
+                            status: d.download_state || d.status || "unknown",
+                            progress: typeof d.progress === "number" ? d.progress : 100,
+                            size: d.size || 0,
+                            provider: "torbox",
+                            addedAt: d.created_at || d.added,
+                            downloadSpeed: d.download_speed || 0,
+                        });
+                    }
+                }
+                catch (err) {
+                    console.error("[api/downloads] TorBox usenet downloads error:", err.message);
+                }
+            }
+            // Sort by added date descending
+            allDownloads.sort((a, b) => {
+                const dateA = new Date(a.addedAt || 0).getTime();
+                const dateB = new Date(b.addedAt || 0).getTime();
+                return dateB - dateA;
+            });
+            res.json({ ok: true, downloads: allDownloads });
+        }
+        catch (err) {
+            res.status(500).json({ ok: false, error: err.message, downloads: [] });
+        }
+    });
     // Search endpoint
     app.get("/api/search", async (req, res) => {
         try {

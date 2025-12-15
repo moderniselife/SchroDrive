@@ -10,6 +10,7 @@ exports.listRDTorrents = listRDTorrents;
 exports.addMagnetToRD = addMagnetToRD;
 exports.selectAllFilesRD = selectAllFilesRD;
 exports.isRDTorrentDead = isRDTorrentDead;
+exports.listRDDownloads = listRDDownloads;
 const axios_1 = __importDefault(require("axios"));
 const config_1 = require("./config");
 const rateLimiter_1 = require("./rateLimiter");
@@ -146,4 +147,51 @@ function isRDTorrentDead(t) {
     if (s.includes("error") || s.includes("dead"))
         return true;
     return false;
+}
+const RD_DOWNLOADS_CACHE_KEY = "realdebrid_downloads";
+async function listRDDownloads() {
+    if (!isRDConfigured())
+        return [];
+    // Check rate limit before making request - return cached data if available
+    if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
+        const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+        const cached = rateLimiter_1.rateLimiter.getCache(RD_DOWNLOADS_CACHE_KEY);
+        if (cached) {
+            console.warn(`[${new Date().toISOString()}][rd] rate limited, returning cached downloads (${cached.length} items, wait ${waitTime}s)`);
+            return cached;
+        }
+        console.warn(`[${new Date().toISOString()}][rd] rate limited, no cache available (wait ${waitTime}s)`);
+        return [];
+    }
+    // Throttle to prevent hammering API
+    await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
+    const base = (config_1.config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
+    const url = `${base}/downloads`;
+    try {
+        const res = await axios_1.default.get(url, { headers: rdHeaders(), timeout: 20000 });
+        rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
+        const arr = Array.isArray(res?.data) ? res?.data : [];
+        // Cache the successful result
+        rateLimiter_1.rateLimiter.setCache(RD_DOWNLOADS_CACHE_KEY, arr);
+        return arr;
+    }
+    catch (err) {
+        const errorMsg = err?.message || String(err);
+        // Check if this is a rate limit error
+        if (rateLimiter_1.rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
+            rateLimiter_1.rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+        }
+        console.error(`[${new Date().toISOString()}][rd] list downloads failed`, {
+            error: errorMsg,
+            status: err?.response?.status,
+            rateLimited: rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME),
+        });
+        // Return cached data on error if available
+        const cached = rateLimiter_1.rateLimiter.getCache(RD_DOWNLOADS_CACHE_KEY);
+        if (cached) {
+            console.log(`[${new Date().toISOString()}][rd] returning cached downloads on error (${cached.length} items)`);
+            return cached;
+        }
+        return [];
+    }
 }

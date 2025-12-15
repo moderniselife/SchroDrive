@@ -7,20 +7,20 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Download, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Globe, FileText, Link2 } from "lucide-react"
+import { Download, Upload, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Magnet, HardDrive } from "lucide-react"
 
-interface DownloadItem {
+interface Torrent {
   id: string
   name: string
-  type: string // "download" | "web" | "usenet"
   status: string
   progress: number
   size: number
   provider: string
   addedAt: string
-  downloadSpeed?: number
-  downloadUrl?: string
-  host?: string
+  downloadSpeed: number
+  uploadSpeed: number
+  seeds: number
+  peers: number
 }
 
 function formatBytes(bytes: number) {
@@ -51,45 +51,42 @@ function formatRelativeTime(dateString: string): string {
   return `${diffDays}d ago`
 }
 
-function getStatus(item: DownloadItem): "downloading" | "completed" | "queued" | "failed" {
-  const status = item.status.toLowerCase()
-  if (item.progress >= 100 || status === "downloaded") return "completed"
+function getStatus(torrent: Torrent): "downloading" | "seeding" | "completed" | "queued" | "failed" {
+  const status = torrent.status.toLowerCase()
+  if (torrent.progress >= 100) {
+    if (torrent.uploadSpeed > 0) return "seeding"
+    return "completed"
+  }
   if (status.includes("download") || status.includes("active")) return "downloading"
+  if (status.includes("seed")) return "seeding"
   if (status.includes("error") || status.includes("failed") || status.includes("dead")) return "failed"
   if (status.includes("queue") || status.includes("wait") || status.includes("pending")) return "queued"
-  if (item.downloadSpeed && item.downloadSpeed > 0) return "downloading"
-  return "completed"
-}
-
-function getTypeIcon(type: string) {
-  switch (type) {
-    case "web": return <Globe className="h-4 w-4 text-blue-500" />
-    case "usenet": return <FileText className="h-4 w-4 text-orange-500" />
-    default: return <Link2 className="h-4 w-4 text-purple-500" />
-  }
+  if (torrent.downloadSpeed > 0) return "downloading"
+  return "queued"
 }
 
 const statusIcons: Record<string, React.ReactNode> = {
   downloading: <Download className="h-4 w-4 text-blue-500 animate-pulse" />,
+  seeding: <Upload className="h-4 w-4 text-green-500" />,
   completed: <CheckCircle className="h-4 w-4 text-green-500" />,
   queued: <Clock className="h-4 w-4 text-yellow-500" />,
   failed: <XCircle className="h-4 w-4 text-red-500" />,
 }
 
-export default function ActivityPage() {
-  const [downloads, setDownloads] = useState<DownloadItem[]>([])
+export default function TorrentsPage() {
+  const [torrents, setTorrents] = useState<Torrent[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
 
-  async function fetchDownloads() {
+  async function fetchTorrents() {
     try {
-      const res = await fetch("/api/downloads")
+      const res = await fetch("/api/torrents")
       const data = await res.json()
       if (data.ok !== false) {
-        setDownloads(data.downloads || [])
+        setTorrents(data.torrents || [])
       }
     } catch (error) {
-      console.error("Failed to fetch downloads:", error)
+      console.error("Failed to fetch torrents:", error)
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -97,31 +94,31 @@ export default function ActivityPage() {
   }
 
   useEffect(() => {
-    fetchDownloads()
-    const interval = setInterval(fetchDownloads, 10000)
+    fetchTorrents()
+    const interval = setInterval(fetchTorrents, 10000)
     return () => clearInterval(interval)
   }, [])
 
   function handleRefresh() {
     setRefreshing(true)
-    fetchDownloads()
+    fetchTorrents()
   }
 
-  const activeCount = downloads.filter((d) => getStatus(d) === "downloading").length
-  const queuedCount = downloads.filter((d) => getStatus(d) === "queued").length
-  const completedCount = downloads.filter((d) => getStatus(d) === "completed").length
-  const totalSpeed = downloads.reduce((acc, d) => acc + (d.downloadSpeed || 0), 0)
+  const activeCount = torrents.filter((t) => getStatus(t) === "downloading").length
+  const seedingCount = torrents.filter((t) => getStatus(t) === "seeding").length
+  const completedCount = torrents.filter((t) => getStatus(t) === "completed" || getStatus(t) === "seeding").length
+  const totalDownSpeed = torrents.reduce((acc, t) => acc + (t.downloadSpeed || 0), 0)
+  const totalUpSpeed = torrents.reduce((acc, t) => acc + (t.uploadSpeed || 0), 0)
 
-  // Count by type
-  const webCount = downloads.filter((d) => d.type === "web").length
-  const usenetCount = downloads.filter((d) => d.type === "usenet").length
-  const rdCount = downloads.filter((d) => d.provider === "realdebrid").length
+  // Count by provider
+  const torboxCount = torrents.filter((t) => t.provider === "torbox").length
+  const rdCount = torrents.filter((t) => t.provider === "realdebrid").length
 
   if (loading) {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold">Downloads</h1>
+          <h1 className="text-2xl font-bold">Torrents</h1>
           <p className="text-muted-foreground">Loading...</p>
         </div>
         <div className="grid gap-4 md:grid-cols-4">
@@ -138,9 +135,9 @@ export default function ActivityPage() {
     <div className="space-y-6 h-full flex flex-col">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Downloads</h1>
+          <h1 className="text-2xl font-bold">Torrents</h1>
           <p className="text-muted-foreground">
-            Real-Debrid downloads & TorBox web/usenet downloads
+            Real-Debrid & TorBox torrent activity
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
@@ -154,7 +151,7 @@ export default function ActivityPage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Active</p>
+                <p className="text-sm text-muted-foreground">Downloading</p>
                 <p className="text-2xl font-bold">{activeCount}</p>
               </div>
               <Download className="h-8 w-8 text-blue-500" />
@@ -176,10 +173,10 @@ export default function ActivityPage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Real-Debrid</p>
-                <p className="text-2xl font-bold">{rdCount}</p>
+                <p className="text-sm text-muted-foreground">Download Speed</p>
+                <p className="text-2xl font-bold">{formatSpeed(totalDownSpeed)}</p>
               </div>
-              <Link2 className="h-8 w-8 text-purple-500" />
+              <Download className="h-8 w-8 text-primary" />
             </div>
           </CardContent>
         </Card>
@@ -187,10 +184,10 @@ export default function ActivityPage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">TorBox</p>
-                <p className="text-2xl font-bold">{webCount + usenetCount}</p>
+                <p className="text-sm text-muted-foreground">Total Torrents</p>
+                <p className="text-2xl font-bold">{torrents.length}</p>
               </div>
-              <Globe className="h-8 w-8 text-blue-500" />
+              <Magnet className="h-8 w-8 text-purple-500" />
             </div>
           </CardContent>
         </Card>
@@ -198,53 +195,77 @@ export default function ActivityPage() {
 
       <Card className="flex-1">
         <CardHeader>
-          <CardTitle>All Downloads</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>All Torrents</CardTitle>
+            <div className="flex gap-2">
+              {torboxCount > 0 && (
+                <Badge variant="outline">TorBox: {torboxCount}</Badge>
+              )}
+              {rdCount > 0 && (
+                <Badge variant="outline">Real-Debrid: {rdCount}</Badge>
+              )}
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <ScrollArea className="h-[400px]">
-            {downloads.length === 0 ? (
+            {torrents.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Download className="h-12 w-12 text-muted-foreground/50" />
-                <p className="mt-4 text-lg font-medium">No downloads</p>
+                <Magnet className="h-12 w-12 text-muted-foreground/50" />
+                <p className="mt-4 text-lg font-medium">No torrents</p>
                 <p className="text-sm text-muted-foreground">
-                  Downloads from Real-Debrid and TorBox web/usenet will appear here
+                  Torrents from Real-Debrid and TorBox will appear here
                 </p>
               </div>
             ) : (
               <div className="space-y-4">
-                {downloads.map((item) => {
-                  const status = getStatus(item)
+                {torrents.map((torrent) => {
+                  const status = getStatus(torrent)
                   return (
-                    <div key={`${item.provider}-${item.id}`} className="rounded-lg border p-4 space-y-3">
+                    <div key={`${torrent.provider}-${torrent.id}`} className="rounded-lg border p-4 space-y-3">
                       <div className="flex items-start justify-between">
                         <div className="flex items-start gap-3 min-w-0 flex-1">
                           {statusIcons[status]}
                           <div className="min-w-0 flex-1">
-                            <p className="font-medium leading-none break-words">{item.name}</p>
+                            <p className="font-medium leading-none break-words">{torrent.name}</p>
                             <div className="flex flex-wrap gap-2 mt-2">
-                              <Badge variant="outline" className="capitalize">{item.provider}</Badge>
-                              <Badge variant="secondary" className="capitalize flex items-center gap-1">
-                                {getTypeIcon(item.type)}
-                                {item.type}
-                              </Badge>
-                              <span className="text-xs text-muted-foreground">{formatBytes(item.size)}</span>
-                              {item.host && (
-                                <span className="text-xs text-muted-foreground">• {item.host}</span>
+                              <Badge variant="outline" className="capitalize">{torrent.provider}</Badge>
+                              <span className="text-xs text-muted-foreground">{formatBytes(torrent.size)}</span>
+                              {torrent.seeds > 0 && (
+                                <span className="text-xs text-green-500">Seeds: {torrent.seeds}</span>
+                              )}
+                              {torrent.peers > 0 && (
+                                <span className="text-xs text-blue-500">Peers: {torrent.peers}</span>
                               )}
                             </div>
                           </div>
                         </div>
                         <span className="text-xs text-muted-foreground whitespace-nowrap ml-2">
-                          {formatRelativeTime(item.addedAt)}
+                          {formatRelativeTime(torrent.addedAt)}
                         </span>
                       </div>
-                      {(status === "downloading" || (item.progress > 0 && item.progress < 100)) && (
+                      {(status === "downloading" || status === "failed" || (torrent.progress > 0 && torrent.progress < 100)) && (
                         <div className="space-y-1">
-                          <Progress value={item.progress} />
+                          <Progress value={torrent.progress} />
                           <div className="flex justify-between text-xs text-muted-foreground">
-                            <span>{Math.round(item.progress)}%</span>
-                            {item.downloadSpeed && item.downloadSpeed > 0 && <span>{formatSpeed(item.downloadSpeed)}</span>}
+                            <span>{Math.round(torrent.progress)}%</span>
+                            <div className="flex gap-3">
+                              {torrent.downloadSpeed > 0 && (
+                                <span className="text-blue-500">↓ {formatSpeed(torrent.downloadSpeed)}</span>
+                              )}
+                              {torrent.uploadSpeed > 0 && (
+                                <span className="text-green-500">↑ {formatSpeed(torrent.uploadSpeed)}</span>
+                              )}
+                            </div>
                           </div>
+                        </div>
+                      )}
+                      {(status === "completed" || status === "seeding") && (
+                        <div className="flex justify-between text-xs text-muted-foreground">
+                          <span className="text-green-500">✓ Completed</span>
+                          {torrent.uploadSpeed > 0 && (
+                            <span className="text-green-500">Seeding: ↑ {formatSpeed(torrent.uploadSpeed)}</span>
+                          )}
                         </div>
                       )}
                     </div>

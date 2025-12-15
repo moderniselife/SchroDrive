@@ -1,4 +1,7 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isTorboxRateLimited = isTorboxRateLimited;
 exports.getTorboxWaitTime = getTorboxWaitTime;
@@ -6,7 +9,10 @@ exports.checkExistingTorrents = checkExistingTorrents;
 exports.addMagnetToTorbox = addMagnetToTorbox;
 exports.listTorboxTorrents = listTorboxTorrents;
 exports.isTorboxTorrentDead = isTorboxTorrentDead;
+exports.listTorboxWebDownloads = listTorboxWebDownloads;
+exports.listTorboxUsenetDownloads = listTorboxUsenetDownloads;
 const node_torbox_api_1 = require("node-torbox-api");
+const axios_1 = __importDefault(require("axios"));
 const config_1 = require("./config");
 const rateLimiter_1 = require("./rateLimiter");
 let client = null;
@@ -176,4 +182,89 @@ function isTorboxTorrentDead(t) {
     if (status.includes("inactive"))
         return true;
     return false;
+}
+function torboxHeaders() {
+    return { Authorization: `Bearer ${config_1.config.torboxApiKey}` };
+}
+const WEB_DOWNLOADS_CACHE_KEY = "torbox_webdownloads";
+const USENET_DOWNLOADS_CACHE_KEY = "torbox_usenetdownloads";
+async function listTorboxWebDownloads() {
+    if (!config_1.config.torboxApiKey)
+        return [];
+    // Check rate limit before making request - return cached data if available
+    if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
+        const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+        const cached = rateLimiter_1.rateLimiter.getCache(WEB_DOWNLOADS_CACHE_KEY);
+        if (cached) {
+            console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning cached web downloads (${cached.length} items, wait ${waitTime}s)`);
+            return cached;
+        }
+        console.warn(`[${new Date().toISOString()}][torbox] rate limited, no web downloads cache (wait ${waitTime}s)`);
+        return [];
+    }
+    // Throttle to prevent hammering API
+    await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
+    const base = (config_1.config.torboxBaseUrl || "https://api.torbox.app").replace(/\/$/, "");
+    const url = `${base}/v1/api/webdl/mylist`;
+    try {
+        const res = await axios_1.default.get(url, { headers: torboxHeaders(), timeout: 20000 });
+        rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
+        const list = Array.isArray(res?.data?.data) ? res.data.data : [];
+        rateLimiter_1.rateLimiter.setCache(WEB_DOWNLOADS_CACHE_KEY, list);
+        return list;
+    }
+    catch (err) {
+        const errorMsg = err?.message || String(err);
+        if (rateLimiter_1.rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
+            rateLimiter_1.rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+        }
+        console.error(`[${new Date().toISOString()}][torbox] list web downloads failed`, {
+            error: errorMsg,
+            status: err?.response?.status,
+        });
+        const cached = rateLimiter_1.rateLimiter.getCache(WEB_DOWNLOADS_CACHE_KEY);
+        if (cached)
+            return cached;
+        return [];
+    }
+}
+async function listTorboxUsenetDownloads() {
+    if (!config_1.config.torboxApiKey)
+        return [];
+    // Check rate limit before making request - return cached data if available
+    if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
+        const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+        const cached = rateLimiter_1.rateLimiter.getCache(USENET_DOWNLOADS_CACHE_KEY);
+        if (cached) {
+            console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning cached usenet downloads (${cached.length} items, wait ${waitTime}s)`);
+            return cached;
+        }
+        console.warn(`[${new Date().toISOString()}][torbox] rate limited, no usenet downloads cache (wait ${waitTime}s)`);
+        return [];
+    }
+    // Throttle to prevent hammering API
+    await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
+    const base = (config_1.config.torboxBaseUrl || "https://api.torbox.app").replace(/\/$/, "");
+    const url = `${base}/v1/api/usenet/mylist`;
+    try {
+        const res = await axios_1.default.get(url, { headers: torboxHeaders(), timeout: 20000 });
+        rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
+        const list = Array.isArray(res?.data?.data) ? res.data.data : [];
+        rateLimiter_1.rateLimiter.setCache(USENET_DOWNLOADS_CACHE_KEY, list);
+        return list;
+    }
+    catch (err) {
+        const errorMsg = err?.message || String(err);
+        if (rateLimiter_1.rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
+            rateLimiter_1.rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+        }
+        console.error(`[${new Date().toISOString()}][torbox] list usenet downloads failed`, {
+            error: errorMsg,
+            status: err?.response?.status,
+        });
+        const cached = rateLimiter_1.rateLimiter.getCache(USENET_DOWNLOADS_CACHE_KEY);
+        if (cached)
+            return cached;
+        return [];
+    }
 }

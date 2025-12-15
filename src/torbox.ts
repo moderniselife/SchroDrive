@@ -1,4 +1,5 @@
 import { TorboxClient } from "node-torbox-api";
+import axios from "axios";
 import { config, requireEnv } from "./config";
 import { rateLimiter } from "./rateLimiter";
 
@@ -191,4 +192,101 @@ export function isTorboxTorrentDead(t: any): boolean {
   if (status.includes("stalled")) return true;
   if (status.includes("inactive")) return true;
   return false;
+}
+
+function torboxHeaders() {
+  return { Authorization: `Bearer ${config.torboxApiKey}` };
+}
+
+const WEB_DOWNLOADS_CACHE_KEY = "torbox_webdownloads";
+const USENET_DOWNLOADS_CACHE_KEY = "torbox_usenetdownloads";
+
+export async function listTorboxWebDownloads(): Promise<any[]> {
+  if (!config.torboxApiKey) return [];
+  
+  // Check rate limit before making request - return cached data if available
+  if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+    const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+    const cached = rateLimiter.getCache<any[]>(WEB_DOWNLOADS_CACHE_KEY);
+    if (cached) {
+      console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning cached web downloads (${cached.length} items, wait ${waitTime}s)`);
+      return cached;
+    }
+    console.warn(`[${new Date().toISOString()}][torbox] rate limited, no web downloads cache (wait ${waitTime}s)`);
+    return [];
+  }
+
+  // Throttle to prevent hammering API
+  await rateLimiter.throttle(PROVIDER_NAME);
+
+  const base = (config.torboxBaseUrl || "https://api.torbox.app").replace(/\/$/, "");
+  const url = `${base}/v1/api/webdl/mylist`;
+  
+  try {
+    const res = await axios.get(url, { headers: torboxHeaders(), timeout: 20000 });
+    rateLimiter.recordSuccess(PROVIDER_NAME);
+    const list = Array.isArray(res?.data?.data) ? res.data.data : [];
+    rateLimiter.setCache(WEB_DOWNLOADS_CACHE_KEY, list);
+    return list;
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    
+    if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
+      rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+    }
+    
+    console.error(`[${new Date().toISOString()}][torbox] list web downloads failed`, {
+      error: errorMsg,
+      status: err?.response?.status,
+    });
+    
+    const cached = rateLimiter.getCache<any[]>(WEB_DOWNLOADS_CACHE_KEY);
+    if (cached) return cached;
+    return [];
+  }
+}
+
+export async function listTorboxUsenetDownloads(): Promise<any[]> {
+  if (!config.torboxApiKey) return [];
+  
+  // Check rate limit before making request - return cached data if available
+  if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+    const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+    const cached = rateLimiter.getCache<any[]>(USENET_DOWNLOADS_CACHE_KEY);
+    if (cached) {
+      console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning cached usenet downloads (${cached.length} items, wait ${waitTime}s)`);
+      return cached;
+    }
+    console.warn(`[${new Date().toISOString()}][torbox] rate limited, no usenet downloads cache (wait ${waitTime}s)`);
+    return [];
+  }
+
+  // Throttle to prevent hammering API
+  await rateLimiter.throttle(PROVIDER_NAME);
+
+  const base = (config.torboxBaseUrl || "https://api.torbox.app").replace(/\/$/, "");
+  const url = `${base}/v1/api/usenet/mylist`;
+  
+  try {
+    const res = await axios.get(url, { headers: torboxHeaders(), timeout: 20000 });
+    rateLimiter.recordSuccess(PROVIDER_NAME);
+    const list = Array.isArray(res?.data?.data) ? res.data.data : [];
+    rateLimiter.setCache(USENET_DOWNLOADS_CACHE_KEY, list);
+    return list;
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    
+    if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
+      rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+    }
+    
+    console.error(`[${new Date().toISOString()}][torbox] list usenet downloads failed`, {
+      error: errorMsg,
+      status: err?.response?.status,
+    });
+    
+    const cached = rateLimiter.getCache<any[]>(USENET_DOWNLOADS_CACHE_KEY);
+    if (cached) return cached;
+    return [];
+  }
 }

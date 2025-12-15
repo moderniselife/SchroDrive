@@ -10,6 +10,8 @@ import {
   Search,
   Server,
   Activity,
+  Download,
+  Magnet,
 } from "lucide-react"
 
 import {
@@ -32,7 +34,8 @@ const navigation = [
     title: "Overview",
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
-      { name: "Activity", href: "/activity", icon: Activity },
+      { name: "Downloads", href: "/activity", icon: Download },
+      { name: "Torrents", href: "/torrents", icon: Magnet },
     ],
   },
   {
