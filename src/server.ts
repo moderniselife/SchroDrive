@@ -1,16 +1,77 @@
 import express from "express";
+import cors from "cors";
 import { config, requireEnv } from "./config";
 import { searchIndexer, pickBestResult, getMagnet, getProviderName, isIndexerConfigured } from "./indexer";
 import { addMagnetToTorbox } from "./torbox";
 import { startOverseerrPoller } from "./overseerr";
 import { startAutoUpdater } from "./autoUpdate";
+import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDocker, CONFIG_SCHEMA } from "./configApi";
 
 export function startServer() {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
+  app.use(cors()); // Allow web GUI to connect
 
   app.get("/health", (_req, res) => {
     res.json({ ok: true });
+  });
+
+  // Config API endpoints for web GUI
+  app.get("/api/config", (_req, res) => {
+    try {
+      const { config: configData, envPath } = getConfigWithSources();
+      res.json({
+        ok: true,
+        config: configData,
+        envPath,
+        isDocker: isRunningInDocker(),
+        schema: CONFIG_SCHEMA,
+      });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post("/api/config", (req, res) => {
+    try {
+      const updates = req.body?.config || {};
+      const result = saveConfigToFile(updates);
+      if (result.success) {
+        res.json({ ok: true, message: "Configuration saved", path: result.path });
+      } else {
+        res.status(500).json({ ok: false, error: result.error, path: result.path });
+      }
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post("/api/restart", (_req, res) => {
+    try {
+      const result = triggerRestart();
+      res.json({ ok: result.success, message: result.message });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.get("/api/status", (_req, res) => {
+    res.json({
+      ok: true,
+      isDocker: isRunningInDocker(),
+      services: {
+        webhook: config.runWebhook,
+        poller: config.runPoller,
+        mount: config.runMount,
+        deadScanner: config.runDeadScanner,
+        deadScannerWatch: config.runDeadScannerWatch,
+        organizerWatch: config.runOrganizerWatch,
+      },
+      indexer: {
+        configured: isIndexerConfigured(),
+        provider: isIndexerConfigured() ? getProviderName() : null,
+      },
+    });
   });
 
   if (config.runWebhook) {

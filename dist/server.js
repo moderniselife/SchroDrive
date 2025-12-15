@@ -6,16 +6,77 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.startServer = startServer;
 exports.buildQueryFromPayload = buildQueryFromPayload;
 const express_1 = __importDefault(require("express"));
+const cors_1 = __importDefault(require("cors"));
 const config_1 = require("./config");
 const indexer_1 = require("./indexer");
 const torbox_1 = require("./torbox");
 const overseerr_1 = require("./overseerr");
 const autoUpdate_1 = require("./autoUpdate");
+const configApi_1 = require("./configApi");
 function startServer() {
     const app = (0, express_1.default)();
     app.use(express_1.default.json({ limit: "1mb" }));
+    app.use((0, cors_1.default)()); // Allow web GUI to connect
     app.get("/health", (_req, res) => {
         res.json({ ok: true });
+    });
+    // Config API endpoints for web GUI
+    app.get("/api/config", (_req, res) => {
+        try {
+            const { config: configData, envPath } = (0, configApi_1.getConfigWithSources)();
+            res.json({
+                ok: true,
+                config: configData,
+                envPath,
+                isDocker: (0, configApi_1.isRunningInDocker)(),
+                schema: configApi_1.CONFIG_SCHEMA,
+            });
+        }
+        catch (err) {
+            res.status(500).json({ ok: false, error: err.message });
+        }
+    });
+    app.post("/api/config", (req, res) => {
+        try {
+            const updates = req.body?.config || {};
+            const result = (0, configApi_1.saveConfigToFile)(updates);
+            if (result.success) {
+                res.json({ ok: true, message: "Configuration saved", path: result.path });
+            }
+            else {
+                res.status(500).json({ ok: false, error: result.error, path: result.path });
+            }
+        }
+        catch (err) {
+            res.status(500).json({ ok: false, error: err.message });
+        }
+    });
+    app.post("/api/restart", (_req, res) => {
+        try {
+            const result = (0, configApi_1.triggerRestart)();
+            res.json({ ok: result.success, message: result.message });
+        }
+        catch (err) {
+            res.status(500).json({ ok: false, error: err.message });
+        }
+    });
+    app.get("/api/status", (_req, res) => {
+        res.json({
+            ok: true,
+            isDocker: (0, configApi_1.isRunningInDocker)(),
+            services: {
+                webhook: config_1.config.runWebhook,
+                poller: config_1.config.runPoller,
+                mount: config_1.config.runMount,
+                deadScanner: config_1.config.runDeadScanner,
+                deadScannerWatch: config_1.config.runDeadScannerWatch,
+                organizerWatch: config_1.config.runOrganizerWatch,
+            },
+            indexer: {
+                configured: (0, indexer_1.isIndexerConfigured)(),
+                provider: (0, indexer_1.isIndexerConfigured)() ? (0, indexer_1.getProviderName)() : null,
+            },
+        });
     });
     if (config_1.config.runWebhook) {
         app.post("/webhook/overseerr", async (req, res) => {
