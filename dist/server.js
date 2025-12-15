@@ -14,6 +14,7 @@ const realdebrid_1 = require("./realdebrid");
 const overseerr_1 = require("./overseerr");
 const autoUpdate_1 = require("./autoUpdate");
 const configApi_1 = require("./configApi");
+const logger_1 = require("./logger");
 function startServer() {
     const app = (0, express_1.default)();
     app.use(express_1.default.json({ limit: "1mb" }));
@@ -308,6 +309,52 @@ function startServer() {
         }
         catch (err) {
             console.error(`[${new Date().toISOString()}][api/add] error`, err.message);
+            res.status(500).json({ ok: false, error: err.message });
+        }
+    });
+    // Logs API - GET recent logs
+    app.get("/api/logs", (req, res) => {
+        try {
+            const limit = Math.min(Number(req.query.limit) || 100, 500);
+            const level = String(req.query.level || "all");
+            const logs = logger_1.logBuffer.getLogs(limit, level);
+            res.json({ ok: true, logs });
+        }
+        catch (err) {
+            res.status(500).json({ ok: false, error: err.message, logs: [] });
+        }
+    });
+    // Logs API - SSE streaming endpoint
+    app.get("/api/logs/stream", (req, res) => {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.flushHeaders();
+        // Send initial logs
+        const initialLogs = logger_1.logBuffer.getLogs(50);
+        res.write(`data: ${JSON.stringify({ type: "initial", logs: initialLogs })}\n\n`);
+        // Subscribe to new logs
+        const unsubscribe = logger_1.logBuffer.subscribe((entry) => {
+            res.write(`data: ${JSON.stringify({ type: "log", log: entry })}\n\n`);
+        });
+        // Keep connection alive with heartbeat
+        const heartbeat = setInterval(() => {
+            res.write(`: heartbeat\n\n`);
+        }, 30000);
+        // Cleanup on close
+        req.on("close", () => {
+            clearInterval(heartbeat);
+            unsubscribe();
+        });
+    });
+    // Logs API - Clear logs
+    app.delete("/api/logs", (_req, res) => {
+        try {
+            logger_1.logBuffer.clear();
+            res.json({ ok: true, message: "Logs cleared" });
+        }
+        catch (err) {
             res.status(500).json({ ok: false, error: err.message });
         }
     });
