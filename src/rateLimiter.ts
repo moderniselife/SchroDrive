@@ -16,9 +16,11 @@ class RateLimiter {
   private maxBackoffMs = 15 * 60 * 1000;
 
   // Minimum delay between requests per provider (in ms)
+  // Real-Debrid: 250 req/min = 240ms minimum, using 500ms for safety
+  // TorBox: Undocumented but strict, using 5s to be safe
   private minRequestDelayMs: Map<string, number> = new Map([
-    ["torbox", 3000],      // 3 seconds between TorBox requests
-    ["realdebrid", 2000],  // 2 seconds between RD requests
+    ["torbox", 5000],      // 5 seconds between TorBox requests (strict limits)
+    ["realdebrid", 500],   // 500ms between RD requests (250/min limit)
   ]);
   
   // Cache for last successful results
