@@ -21,7 +21,7 @@
 
 # SchröDrive
 
-The ultimate media automation orchestrator. SchröDrive seamlessly integrates with Overseerr to automatically search Prowlarr or Jackett for the best torrents and deliver them to your preferred debrid service. Currently supporting TorBox with upcoming support for Real-Debrid, All-Debrid, and Premiumize.
+The ultimate media automation orchestrator. SchröDrive seamlessly integrates with Overseerr to automatically search Prowlarr or Jackett for the best torrents and deliver them to your preferred debrid service. **Full support for TorBox and Real-Debrid**, with upcoming support for All-Debrid and Premiumize.
 
 ## Releases
 - [Latest Release](https://github.com/moderniselife/SchroDrive/releases/latest) - Auto-incremented version and release notes
@@ -29,20 +29,39 @@ The ultimate media automation orchestrator. SchröDrive seamlessly integrates wi
 - Develop image (auto-built on pushes to `develop`): `ghcr.io/moderniselife/schrodrive:develop`
 
 ## Features
-- Webhook endpoint for Overseerr notifications
+
+### 🔍 Indexer Integration
 - **Dual indexer support**: Prowlarr (`/api/v1/search`) and Jackett (`/api/v2.0/indexers`)
 - Auto-detection: configure one or both indexers, SchroDrive picks the active one
-- Picks best result by seeders (fallback by size)
-- Adds magnet to TorBox
-- CLI for manual search/add
-- Docker image
+- Intelligent result ranking by seeders (fallback by size)
+- Automatic magnet resolution and fallback strategies
 
-- Virtual Drive mounts via rclone (WebDAV): TorBox and Real‑Debrid
-- Dead‑torrent scanner: searches indexer and re‑adds to the opposite provider
-- Multi‑provider support: TorBox and Real‑Debrid
+### 📺 Debrid Providers
+- **TorBox**: Full API integration for adding/managing torrents
+- **Real-Debrid**: Full API integration for adding/managing torrents
+- Multi-provider support: Use both simultaneously with automatic failover
+
+### 🗂️ Virtual Drive
+- **rclone WebDAV mounts** for TorBox and Real-Debrid
+- Access your debrid library as a local filesystem
+- Configurable mount options (cache, permissions, buffer sizes)
+- Works with Plex, Jellyfin, Emby, and other media servers
+
+### 🔄 Automation
+- Webhook endpoint for Overseerr notifications
+- Overseerr API poller for approved requests
+- Dead-torrent scanner: detects stalled torrents and re-adds via opposite provider
+- Media organizer: symlinked views with TMDB/TVMaze metadata
+- Auto-update from GitHub releases
+
+### 🛠️ Developer Experience
+- CLI for manual search/add operations
+- Docker image with multi-arch support
+- Comprehensive logging
 
 ## 🚀 Future
-- Additional providers (e.g., All‑Debrid, Premiumize)
+- Additional providers (All-Debrid, Premiumize)
+- Web GUI for configuration and monitoring
 
 ## Modes
 - **Webhook mode (default)**
