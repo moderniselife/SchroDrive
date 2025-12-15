@@ -33,6 +33,8 @@ async function checkExistingTorrents(searchTitle) {
         console.warn(`[${new Date().toISOString()}][torbox] rate limited, skipping check (wait ${waitTime}s)`);
         return false; // Assume doesn't exist to avoid blocking
     }
+    // Throttle to prevent hammering API
+    await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
     const c = getClient();
     console.log(`[${new Date().toISOString()}][torbox] checking existing torrents`, { searchTitle });
     const started = Date.now();
@@ -89,6 +91,8 @@ async function addMagnetToTorbox(magnet, name) {
         console.warn(`[${new Date().toISOString()}][torbox] rate limited, cannot add magnet (wait ${waitTime}s)`);
         throw error;
     }
+    // Throttle to prevent hammering API
+    await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
     const c = getClient();
     const teaser = magnet.slice(0, 80) + '...';
     console.log(`[${new Date().toISOString()}][torbox] createTorrent`, { name, teaser });
@@ -123,6 +127,8 @@ async function listTorboxTorrents() {
         console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning empty list (wait ${waitTime}s)`);
         return [];
     }
+    // Throttle to prevent hammering API
+    await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
     const c = getClient();
     try {
         const res = await c.torrents.getTorrentList({ limit: 100 });

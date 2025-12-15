@@ -32,6 +32,9 @@ export async function checkExistingTorrents(searchTitle: string): Promise<boolea
     return false; // Assume doesn't exist to avoid blocking
   }
 
+  // Throttle to prevent hammering API
+  await rateLimiter.throttle(PROVIDER_NAME);
+
   const c = getClient();
   console.log(`[${new Date().toISOString()}][torbox] checking existing torrents`, { searchTitle });
   const started = Date.now();
@@ -97,6 +100,9 @@ export async function addMagnetToTorbox(magnet: string, name?: string) {
     throw error;
   }
 
+  // Throttle to prevent hammering API
+  await rateLimiter.throttle(PROVIDER_NAME);
+
   const c = getClient();
   const teaser = magnet.slice(0, 80) + '...';
   console.log(`[${new Date().toISOString()}][torbox] createTorrent`, { name, teaser });
@@ -134,6 +140,9 @@ export async function listTorboxTorrents(): Promise<any[]> {
     console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning empty list (wait ${waitTime}s)`);
     return [];
   }
+
+  // Throttle to prevent hammering API
+  await rateLimiter.throttle(PROVIDER_NAME);
 
   const c = getClient();
   try {

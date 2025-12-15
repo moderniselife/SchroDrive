@@ -35,6 +35,8 @@ async function listRDTorrents() {
         console.warn(`[${new Date().toISOString()}][rd] rate limited, returning empty list (wait ${waitTime}s)`);
         return [];
     }
+    // Throttle to prevent hammering API
+    await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
     const base = (config_1.config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
     const url = `${base}/torrents`;
     try {
@@ -65,6 +67,8 @@ async function addMagnetToRD(magnet) {
         console.warn(`[${new Date().toISOString()}][rd] rate limited, cannot add magnet (wait ${waitTime}s)`);
         throw error;
     }
+    // Throttle to prevent hammering API
+    await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
     const base = (config_1.config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
     const url = `${base}/torrents/addMagnet`;
     const params = new URLSearchParams();
@@ -97,6 +101,8 @@ async function selectAllFilesRD(id) {
         console.warn(`[${new Date().toISOString()}][rd] rate limited, skipping select files (wait ${waitTime}s)`);
         return;
     }
+    // Throttle to prevent hammering API
+    await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
     const base = (config_1.config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
     const url = `${base}/torrents/selectFiles/${encodeURIComponent(id)}`;
     const params = new URLSearchParams();
