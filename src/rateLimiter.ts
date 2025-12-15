@@ -17,9 +17,13 @@ class RateLimiter {
 
   // Minimum delay between requests per provider (in ms)
   private minRequestDelayMs: Map<string, number> = new Map([
-    ["torbox", 2000],      // 2 seconds between TorBox requests
-    ["realdebrid", 1000],  // 1 second between RD requests
+    ["torbox", 3000],      // 3 seconds between TorBox requests
+    ["realdebrid", 2000],  // 2 seconds between RD requests
   ]);
+  
+  // Cache for last successful results
+  private cache: Map<string, { data: any; timestamp: number }> = new Map();
+  private cacheTtlMs = 60000; // Cache for 60 seconds
 
   private getState(provider: string): RateLimitState {
     if (!this.states.has(provider)) {
@@ -144,6 +148,26 @@ class RateLimiter {
       message.includes("429") ||
       message.includes("throttl")
     );
+  }
+
+  /**
+   * Cache data for a provider
+   */
+  setCache(key: string, data: any): void {
+    this.cache.set(key, { data, timestamp: Date.now() });
+  }
+
+  /**
+   * Get cached data if still valid
+   */
+  getCache<T>(key: string): T | null {
+    const cached = this.cache.get(key);
+    if (!cached) return null;
+    if (Date.now() - cached.timestamp > this.cacheTtlMs) {
+      this.cache.delete(key);
+      return null;
+    }
+    return cached.data as T;
   }
 
   /**

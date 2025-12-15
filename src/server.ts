@@ -1,5 +1,7 @@
 import express from "express";
 import cors from "cors";
+import fs from "fs";
+import path from "path";
 import { config, requireEnv } from "./config";
 import { searchIndexer, pickBestResult, getMagnet, getProviderName, isIndexerConfigured } from "./indexer";
 import { addMagnetToTorbox, listTorboxTorrents } from "./torbox";
@@ -8,6 +10,7 @@ import { startOverseerrPoller } from "./overseerr";
 import { startAutoUpdater } from "./autoUpdate";
 import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDocker, CONFIG_SCHEMA } from "./configApi";
 import { logBuffer } from "./logger";
+import { rateLimiter } from "./rateLimiter";
 
 export function startServer() {
   const app = express();
@@ -443,6 +446,81 @@ export function startServer() {
       }
     });
   }
+
+  // Filesystem browser endpoint - browses actual mounted files
+  app.get("/api/files", async (req, res) => {
+    try {
+      const requestedPath = String(req.query.path || "/");
+      const mountBase = config.mountBase || "/mnt/schrodrive";
+      
+      // Sanitize path to prevent directory traversal
+      const safePath = path.normalize(requestedPath).replace(/^(\.\.[\/\\])+/, "");
+      const fullPath = path.join(mountBase, safePath);
+      
+      // Ensure we're still within mount base
+      if (!fullPath.startsWith(mountBase)) {
+        return res.status(403).json({ ok: false, error: "Access denied" });
+      }
+      
+      // Check if path exists
+      if (!fs.existsSync(fullPath)) {
+        return res.status(404).json({ ok: false, error: "Path not found", path: safePath });
+      }
+      
+      const stat = fs.statSync(fullPath);
+      
+      if (stat.isFile()) {
+        // Return file info
+        return res.json({
+          ok: true,
+          type: "file",
+          path: safePath,
+          name: path.basename(fullPath),
+          size: stat.size,
+          modified: stat.mtime,
+        });
+      }
+      
+      // List directory contents
+      const entries = fs.readdirSync(fullPath, { withFileTypes: true });
+      const items = entries.map((entry) => {
+        const itemPath = path.join(fullPath, entry.name);
+        try {
+          const itemStat = fs.statSync(itemPath);
+          return {
+            name: entry.name,
+            path: path.join(safePath, entry.name),
+            type: entry.isDirectory() ? "directory" : "file",
+            size: entry.isFile() ? itemStat.size : undefined,
+            modified: itemStat.mtime,
+          };
+        } catch {
+          return {
+            name: entry.name,
+            path: path.join(safePath, entry.name),
+            type: entry.isDirectory() ? "directory" : "file",
+          };
+        }
+      });
+      
+      // Sort: directories first, then by name
+      items.sort((a, b) => {
+        if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      
+      res.json({
+        ok: true,
+        type: "directory",
+        path: safePath,
+        items,
+        mountBase,
+      });
+    } catch (err: any) {
+      console.error("[api/files] Error:", err.message);
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
 
   app.listen(config.port, () => {
     console.log(`Server listening on port ${config.port}`);
