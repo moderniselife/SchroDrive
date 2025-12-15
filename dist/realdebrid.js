@@ -51,14 +51,29 @@ async function listRDTorrents() {
     // Throttle to prevent hammering API
     await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
     const base = (config_1.config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
-    const url = `${base}/torrents`;
+    const allTorrents = [];
+    let page = 1;
+    const limit = 2500; // Max allowed by RD API
     try {
-        const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 20000 });
-        rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
-        const arr = Array.isArray(res?.data) ? res?.data : [];
+        // Paginate through all results
+        while (true) {
+            const url = `${base}/torrents?limit=${limit}&page=${page}`;
+            const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
+            rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
+            const arr = Array.isArray(res?.data) ? res.data : [];
+            allTorrents.push(...arr);
+            // If we got less than the limit, we've reached the end
+            if (arr.length < limit) {
+                break;
+            }
+            page++;
+            // Throttle between pages to avoid rate limits
+            await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
+        }
         // Cache the successful result
-        rateLimiter_1.rateLimiter.setCache(RD_TORRENT_LIST_CACHE_KEY, arr);
-        return arr;
+        rateLimiter_1.rateLimiter.setCache(RD_TORRENT_LIST_CACHE_KEY, allTorrents);
+        console.log(`[${new Date().toISOString()}][rd] fetched ${allTorrents.length} torrents (${page} page(s))`);
+        return allTorrents;
     }
     catch (err) {
         const errorMsg = err?.message || String(err);
@@ -178,14 +193,29 @@ async function listRDDownloads() {
     // Throttle to prevent hammering API
     await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
     const base = (config_1.config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
-    const url = `${base}/downloads`;
+    const allDownloads = [];
+    let page = 1;
+    const limit = 2500; // Max allowed by RD API
     try {
-        const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 20000 });
-        rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
-        const arr = Array.isArray(res?.data) ? res?.data : [];
+        // Paginate through all results
+        while (true) {
+            const url = `${base}/downloads?limit=${limit}&page=${page}`;
+            const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
+            rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
+            const arr = Array.isArray(res?.data) ? res.data : [];
+            allDownloads.push(...arr);
+            // If we got less than the limit, we've reached the end
+            if (arr.length < limit) {
+                break;
+            }
+            page++;
+            // Throttle between pages to avoid rate limits
+            await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
+        }
         // Cache the successful result
-        rateLimiter_1.rateLimiter.setCache(RD_DOWNLOADS_CACHE_KEY, arr);
-        return arr;
+        rateLimiter_1.rateLimiter.setCache(RD_DOWNLOADS_CACHE_KEY, allDownloads);
+        console.log(`[${new Date().toISOString()}][rd] fetched ${allDownloads.length} downloads (${page} page(s))`);
+        return allDownloads;
     }
     catch (err) {
         const errorMsg = err?.message || String(err);

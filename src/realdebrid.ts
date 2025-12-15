@@ -48,15 +48,34 @@ export async function listRDTorrents(): Promise<any[]> {
   await rateLimiter.throttle(PROVIDER_NAME);
 
   const base = (config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
-  const url = `${base}/torrents`;
+  const allTorrents: any[] = [];
+  let page = 1;
+  const limit = 2500; // Max allowed by RD API
   
   try {
-    const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 20000 });
-    rateLimiter.recordSuccess(PROVIDER_NAME);
-    const arr = Array.isArray(res?.data) ? res?.data : [];
+    // Paginate through all results
+    while (true) {
+      const url = `${base}/torrents?limit=${limit}&page=${page}`;
+      const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+      
+      const arr = Array.isArray(res?.data) ? res.data : [];
+      allTorrents.push(...arr);
+      
+      // If we got less than the limit, we've reached the end
+      if (arr.length < limit) {
+        break;
+      }
+      
+      page++;
+      // Throttle between pages to avoid rate limits
+      await rateLimiter.throttle(PROVIDER_NAME);
+    }
+    
     // Cache the successful result
-    rateLimiter.setCache(RD_TORRENT_LIST_CACHE_KEY, arr);
-    return arr;
+    rateLimiter.setCache(RD_TORRENT_LIST_CACHE_KEY, allTorrents);
+    console.log(`[${new Date().toISOString()}][rd] fetched ${allTorrents.length} torrents (${page} page(s))`);
+    return allTorrents;
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
     const isNetworkError = err?.code === 'ECONNREFUSED' || err?.code === 'ENOTFOUND' || 
@@ -191,15 +210,34 @@ export async function listRDDownloads(): Promise<any[]> {
   await rateLimiter.throttle(PROVIDER_NAME);
 
   const base = (config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
-  const url = `${base}/downloads`;
+  const allDownloads: any[] = [];
+  let page = 1;
+  const limit = 2500; // Max allowed by RD API
   
   try {
-    const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 20000 });
-    rateLimiter.recordSuccess(PROVIDER_NAME);
-    const arr = Array.isArray(res?.data) ? res?.data : [];
+    // Paginate through all results
+    while (true) {
+      const url = `${base}/downloads?limit=${limit}&page=${page}`;
+      const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+      
+      const arr = Array.isArray(res?.data) ? res.data : [];
+      allDownloads.push(...arr);
+      
+      // If we got less than the limit, we've reached the end
+      if (arr.length < limit) {
+        break;
+      }
+      
+      page++;
+      // Throttle between pages to avoid rate limits
+      await rateLimiter.throttle(PROVIDER_NAME);
+    }
+    
     // Cache the successful result
-    rateLimiter.setCache(RD_DOWNLOADS_CACHE_KEY, arr);
-    return arr;
+    rateLimiter.setCache(RD_DOWNLOADS_CACHE_KEY, allDownloads);
+    console.log(`[${new Date().toISOString()}][rd] fetched ${allDownloads.length} downloads (${page} page(s))`);
+    return allDownloads;
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
     const isNetworkError = err?.code === 'ECONNREFUSED' || err?.code === 'ENOTFOUND' || 
