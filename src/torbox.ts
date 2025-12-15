@@ -133,11 +133,18 @@ export async function addMagnetToTorbox(magnet: string, name?: string) {
   }
 }
 
+const TORRENT_LIST_CACHE_KEY = "torbox_torrents";
+
 export async function listTorboxTorrents(): Promise<any[]> {
-  // Check rate limit before making request
+  // Check rate limit before making request - return cached data if available
   if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
     const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
-    console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning empty list (wait ${waitTime}s)`);
+    const cached = rateLimiter.getCache<any[]>(TORRENT_LIST_CACHE_KEY);
+    if (cached) {
+      console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning cached list (${cached.length} items, wait ${waitTime}s)`);
+      return cached;
+    }
+    console.warn(`[${new Date().toISOString()}][torbox] rate limited, no cache available (wait ${waitTime}s)`);
     return [];
   }
 
@@ -149,6 +156,8 @@ export async function listTorboxTorrents(): Promise<any[]> {
     const res = await c.torrents.getTorrentList({ limit: 100 });
     rateLimiter.recordSuccess(PROVIDER_NAME);
     const list = Array.isArray(res?.data) ? res.data : [res?.data].filter(Boolean);
+    // Cache the successful result
+    rateLimiter.setCache(TORRENT_LIST_CACHE_KEY, list);
     return list as any[];
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
@@ -164,6 +173,13 @@ export async function listTorboxTorrents(): Promise<any[]> {
       statusText: err?.response?.statusText,
       rateLimited: rateLimiter.isRateLimited(PROVIDER_NAME),
     });
+    
+    // Return cached data on error if available
+    const cached = rateLimiter.getCache<any[]>(TORRENT_LIST_CACHE_KEY);
+    if (cached) {
+      console.log(`[${new Date().toISOString()}][torbox] returning cached list on error (${cached.length} items)`);
+      return cached;
+    }
     return [];
   }
 }

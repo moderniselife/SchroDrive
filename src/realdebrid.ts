@@ -20,13 +20,20 @@ function rdHeaders() {
   return { Authorization: `Bearer ${config.rdAccessToken}` } as Record<string, string>;
 }
 
+const RD_TORRENT_LIST_CACHE_KEY = "realdebrid_torrents";
+
 export async function listRDTorrents(): Promise<any[]> {
   if (!isRDConfigured()) return [];
   
-  // Check rate limit before making request
+  // Check rate limit before making request - return cached data if available
   if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
     const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
-    console.warn(`[${new Date().toISOString()}][rd] rate limited, returning empty list (wait ${waitTime}s)`);
+    const cached = rateLimiter.getCache<any[]>(RD_TORRENT_LIST_CACHE_KEY);
+    if (cached) {
+      console.warn(`[${new Date().toISOString()}][rd] rate limited, returning cached list (${cached.length} items, wait ${waitTime}s)`);
+      return cached;
+    }
+    console.warn(`[${new Date().toISOString()}][rd] rate limited, no cache available (wait ${waitTime}s)`);
     return [];
   }
 
@@ -40,6 +47,8 @@ export async function listRDTorrents(): Promise<any[]> {
     const res = await axios.get(url, { headers: rdHeaders(), timeout: 20000 });
     rateLimiter.recordSuccess(PROVIDER_NAME);
     const arr = Array.isArray(res?.data) ? res?.data : [];
+    // Cache the successful result
+    rateLimiter.setCache(RD_TORRENT_LIST_CACHE_KEY, arr);
     return arr;
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
@@ -54,6 +63,13 @@ export async function listRDTorrents(): Promise<any[]> {
       status: err?.response?.status,
       rateLimited: rateLimiter.isRateLimited(PROVIDER_NAME),
     });
+    
+    // Return cached data on error if available
+    const cached = rateLimiter.getCache<any[]>(RD_TORRENT_LIST_CACHE_KEY);
+    if (cached) {
+      console.log(`[${new Date().toISOString()}][rd] returning cached list on error (${cached.length} items)`);
+      return cached;
+    }
     return [];
   }
 }

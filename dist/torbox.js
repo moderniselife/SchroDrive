@@ -120,11 +120,17 @@ async function addMagnetToTorbox(magnet, name) {
         throw err;
     }
 }
+const TORRENT_LIST_CACHE_KEY = "torbox_torrents";
 async function listTorboxTorrents() {
-    // Check rate limit before making request
+    // Check rate limit before making request - return cached data if available
     if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
         const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
-        console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning empty list (wait ${waitTime}s)`);
+        const cached = rateLimiter_1.rateLimiter.getCache(TORRENT_LIST_CACHE_KEY);
+        if (cached) {
+            console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning cached list (${cached.length} items, wait ${waitTime}s)`);
+            return cached;
+        }
+        console.warn(`[${new Date().toISOString()}][torbox] rate limited, no cache available (wait ${waitTime}s)`);
         return [];
     }
     // Throttle to prevent hammering API
@@ -134,6 +140,8 @@ async function listTorboxTorrents() {
         const res = await c.torrents.getTorrentList({ limit: 100 });
         rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
         const list = Array.isArray(res?.data) ? res.data : [res?.data].filter(Boolean);
+        // Cache the successful result
+        rateLimiter_1.rateLimiter.setCache(TORRENT_LIST_CACHE_KEY, list);
         return list;
     }
     catch (err) {
@@ -148,6 +156,12 @@ async function listTorboxTorrents() {
             statusText: err?.response?.statusText,
             rateLimited: rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME),
         });
+        // Return cached data on error if available
+        const cached = rateLimiter_1.rateLimiter.getCache(TORRENT_LIST_CACHE_KEY);
+        if (cached) {
+            console.log(`[${new Date().toISOString()}][torbox] returning cached list on error (${cached.length} items)`);
+            return cached;
+        }
         return [];
     }
 }

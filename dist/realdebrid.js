@@ -26,13 +26,19 @@ function getRDWaitTime() {
 function rdHeaders() {
     return { Authorization: `Bearer ${config_1.config.rdAccessToken}` };
 }
+const RD_TORRENT_LIST_CACHE_KEY = "realdebrid_torrents";
 async function listRDTorrents() {
     if (!isRDConfigured())
         return [];
-    // Check rate limit before making request
+    // Check rate limit before making request - return cached data if available
     if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
         const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
-        console.warn(`[${new Date().toISOString()}][rd] rate limited, returning empty list (wait ${waitTime}s)`);
+        const cached = rateLimiter_1.rateLimiter.getCache(RD_TORRENT_LIST_CACHE_KEY);
+        if (cached) {
+            console.warn(`[${new Date().toISOString()}][rd] rate limited, returning cached list (${cached.length} items, wait ${waitTime}s)`);
+            return cached;
+        }
+        console.warn(`[${new Date().toISOString()}][rd] rate limited, no cache available (wait ${waitTime}s)`);
         return [];
     }
     // Throttle to prevent hammering API
@@ -43,6 +49,8 @@ async function listRDTorrents() {
         const res = await axios_1.default.get(url, { headers: rdHeaders(), timeout: 20000 });
         rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
         const arr = Array.isArray(res?.data) ? res?.data : [];
+        // Cache the successful result
+        rateLimiter_1.rateLimiter.setCache(RD_TORRENT_LIST_CACHE_KEY, arr);
         return arr;
     }
     catch (err) {
@@ -56,6 +64,12 @@ async function listRDTorrents() {
             status: err?.response?.status,
             rateLimited: rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME),
         });
+        // Return cached data on error if available
+        const cached = rateLimiter_1.rateLimiter.getCache(RD_TORRENT_LIST_CACHE_KEY);
+        if (cached) {
+            console.log(`[${new Date().toISOString()}][rd] returning cached list on error (${cached.length} items)`);
+            return cached;
+        }
         return [];
     }
 }
