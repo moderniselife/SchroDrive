@@ -244,11 +244,9 @@ export default function DashboardPage() {
   }, [fetchStaticData, streamTorrents, streamDownloads, isStreaming])
 
   useEffect(() => {
-    fetchData(true) // Force initial load
-    // Refresh every 5 minutes (streams complete quickly, no need for frequent polling)
-    const interval = setInterval(() => fetchData(false), 5 * 60 * 1000)
+    fetchData(true) // Load once on mount - no auto-refresh for large datasets
     return () => {
-      clearInterval(interval)
+      // Clean up streams on unmount
       if (torrentsEventSourceRef.current) torrentsEventSourceRef.current.close()
       if (downloadsEventSourceRef.current) downloadsEventSourceRef.current.close()
     }

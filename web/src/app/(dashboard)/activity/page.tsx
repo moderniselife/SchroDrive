@@ -149,11 +149,8 @@ export default function ActivityPage() {
   }, [])
 
   useEffect(() => {
-    fetchDownloadsStream()
-    // Refresh every 5 minutes (streams complete quickly, no need for frequent polling)
-    const interval = setInterval(fetchDownloadsStream, 5 * 60 * 1000)
+    fetchDownloadsStream() // Load once on mount - no auto-refresh for large datasets
     return () => {
-      clearInterval(interval)
       if (eventSourceRef.current) {
         eventSourceRef.current.close()
       }
