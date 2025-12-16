@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -14,6 +14,7 @@ import {
   AlertCircle,
   Loader2,
   RefreshCw,
+  Radio,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
@@ -120,41 +121,133 @@ export default function DashboardPage() {
   const [services, setServices] = useState<ServiceStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [streamStatus, setStreamStatus] = useState("")
+  const torrentsEventSourceRef = useRef<EventSource | null>(null)
+  const downloadsEventSourceRef = useRef<EventSource | null>(null)
 
-  async function fetchData() {
+  // Fetch providers and services (non-streaming)
+  const fetchStaticData = useCallback(async () => {
     try {
-      const [providersRes, torrentsRes, downloadsRes, statusRes] = await Promise.all([
+      const [providersRes, statusRes] = await Promise.all([
         fetch("/api/providers"),
-        fetch("/api/torrents"),
-        fetch("/api/downloads"),
         fetch("/api/status"),
       ])
-
-      const [providersData, torrentsData, downloadsData, statusData] = await Promise.all([
+      const [providersData, statusData] = await Promise.all([
         providersRes.json(),
-        torrentsRes.json(),
-        downloadsRes.json(),
         statusRes.json(),
       ])
-
       if (providersData.ok !== false) setProviders(providersData.providers || [])
-      if (torrentsData.ok !== false) setTorrents(torrentsData.torrents || [])
-      if (downloadsData.ok !== false) setDownloads(downloadsData.downloads || [])
       if (statusData.ok !== false) setServices(statusData.services || null)
     } catch (error) {
-      console.error("Failed to fetch dashboard data:", error)
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
+      console.error("Failed to fetch static data:", error)
     }
-  }
+  }, [])
+
+  // Stream torrents
+  const streamTorrents = useCallback(() => {
+    if (torrentsEventSourceRef.current) {
+      torrentsEventSourceRef.current.close()
+    }
+    
+    const eventSource = new EventSource("/api/torrents/stream")
+    torrentsEventSourceRef.current = eventSource
+
+    eventSource.addEventListener("status", (e) => {
+      const data = JSON.parse(e.data)
+      setStreamStatus(data.message || "Loading...")
+    })
+
+    eventSource.addEventListener("torrents", (e) => {
+      const data = JSON.parse(e.data)
+      setTorrents((prev) => {
+        const newTorrents = [...prev]
+        for (const t of data.torrents || []) {
+          const key = `${t.provider}-${t.id}`
+          const existingIdx = newTorrents.findIndex((x) => `${x.provider}-${x.id}` === key)
+          if (existingIdx >= 0) {
+            newTorrents[existingIdx] = t
+          } else {
+            newTorrents.push(t)
+          }
+        }
+        newTorrents.sort((a, b) => new Date(b.addedAt || 0).getTime() - new Date(a.addedAt || 0).getTime())
+        return newTorrents
+      })
+      setLoading(false)
+    })
+
+    eventSource.addEventListener("done", () => {
+      eventSource.close()
+    })
+
+    eventSource.onerror = () => {
+      eventSource.close()
+    }
+
+    return eventSource
+  }, [])
+
+  // Stream downloads
+  const streamDownloads = useCallback(() => {
+    if (downloadsEventSourceRef.current) {
+      downloadsEventSourceRef.current.close()
+    }
+    
+    const eventSource = new EventSource("/api/downloads/stream")
+    downloadsEventSourceRef.current = eventSource
+
+    eventSource.addEventListener("downloads", (e) => {
+      const data = JSON.parse(e.data)
+      setDownloads((prev) => {
+        const newDownloads = [...prev]
+        for (const d of data.downloads || []) {
+          const key = `${d.provider}-${d.type}-${d.id}`
+          const existingIdx = newDownloads.findIndex((x) => `${x.provider}-${x.type}-${x.id}` === key)
+          if (existingIdx >= 0) {
+            newDownloads[existingIdx] = d
+          } else {
+            newDownloads.push(d)
+          }
+        }
+        newDownloads.sort((a, b) => new Date(b.addedAt || 0).getTime() - new Date(a.addedAt || 0).getTime())
+        return newDownloads
+      })
+    })
+
+    eventSource.addEventListener("done", () => {
+      setIsStreaming(false)
+      setRefreshing(false)
+      setStreamStatus("")
+      eventSource.close()
+    })
+
+    eventSource.onerror = () => {
+      setIsStreaming(false)
+      setRefreshing(false)
+      eventSource.close()
+    }
+
+    return eventSource
+  }, [])
+
+  // Initial load and refresh
+  const fetchData = useCallback(() => {
+    setIsStreaming(true)
+    fetchStaticData()
+    streamTorrents()
+    streamDownloads()
+  }, [fetchStaticData, streamTorrents, streamDownloads])
 
   useEffect(() => {
     fetchData()
-    // Refresh every 30 seconds
     const interval = setInterval(fetchData, 30000)
-    return () => clearInterval(interval)
-  }, [])
+    return () => {
+      clearInterval(interval)
+      if (torrentsEventSourceRef.current) torrentsEventSourceRef.current.close()
+      if (downloadsEventSourceRef.current) downloadsEventSourceRef.current.close()
+    }
+  }, [fetchData])
 
   function handleRefresh() {
     setRefreshing(true)
@@ -230,12 +323,22 @@ export default function DashboardPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground">Overview of your SchröDrive system</p>
+          <p className="text-muted-foreground">
+            {streamStatus || "Overview of your SchröDrive system"}
+          </p>
         </div>
-        <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
-          {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          <span className="ml-2">Refresh</span>
-        </Button>
+        <div className="flex items-center gap-2">
+          {isStreaming && (
+            <Badge variant="outline" className="gap-1">
+              <Radio className="h-3 w-3 animate-pulse" />
+              Loading
+            </Badge>
+          )}
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || isStreaming}>
+            {(refreshing || isStreaming) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            <span className="ml-2">Refresh</span>
+          </Button>
+        </div>
       </div>
 
       {/* Stats Grid */}
