@@ -1,8 +1,7 @@
 import axios from "axios";
 import { config, requireEnv } from "./config";
-import { searchProwlarr, pickBestResult, getMagnet, getMagnetOrResolve } from "./prowlarr";
+import { searchIndexer, pickBestResult, getMagnet, getMagnetOrResolve, testIndexerConnection, getProviderName, isIndexerConfigured } from "./indexer";
 import { addMagnetToTorbox, checkExistingTorrents } from "./torbox";
-import { testProwlarrConnection } from "./prowlarr";
 
 interface MediaLike {
   title?: string;
@@ -106,7 +105,11 @@ async function fetchApprovedRequests(): Promise<MediaRequestLike[]> {
 }
 
 export function startOverseerrPoller() {
-  requireEnv("prowlarrUrl", "prowlarrApiKey", "torboxApiKey");
+  // Validate indexer is configured
+  if (!isIndexerConfigured()) {
+    throw new Error("No indexer configured. Set JACKETT_URL/JACKETT_API_KEY or PROWLARR_URL/PROWLARR_API_KEY.");
+  }
+  requireEnv("torboxApiKey");
   // Accept either Overseerr API key or Bearer token
   if (!config.overseerrUrl || (!config.overseerrApiKey && !config.overseerrAuth)) {
     throw new Error("Missing Overseerr credentials. Set OVERSEERR_URL and either OVERSEERR_API_KEY or OVERSEERR_AUTH.");
@@ -116,13 +119,14 @@ export function startOverseerrPoller() {
   const intervalMs = Math.max(5, Number(config.pollIntervalSeconds || 30)) * 1000;
   console.log(`[${new Date().toISOString()}][poller] starting`, { intervalSeconds: Math.round(intervalMs / 1000) });
 
-  // Test Prowlarr connection on startup
-  testProwlarrConnection().then(connected => {
+  // Test indexer connection on startup
+  const provider = getProviderName();
+  testIndexerConnection().then(connected => {
     if (!connected) {
-      console.warn(`[${new Date().toISOString()}][poller] WARNING: Prowlarr connection test failed. Searches may timeout.`);
+      console.warn(`[${new Date().toISOString()}][poller] WARNING: ${provider} connection test failed. Searches may timeout.`);
     }
   }).catch(err => {
-    console.error(`[${new Date().toISOString()}][poller] Prowlarr connection test error`, err?.message || String(err));
+    console.error(`[${new Date().toISOString()}][poller] ${provider} connection test error`, err?.message || String(err));
   });
 
   const runOnce = async () => {
@@ -180,12 +184,13 @@ export function startOverseerrPoller() {
         }
 
         try {
-          console.log(`[${new Date().toISOString()}][poller->prowlarr] searching`, { id, query: built.query, categories: built.categories });
+          const indexerName = getProviderName();
+          console.log(`[${new Date().toISOString()}][poller->${indexerName}] searching`, { id, query: built.query, categories: built.categories });
           const t0 = Date.now();
-          const results = await searchProwlarr(built.query, { categories: built.categories });
-          console.log(`[${new Date().toISOString()}][poller->prowlarr] results`, { id, count: results.length, ms: Date.now() - t0 });
+          const results = await searchIndexer(built.query, { categories: built.categories });
+          console.log(`[${new Date().toISOString()}][poller->${indexerName}] results`, { id, count: results.length, ms: Date.now() - t0 });
           const best = pickBestResult(results);
-          console.log(`[${new Date().toISOString()}][poller->prowlarr] chosen`, { id, title: (best as any)?.title, seeders: (best as any)?.seeders, size: (best as any)?.size });
+          console.log(`[${new Date().toISOString()}][poller->${indexerName}] chosen`, { id, title: (best as any)?.title, seeders: (best as any)?.seeders, size: (best as any)?.size });
           // Try best first, then scan other candidates until a magnet is found
           let magnet: string | undefined = undefined;
           let chosenUsed: any = best;

@@ -21,24 +21,47 @@
 
 # SchröDrive
 
-The ultimate media automation orchestrator. SchröDrive seamlessly integrates with Overseerr to automatically search Prowlarr for the best torrents and deliver them to your preferred debrid service. Currently supporting TorBox with upcoming support for Real-Debrid, All-Debrid, and Premiumize.
+The ultimate media automation orchestrator. SchröDrive seamlessly integrates with Overseerr to automatically search Prowlarr or Jackett for the best torrents and deliver them to your preferred debrid service. **Full support for TorBox and Real-Debrid**, with upcoming support for All-Debrid and Premiumize.
 
 ## Releases
 - [Latest Release](https://github.com/moderniselife/SchroDrive/releases/latest) - Auto-incremented version and release notes
 - Docker image: `ghcr.io/moderniselife/schrodrive:latest` and `ghcr.io/moderniselife/schrodrive:vX.Y.Z`
+- Develop image (auto-built on pushes to `develop`): `ghcr.io/moderniselife/schrodrive:develop`
 
 ## Features
+
+### 🔍 Indexer Integration
+- **Dual indexer support**: Prowlarr (`/api/v1/search`) and Jackett (`/api/v2.0/indexers`)
+- Auto-detection: configure one or both indexers, SchroDrive picks the active one
+- Intelligent result ranking by seeders (fallback by size)
+- Automatic magnet resolution and fallback strategies
+
+### 📺 Debrid Providers
+- **TorBox**: Full API integration for adding/managing torrents
+- **Real-Debrid**: Full API integration for adding/managing torrents
+- Multi-provider support: Use both simultaneously with automatic failover
+
+### 🗂️ Virtual Drive
+- **rclone WebDAV mounts** for TorBox and Real-Debrid
+- Access your debrid library as a local filesystem
+- Configurable mount options (cache, permissions, buffer sizes)
+- Works with Plex, Jellyfin, Emby, and other media servers
+
+### 🔄 Automation
 - Webhook endpoint for Overseerr notifications
-- Prowlarr search using `/api/v1/search`
-- Picks best result by seeders (fallback by size)
-- Adds magnet to TorBox
-- CLI for manual search/add
-- Docker image
+- Overseerr API poller for approved requests
+- Dead-torrent scanner: detects stalled torrents and re-adds via opposite provider
+- Media organizer: symlinked views with TMDB/TVMaze metadata
+- Auto-update from GitHub releases
 
-## 🚀 Coming Soon
-**Virtual Drive Mount Integration** - Seamlessly manage your downloaded content with automatic virtual drive mounting. SchröDrive will intelligently organize and mount completed downloads as virtual drives, providing instant access to your media library across your network. Experience transparent file management with zero manual intervention.
+### 🛠️ Developer Experience
+- CLI for manual search/add operations
+- Docker image with multi-arch support
+- Comprehensive logging
 
-**Multi-Provider Debrid Support** - Expand your download ecosystem beyond TorBox. SchröDrive will soon integrate with leading debrid services including Real-Debrid, All-Debrid, and Premiumize, giving you the flexibility to choose the optimal provider for your content needs. Switch between providers effortlessly or use multiple services in parallel for maximum availability and speed.
+## 🚀 Future
+- Additional providers (All-Debrid, Premiumize)
+- Web GUI for configuration and monitoring
 
 ## Modes
 - **Webhook mode (default)**
@@ -85,15 +108,36 @@ This will pull `ghcr.io/moderniselife/schrodrive` updates automatically and rest
 
 ## Requirements
 - Node.js 18+
-- Prowlarr URL and API key
+- **Indexer**: Either Prowlarr OR Jackett (URL and API key)
 - TorBox API key
 - Optional secret for Overseerr webhook Authorization
 
 ## Environment Variables
-- `PORT` (default `8978`)
+
+### Indexer Selection
+- `INDEXER_PROVIDER` (`auto` | `prowlarr` | `jackett`, default `auto`)
+  - `auto`: Uses Jackett if configured, otherwise Prowlarr
+  - `prowlarr`: Force Prowlarr
+  - `jackett`: Force Jackett
+
+### Prowlarr Configuration
 - `PROWLARR_URL` (e.g. `http://localhost:9696`)
 - `PROWLARR_API_KEY`
 - `PROWLARR_CATEGORIES` (comma-separated category IDs, optional)
+- `PROWLARR_INDEXER_IDS` (comma-separated indexer IDs, optional)
+- `PROWLARR_SEARCH_LIMIT` (default `100`)
+- `PROWLARR_TIMEOUT_MS` (default `120000`)
+
+### Jackett Configuration
+- `JACKETT_URL` (e.g. `http://localhost:9117`)
+- `JACKETT_API_KEY`
+- `JACKETT_CATEGORIES` (comma-separated category IDs, optional)
+- `JACKETT_INDEXER_IDS` (comma-separated indexer IDs, optional)
+- `JACKETT_SEARCH_LIMIT` (default `100`)
+- `JACKETT_TIMEOUT_MS` (default `120000`)
+
+### General
+- `PORT` (default `8978`)
 - `TORBOX_API_KEY`
 - `TORBOX_BASE_URL` (default `https://api.torbox.app`)
 - `OVERSEERR_AUTH` (optional Authorization value to require on webhook)
@@ -103,6 +147,25 @@ This will pull `ghcr.io/moderniselife/schrodrive` updates automatically and rest
 - `RUN_WEBHOOK` (default true)
 - `RUN_POLLER` (default false)
 
+Virtual Drive and multi‑provider configuration:
+
+- `PROVIDERS` (default `torbox,realdebrid`)
+- Real‑Debrid API: `RD_API_BASE` (default `https://api.real-debrid.com/rest/1.0`), `RD_ACCESS_TOKEN`
+- Real‑Debrid WebDAV: `RD_WEBDAV_URL` (default `https://dav.real-debrid.com`), `RD_WEBDAV_USERNAME`, `RD_WEBDAV_PASSWORD`
+- TorBox WebDAV: `TORBOX_WEBDAV_URL` (default `https://webdav.torbox.app`), `TORBOX_WEBDAV_USERNAME`, `TORBOX_WEBDAV_PASSWORD`
+- Mount settings: `MOUNT_BASE` (default `/Volumes/SchroDrive` on macOS or `/mnt/schrodrive` on Linux), `RCLONE_PATH` (default `rclone`)
+- Mount flags (fully configurable):
+  - `MOUNT_VFS_CACHE_MODE` (default `full`)
+  - `MOUNT_DIR_CACHE_TIME` (default `12h`)
+  - `MOUNT_POLL_INTERVAL` (default `0`)
+  - `MOUNT_BUFFER_SIZE` (default `64M`)
+  - `MOUNT_VFS_READ_CHUNK_SIZE` (optional)
+  - `MOUNT_VFS_READ_CHUNK_SIZE_LIMIT` (optional)
+  - `MOUNT_VFS_CACHE_MAX_AGE` (optional)
+  - `MOUNT_VFS_CACHE_MAX_SIZE` (optional)
+  - `MOUNT_OPTIONS` (optional extra flags appended)
+- Dead scanner: `DEAD_SCAN_INTERVAL_S` (default `600`), `DEAD_IDLE_MIN` (default `120`)
+
 ## Install & Build
 ```bash
 npm ci
@@ -111,6 +174,13 @@ npm run build
 
 ## Run (Local)
 ```bash
+# With Jackett
+JACKETT_URL=http://localhost:9117 \
+JACKETT_API_KEY=xxxxx \
+TORBOX_API_KEY=tb_xxxxx \
+node dist/index.js serve
+
+# Or with Prowlarr
 PROWLARR_URL=http://localhost:9696 \
 PROWLARR_API_KEY=xxxxx \
 TORBOX_API_KEY=tb_xxxxx \
@@ -119,7 +189,7 @@ node dist/index.js serve
 
 Health check:
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:8978/health
 ```
 
 ## Overseerr Webhook Setup
@@ -173,7 +243,7 @@ curl http://localhost:8080/health
 - Recommended events: Request Approved (or as desired)
 
 ## CLI
-Search Prowlarr and print the best result:
+Search indexer (Prowlarr or Jackett) and print the best result:
 ```bash
 node dist/index.js search "Big Buck Bunny 2008"
 ```
@@ -186,6 +256,20 @@ node dist/index.js add --magnet "magnet:?xt=urn:btih:..."
 Search and add the best result automatically:
 ```bash
 node dist/index.js add --query "Ubuntu 24.04"
+```
+
+Mount configured WebDAV providers via rclone (requires rclone + FUSE on host/container):
+```bash
+node dist/index.js mount
+```
+
+Scan for dead torrents and attempt re‑add via indexer to the opposite provider:
+```bash
+# One‑shot
+node dist/index.js scan-dead
+
+# Watch mode (interval from DEAD_SCAN_INTERVAL_S)
+node dist/index.js scan-dead --watch
 ```
 
 ## Docker Compose
@@ -215,6 +299,36 @@ PROWLARR_CATEGORIES=5000,2000
 # TorBox Configuration
 TORBOX_API_KEY=tb_your_torbox_api_key_here
 TORBOX_BASE_URL=https://api.torbox.app
+
+# Providers (comma separated)
+PROVIDERS=torbox,realdebrid
+
+# Real‑Debrid API (optional but required for RD re‑add and scanner)
+# RD_API_BASE=https://api.real-debrid.com/rest/1.0
+# RD_ACCESS_TOKEN=your_rd_access_token
+
+# Real‑Debrid WebDAV (for mounting)
+# RD_WEBDAV_URL=https://dav.real-debrid.com
+# RD_WEBDAV_USERNAME=your_rd_username
+# RD_WEBDAV_PASSWORD=your_rd_webdav_password
+
+# TorBox WebDAV (for mounting)
+# TORBOX_WEBDAV_URL=https://webdav.torbox.app
+# TORBOX_WEBDAV_USERNAME=you@example.com
+# TORBOX_WEBDAV_PASSWORD=your_torbox_password
+
+# Mount settings (rclone must be available in container or on host)
+# MOUNT_BASE=/mnt/schrodrive
+# RCLONE_PATH=rclone
+# MOUNT_VFS_CACHE_MODE=full
+# MOUNT_DIR_CACHE_TIME=12h
+# MOUNT_POLL_INTERVAL=0
+# MOUNT_BUFFER_SIZE=64M
+# MOUNT_VFS_READ_CHUNK_SIZE=
+# MOUNT_VFS_READ_CHUNK_SIZE_LIMIT=
+# MOUNT_VFS_CACHE_MAX_AGE=
+# MOUNT_VFS_CACHE_MAX_SIZE=
+# MOUNT_OPTIONS=--no-modtime
 
 # Overseerr Webhook (optional)
 OVERSEERR_AUTH=your_secret_auth_header_value
@@ -303,6 +417,30 @@ curl -X POST http://localhost:8978/webhook/overseerr \
 - Shared `media` network
 - Persistent `prowlarr_config` volume
 
+### Optional: Mounting WebDAV inside Docker
+If you plan to run `node dist/index.js mount` inside the container, you need rclone and FUSE available in the container and permissions to use `/dev/fuse`.
+
+You can either:
+
+- Build a custom image that installs rclone and fuse3, or
+- Install rclone and fuse3 at runtime (not recommended for production), and
+- Add the following to your compose service (security sensitive):
+
+```yaml
+    devices:
+      - "/dev/fuse:/dev/fuse"
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    # privileged: true  # last resort; prefer fine-grained caps above
+    # Ensure your mount base exists and is bind-mounted as needed
+    # volumes:
+    #   - /mnt/schrodrive:/mnt/schrodrive:rshared
+```
+
+Note: In many deployments it’s simpler to run the mount on the host and only use the app for scanning/automation.
+
 ### Stop and clean up
 ```bash
 docker-compose down
@@ -343,8 +481,7 @@ docker run --rm -p 8978:8978 \
 ## Troubleshooting
 ### Webhook returns 503 "Service not configured"
 This means required environment variables are missing. Check your container logs and ensure:
-- `PROWLARR_URL` is set (e.g., `http://prowlarr:9696`)
-- `PROWLARR_API_KEY` is set to a valid Prowlarr API key
+- **Indexer configured**: Either set `JACKETT_URL` + `JACKETT_API_KEY` OR `PROWLARR_URL` + `PROWLARR_API_KEY`
 - `TORBOX_API_KEY` is set to a valid TorBox API key
 
 For Docker Compose, edit your `.env` file and restart:
@@ -353,17 +490,20 @@ docker-compose down
 docker-compose up -d
 ```
 
-### Webhook returns 504 "Request timed out while searching Prowlarr"
-The search request exceeded 45 seconds. This can happen if:
-- Prowlarr is slow or has many indexers
+### Webhook returns 504 "Request timed out while searching indexer"
+The search request exceeded the timeout. This can happen if:
+- Your indexer (Prowlarr/Jackett) is slow or has many trackers
 - Network connectivity issues
 - Indexers are unresponsive
 
 Try:
-1. Test Prowlarr directly: `curl http://localhost:9696/api/v1/search?query=test&apikey=YOUR_KEY`
-2. Reduce `PROWLARR_CATEGORIES` to fewer indexers
-3. Check Prowlarr logs for indexer issues
-4. Retry the webhook request
+1. Test your indexer directly:
+   - Prowlarr: `curl http://localhost:9696/api/v1/search?query=test&apikey=YOUR_KEY`
+   - Jackett: `curl "http://localhost:9117/api/v2.0/indexers/all/results?apikey=YOUR_KEY&Query=test"`
+2. Reduce categories or indexers
+3. Increase timeout via `PROWLARR_TIMEOUT_MS` or `JACKETT_TIMEOUT_MS`
+4. Check indexer logs for issues
+5. Retry the webhook request
 
 ### Health check fails
 Ensure the service is running and accessible:
