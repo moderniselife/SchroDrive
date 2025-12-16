@@ -338,7 +338,7 @@ export function startServer() {
     
     if (!gotLock) {
       // Check if we have cached data
-      const cachedTorrents = rateLimiter.getCache<any[]>("rd:torrent:list");
+      const cachedTorrents = rateLimiter.getCache<any[]>("realdebrid_torrents");
       if (cachedTorrents && cachedTorrents.length > 0) {
         // Return cached data immediately
         send("status", { message: "Using cached data..." });
@@ -450,7 +450,7 @@ export function startServer() {
     
     if (!gotLock) {
       // Check if we have cached data
-      const cachedDownloads = rateLimiter.getCache<any[]>("rd:downloads:list");
+      const cachedDownloads = rateLimiter.getCache<any[]>("realdebrid_downloads");
       if (cachedDownloads && cachedDownloads.length > 0) {
         // Return cached data immediately
         send("status", { message: "Using cached data..." });
