@@ -106,6 +106,47 @@ export async function listRDTorrents(): Promise<any[]> {
   }
 }
 
+// Generator version that yields each page as it's fetched - for streaming
+export async function* listRDTorrentsStream(): AsyncGenerator<any[], void, unknown> {
+  if (!isRDConfigured()) return;
+  
+  if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+    const cached = rateLimiter.getCache<any[]>(RD_TORRENT_LIST_CACHE_KEY);
+    if (cached) {
+      yield cached;
+    }
+    return;
+  }
+
+  await rateLimiter.throttle(PROVIDER_NAME);
+
+  const base = (config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
+  let page = 1;
+  const limit = 100; // Use smaller pages for faster streaming
+  
+  try {
+    while (true) {
+      const url = `${base}/torrents?limit=${limit}&page=${page}`;
+      const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+      
+      const arr = Array.isArray(res?.data) ? res.data : [];
+      if (arr.length > 0) {
+        yield arr;
+      }
+      
+      if (arr.length < limit) break;
+      page++;
+      await rateLimiter.throttle(PROVIDER_NAME);
+    }
+  } catch (err: any) {
+    if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
+      rateLimiter.recordRateLimit(PROVIDER_NAME, err?.message);
+    }
+    console.error(`[${new Date().toISOString()}][rd] list torrents stream failed`, err?.message);
+  }
+}
+
 export async function addMagnetToRD(magnet: string): Promise<{ id?: string; uri?: string }> {
   // Check rate limit before making request
   if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
@@ -265,5 +306,46 @@ export async function listRDDownloads(): Promise<any[]> {
       return cached;
     }
     return [];
+  }
+}
+
+// Generator version that yields each page as it's fetched - for streaming
+export async function* listRDDownloadsStream(): AsyncGenerator<any[], void, unknown> {
+  if (!isRDConfigured()) return;
+  
+  if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+    const cached = rateLimiter.getCache<any[]>(RD_DOWNLOADS_CACHE_KEY);
+    if (cached) {
+      yield cached;
+    }
+    return;
+  }
+
+  await rateLimiter.throttle(PROVIDER_NAME);
+
+  const base = (config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
+  let page = 1;
+  const limit = 100; // Use smaller pages for faster streaming
+  
+  try {
+    while (true) {
+      const url = `${base}/downloads?limit=${limit}&page=${page}`;
+      const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+      
+      const arr = Array.isArray(res?.data) ? res.data : [];
+      if (arr.length > 0) {
+        yield arr;
+      }
+      
+      if (arr.length < limit) break;
+      page++;
+      await rateLimiter.throttle(PROVIDER_NAME);
+    }
+  } catch (err: any) {
+    if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
+      rateLimiter.recordRateLimit(PROVIDER_NAME, err?.message);
+    }
+    console.error(`[${new Date().toISOString()}][rd] list downloads stream failed`, err?.message);
   }
 }
