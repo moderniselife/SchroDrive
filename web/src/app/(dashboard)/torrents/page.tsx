@@ -147,15 +147,15 @@ export default function TorrentsPage() {
 
   useEffect(() => {
     fetchTorrentsStream()
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchTorrentsStream, 30000)
+    // Refresh every 5 minutes (streams complete quickly, no need for frequent polling)
+    const interval = setInterval(fetchTorrentsStream, 5 * 60 * 1000)
     return () => {
       clearInterval(interval)
       if (eventSourceRef.current) {
         eventSourceRef.current.close()
       }
     }
-  }, [fetchTorrentsStream])
+  }, []) // Empty deps - only run once on mount
 
   function handleRefresh() {
     setRefreshing(true)

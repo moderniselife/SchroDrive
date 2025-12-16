@@ -232,26 +232,31 @@ export default function DashboardPage() {
   }, [])
 
   // Initial load and refresh
-  const fetchData = useCallback(() => {
+  const fetchData = useCallback((force = false) => {
+    // Don't start new streams if already streaming (unless forced)
+    if (isStreaming && !force) {
+      return
+    }
     setIsStreaming(true)
     fetchStaticData()
     streamTorrents()
     streamDownloads()
-  }, [fetchStaticData, streamTorrents, streamDownloads])
+  }, [fetchStaticData, streamTorrents, streamDownloads, isStreaming])
 
   useEffect(() => {
-    fetchData()
-    const interval = setInterval(fetchData, 30000)
+    fetchData(true) // Force initial load
+    // Refresh every 5 minutes (streams complete quickly, no need for frequent polling)
+    const interval = setInterval(() => fetchData(false), 5 * 60 * 1000)
     return () => {
       clearInterval(interval)
       if (torrentsEventSourceRef.current) torrentsEventSourceRef.current.close()
       if (downloadsEventSourceRef.current) downloadsEventSourceRef.current.close()
     }
-  }, [fetchData])
+  }, []) // Empty deps - only run once on mount
 
   function handleRefresh() {
     setRefreshing(true)
-    fetchData()
+    fetchData(true) // Force refresh
   }
 
   // Calculate stats from real data - combine torrents + downloads

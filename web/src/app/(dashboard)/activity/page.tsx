@@ -150,15 +150,15 @@ export default function ActivityPage() {
 
   useEffect(() => {
     fetchDownloadsStream()
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchDownloadsStream, 30000)
+    // Refresh every 5 minutes (streams complete quickly, no need for frequent polling)
+    const interval = setInterval(fetchDownloadsStream, 5 * 60 * 1000)
     return () => {
       clearInterval(interval)
       if (eventSourceRef.current) {
         eventSourceRef.current.close()
       }
     }
-  }, [fetchDownloadsStream])
+  }, []) // Empty deps - only run once on mount
 
   function handleRefresh() {
     setRefreshing(true)
