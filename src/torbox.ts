@@ -1,5 +1,7 @@
 import { TorboxClient } from "node-torbox-api";
+import axios from "axios";
 import { config, requireEnv } from "./config";
+import { rateLimiter } from "./rateLimiter";
 
 let client: TorboxClient | null = null as any;
 
@@ -13,7 +15,55 @@ function getClient(): TorboxClient {
   return client;
 }
 
+const PROVIDER_NAME = "torbox";
+
+// Track if API access is disabled due to plan limitations
+let apiDisabled = false;
+let apiDisabledReason = "";
+
+export function isTorboxApiDisabled(): boolean {
+  return apiDisabled;
+}
+
+export function getTorboxApiDisabledReason(): string {
+  return apiDisabledReason;
+}
+
+function checkPlanError(err: any): boolean {
+  const msg = String(err?.message || err || "").toLowerCase();
+  if (msg.includes("403") && (msg.includes("plan") || msg.includes("upgrade"))) {
+    apiDisabled = true;
+    apiDisabledReason = "TorBox API requires a paid plan. Please upgrade at torbox.app";
+    console.error(`[${new Date().toISOString()}][torbox] API DISABLED: ${apiDisabledReason}`);
+    return true;
+  }
+  return false;
+}
+
+export function isTorboxRateLimited(): boolean {
+  return rateLimiter.isRateLimited(PROVIDER_NAME);
+}
+
+export function getTorboxWaitTime(): number {
+  return rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+}
+
 export async function checkExistingTorrents(searchTitle: string): Promise<boolean> {
+  // Check if API is disabled due to plan limitations
+  if (apiDisabled) {
+    return false;
+  }
+  
+  // Check rate limit before making request
+  if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+    const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+    console.warn(`[${new Date().toISOString()}][torbox] rate limited, skipping check (wait ${waitTime}s)`);
+    return false; // Assume doesn't exist to avoid blocking
+  }
+
+  // Throttle to prevent hammering API
+  await rateLimiter.throttle(PROVIDER_NAME);
+
   const c = getClient();
   console.log(`[${new Date().toISOString()}][torbox] checking existing torrents`, { searchTitle });
   const started = Date.now();
@@ -23,6 +73,9 @@ export async function checkExistingTorrents(searchTitle: string): Promise<boolea
     const res = await c.torrents.getTorrentList({ 
       limit: 100 // Get more torrents to check against
     });
+    
+    // Record success
+    rateLimiter.recordSuccess(PROVIDER_NAME);
     
     // Handle both single torrent and array responses
     const existingTorrents = Array.isArray(res.data) ? res.data : [res.data].filter(Boolean);
@@ -49,9 +102,21 @@ export async function checkExistingTorrents(searchTitle: string): Promise<boolea
     
     return hasExisting;
   } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    
+    // Check if this is a plan limitation error
+    if (checkPlanError(err)) {
+      return false;
+    }
+    
+    // Check if this is a rate limit error
+    if (rateLimiter.isRateLimitError(err)) {
+      rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+    }
+    
     console.error(`[${new Date().toISOString()}][torbox] existing torrents check failed`, {
       searchTitle,
-      error: err?.message || String(err),
+      error: errorMsg,
       status: err?.response?.status,
       statusText: err?.response?.statusText,
     });
@@ -61,20 +126,243 @@ export async function checkExistingTorrents(searchTitle: string): Promise<boolea
 }
 
 export async function addMagnetToTorbox(magnet: string, name?: string) {
+  // Check if API is disabled due to plan limitations
+  if (apiDisabled) {
+    throw new Error(apiDisabledReason);
+  }
+  
+  // Check rate limit before making request
+  if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+    const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+    const error = new Error(`TorBox rate limited, retry in ${waitTime}s`);
+    console.warn(`[${new Date().toISOString()}][torbox] rate limited, cannot add magnet (wait ${waitTime}s)`);
+    throw error;
+  }
+
+  // Throttle to prevent hammering API
+  await rateLimiter.throttle(PROVIDER_NAME);
+
   const c = getClient();
   const teaser = magnet.slice(0, 80) + '...';
   console.log(`[${new Date().toISOString()}][torbox] createTorrent`, { name, teaser });
   const started = Date.now();
-  const res = await c.torrents.createTorrent({ magnet, name }).catch((err: any) => {
+  
+  try {
+    const res = await c.torrents.createTorrent({ magnet, name });
+    rateLimiter.recordSuccess(PROVIDER_NAME);
+    console.log(`[${new Date().toISOString()}][torbox] createTorrent done`, { ms: Date.now() - started });
+    return res;
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    
+    // Check if this is a plan limitation error
+    checkPlanError(err);
+    
+    // Check if this is a rate limit error
+    if (rateLimiter.isRateLimitError(err)) {
+      rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+    }
+    
     console.error(`[${new Date().toISOString()}][torbox] createTorrent failed`, {
       name,
       teaser,
-      error: err?.message || String(err),
+      error: errorMsg,
       status: err?.response?.status,
       statusText: err?.response?.statusText,
+      rateLimited: rateLimiter.isRateLimited(PROVIDER_NAME),
     });
     throw err;
-  });
-  console.log(`[${new Date().toISOString()}][torbox] createTorrent done`, { ms: Date.now() - started });
-  return res;
+  }
+}
+
+const TORRENT_LIST_CACHE_KEY = "torbox_torrents";
+
+export async function listTorboxTorrents(): Promise<any[]> {
+  // Check if API is disabled due to plan limitations
+  if (apiDisabled) {
+    return [];
+  }
+  
+  // Check rate limit before making request - return cached data if available
+  if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+    const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+    const cached = rateLimiter.getCache<any[]>(TORRENT_LIST_CACHE_KEY);
+    if (cached) {
+      console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning cached list (${cached.length} items, wait ${waitTime}s)`);
+      return cached;
+    }
+    console.warn(`[${new Date().toISOString()}][torbox] rate limited, no cache available (wait ${waitTime}s)`);
+    return [];
+  }
+
+  // Throttle to prevent hammering API
+  await rateLimiter.throttle(PROVIDER_NAME);
+
+  const c = getClient();
+  try {
+    const res = await c.torrents.getTorrentList({ limit: 100 });
+    rateLimiter.recordSuccess(PROVIDER_NAME);
+    const list = Array.isArray(res?.data) ? res.data : [res?.data].filter(Boolean);
+    // Cache the successful result
+    rateLimiter.setCache(TORRENT_LIST_CACHE_KEY, list);
+    return list as any[];
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    const isNetworkError = err?.code === 'ECONNREFUSED' || err?.code === 'ENOTFOUND' || 
+                           err?.code === 'ETIMEDOUT' || err?.code === 'ECONNRESET' ||
+                           errorMsg.includes('timeout') || errorMsg.includes('network');
+    
+    // Check if this is a plan limitation error
+    if (checkPlanError(err)) {
+      return [];
+    }
+    
+    // Check if this is a rate limit error
+    if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
+      rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+    }
+    
+    console.error(`[${new Date().toISOString()}][torbox] list torrents failed`, {
+      error: errorMsg,
+      code: err?.code,
+      status: err?.response?.status,
+      statusText: err?.response?.statusText,
+      isNetworkError,
+      rateLimited: rateLimiter.isRateLimited(PROVIDER_NAME),
+    });
+    
+    // Return cached data on error if available
+    const cached = rateLimiter.getCache<any[]>(TORRENT_LIST_CACHE_KEY);
+    if (cached) {
+      console.log(`[${new Date().toISOString()}][torbox] returning cached list on error (${cached.length} items)`);
+      return cached;
+    }
+    return [];
+  }
+}
+
+export function isTorboxTorrentDead(t: any): boolean {
+  const status = String(t?.status || t?.state || "").toLowerCase();
+  if (typeof t?.progress === "number" && t.progress >= 100) return false;
+  if (status.includes("failed")) return true;
+  if (status.includes("stalled")) return true;
+  if (status.includes("inactive")) return true;
+  return false;
+}
+
+function torboxHeaders() {
+  return { Authorization: `Bearer ${config.torboxApiKey}` };
+}
+
+const WEB_DOWNLOADS_CACHE_KEY = "torbox_webdownloads";
+const USENET_DOWNLOADS_CACHE_KEY = "torbox_usenetdownloads";
+
+export async function listTorboxWebDownloads(): Promise<any[]> {
+  if (!config.torboxApiKey) return [];
+  
+  // Check if API is disabled due to plan limitations
+  if (apiDisabled) {
+    return [];
+  }
+  
+  // Check rate limit before making request - return cached data if available
+  if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+    const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+    const cached = rateLimiter.getCache<any[]>(WEB_DOWNLOADS_CACHE_KEY);
+    if (cached) {
+      console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning cached web downloads (${cached.length} items, wait ${waitTime}s)`);
+      return cached;
+    }
+    console.warn(`[${new Date().toISOString()}][torbox] rate limited, no web downloads cache (wait ${waitTime}s)`);
+    return [];
+  }
+
+  // Throttle to prevent hammering API
+  await rateLimiter.throttle(PROVIDER_NAME);
+
+  const base = (config.torboxBaseUrl || "https://api.torbox.app").replace(/\/$/, "");
+  const url = `${base}/v1/api/webdl/mylist`;
+  
+  try {
+    const res = await axios.get(url, { headers: torboxHeaders(), timeout: 20000 });
+    rateLimiter.recordSuccess(PROVIDER_NAME);
+    const list = Array.isArray(res?.data?.data) ? res.data.data : [];
+    rateLimiter.setCache(WEB_DOWNLOADS_CACHE_KEY, list);
+    return list;
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    
+    // Check if this is a plan limitation error
+    if (checkPlanError(err)) {
+      return [];
+    }
+    
+    if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
+      rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+    }
+    
+    console.error(`[${new Date().toISOString()}][torbox] list web downloads failed`, {
+      error: errorMsg,
+      status: err?.response?.status,
+    });
+    
+    const cached = rateLimiter.getCache<any[]>(WEB_DOWNLOADS_CACHE_KEY);
+    if (cached) return cached;
+    return [];
+  }
+}
+
+export async function listTorboxUsenetDownloads(): Promise<any[]> {
+  if (!config.torboxApiKey) return [];
+  
+  // Check if API is disabled due to plan limitations
+  if (apiDisabled) {
+    return [];
+  }
+  
+  // Check rate limit before making request - return cached data if available
+  if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+    const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+    const cached = rateLimiter.getCache<any[]>(USENET_DOWNLOADS_CACHE_KEY);
+    if (cached) {
+      console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning cached usenet downloads (${cached.length} items, wait ${waitTime}s)`);
+      return cached;
+    }
+    console.warn(`[${new Date().toISOString()}][torbox] rate limited, no usenet downloads cache (wait ${waitTime}s)`);
+    return [];
+  }
+
+  // Throttle to prevent hammering API
+  await rateLimiter.throttle(PROVIDER_NAME);
+
+  const base = (config.torboxBaseUrl || "https://api.torbox.app").replace(/\/$/, "");
+  const url = `${base}/v1/api/usenet/mylist`;
+  
+  try {
+    const res = await axios.get(url, { headers: torboxHeaders(), timeout: 20000 });
+    rateLimiter.recordSuccess(PROVIDER_NAME);
+    const list = Array.isArray(res?.data?.data) ? res.data.data : [];
+    rateLimiter.setCache(USENET_DOWNLOADS_CACHE_KEY, list);
+    return list;
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    
+    // Check if this is a plan limitation error
+    if (checkPlanError(err)) {
+      return [];
+    }
+    
+    if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
+      rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+    }
+    
+    console.error(`[${new Date().toISOString()}][torbox] list usenet downloads failed`, {
+      error: errorMsg,
+      status: err?.response?.status,
+    });
+    
+    const cached = rateLimiter.getCache<any[]>(USENET_DOWNLOADS_CACHE_KEY);
+    if (cached) return cached;
+    return [];
+  }
 }
