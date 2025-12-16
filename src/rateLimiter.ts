@@ -31,6 +31,7 @@ class RateLimiter {
   // In-flight request locks to prevent concurrent requests to the same endpoint
   private inFlightLocks: Map<string, Promise<void>> = new Map();
   private lockResolvers: Map<string, () => void> = new Map();
+  private lockTimestamps: Map<string, number> = new Map();
 
   private getState(provider: string): RateLimitState {
     if (!this.states.has(provider)) {
@@ -56,17 +57,29 @@ class RateLimiter {
    * Acquire a lock for a specific endpoint (e.g., "realdebrid:torrents")
    * If waitIfLocked is true and lock is held, waits for it to be released then acquires
    * Returns true if lock acquired, false if another request is in-flight and waitIfLocked is false
+   * Locks automatically expire after 2 minutes to prevent deadlocks
    */
-  async acquireLock(lockKey: string, waitIfLocked: boolean = false): Promise<boolean> {
-    if (this.inFlightLocks.has(lockKey)) {
-      if (waitIfLocked) {
-        console.log(`[${new Date().toISOString()}][rate-limiter] ${lockKey} waiting for in-flight request...`);
-        await this.inFlightLocks.get(lockKey);
+  async acquireLock(lockKey: string, waitIfLocked: boolean = false, timeoutMs: number = 30000): Promise<boolean> {
+    const lockData = this.inFlightLocks.get(lockKey);
+    
+    // Check if lock exists and hasn't expired (2 minute max lock time)
+    if (lockData) {
+      const lockAge = Date.now() - (this.lockTimestamps.get(lockKey) || 0);
+      if (lockAge > 120000) {
+        // Lock expired, force release it
+        console.log(`[${new Date().toISOString()}][rate-limiter] ${lockKey} lock expired after ${Math.round(lockAge/1000)}s, force releasing`);
+        this.releaseLock(lockKey);
+      } else if (waitIfLocked) {
+        console.log(`[${new Date().toISOString()}][rate-limiter] ${lockKey} waiting for in-flight request (timeout: ${timeoutMs}ms)...`);
+        // Wait with timeout
+        const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
+        await Promise.race([lockData, timeoutPromise]);
         // After waiting, try to acquire again (recursive but should succeed now)
         return this.acquireLock(lockKey, false);
+      } else {
+        console.log(`[${new Date().toISOString()}][rate-limiter] ${lockKey} request already in-flight, skipping`);
+        return false;
       }
-      console.log(`[${new Date().toISOString()}][rate-limiter] ${lockKey} request already in-flight, skipping`);
-      return false;
     }
     
     // Create a promise that will resolve when releaseLock is called
@@ -76,6 +89,7 @@ class RateLimiter {
     });
     this.inFlightLocks.set(lockKey, promise);
     this.lockResolvers.set(lockKey, resolver!);
+    this.lockTimestamps.set(lockKey, Date.now());
     return true;
   }
 
@@ -100,6 +114,7 @@ class RateLimiter {
     }
     this.inFlightLocks.delete(lockKey);
     this.lockResolvers.delete(lockKey);
+    this.lockTimestamps.delete(lockKey);
   }
 
   /**
