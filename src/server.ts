@@ -332,15 +332,16 @@ export function startServer() {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    // Try to acquire lock - if another request is in-flight, return cached data
+    // Try to acquire lock - if another request is in-flight, check cache or wait
     const lockKey = "stream:torrents";
-    const gotLock = await rateLimiter.acquireLock(lockKey);
+    let gotLock = await rateLimiter.acquireLock(lockKey);
     
     if (!gotLock) {
-      // Return cached data if available
-      send("status", { message: "Using cached data (request in progress)..." });
+      // Check if we have cached data
       const cachedTorrents = rateLimiter.getCache<any[]>("rd:torrent:list");
-      if (cachedTorrents) {
+      if (cachedTorrents && cachedTorrents.length > 0) {
+        // Return cached data immediately
+        send("status", { message: "Using cached data..." });
         const mapped = cachedTorrents.map((t: any) => ({
           id: t.id,
           name: t.filename || t.original_filename,
@@ -355,10 +356,13 @@ export function startServer() {
           peers: 0,
         }));
         send("torrents", { provider: "realdebrid", torrents: mapped, count: mapped.length, total: mapped.length, cached: true });
+        send("done", { message: "Returned cached data", cached: true });
+        res.end();
+        return;
       }
-      send("done", { message: "Returned cached data", cached: true });
-      res.end();
-      return;
+      // No cache - wait for in-flight request then fetch fresh
+      send("status", { message: "Waiting for data..." });
+      gotLock = await rateLimiter.acquireLock(lockKey, true); // wait for lock
     }
 
     try {
@@ -440,15 +444,16 @@ export function startServer() {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    // Try to acquire lock - if another request is in-flight, return cached data
+    // Try to acquire lock - if another request is in-flight, check cache or wait
     const lockKey = "stream:downloads";
-    const gotLock = await rateLimiter.acquireLock(lockKey);
+    let gotLock = await rateLimiter.acquireLock(lockKey);
     
     if (!gotLock) {
-      // Return cached data if available
-      send("status", { message: "Using cached data (request in progress)..." });
+      // Check if we have cached data
       const cachedDownloads = rateLimiter.getCache<any[]>("rd:downloads:list");
-      if (cachedDownloads) {
+      if (cachedDownloads && cachedDownloads.length > 0) {
+        // Return cached data immediately
+        send("status", { message: "Using cached data..." });
         const mapped = cachedDownloads.map((d: any) => ({
           id: d.id,
           name: d.filename,
@@ -462,10 +467,13 @@ export function startServer() {
           host: d.host,
         }));
         send("downloads", { provider: "realdebrid", type: "download", downloads: mapped, count: mapped.length, total: mapped.length, cached: true });
+        send("done", { message: "Returned cached data", cached: true });
+        res.end();
+        return;
       }
-      send("done", { message: "Returned cached data", cached: true });
-      res.end();
-      return;
+      // No cache - wait for in-flight request then fetch fresh
+      send("status", { message: "Waiting for data..." });
+      gotLock = await rateLimiter.acquireLock(lockKey, true); // wait for lock
     }
 
     try {

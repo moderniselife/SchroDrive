@@ -331,14 +331,15 @@ function startServer() {
         const send = (event, data) => {
             res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
         };
-        // Try to acquire lock - if another request is in-flight, return cached data
+        // Try to acquire lock - if another request is in-flight, check cache or wait
         const lockKey = "stream:torrents";
-        const gotLock = await rateLimiter_1.rateLimiter.acquireLock(lockKey);
+        let gotLock = await rateLimiter_1.rateLimiter.acquireLock(lockKey);
         if (!gotLock) {
-            // Return cached data if available
-            send("status", { message: "Using cached data (request in progress)..." });
+            // Check if we have cached data
             const cachedTorrents = rateLimiter_1.rateLimiter.getCache("rd:torrent:list");
-            if (cachedTorrents) {
+            if (cachedTorrents && cachedTorrents.length > 0) {
+                // Return cached data immediately
+                send("status", { message: "Using cached data..." });
                 const mapped = cachedTorrents.map((t) => ({
                     id: t.id,
                     name: t.filename || t.original_filename,
@@ -353,10 +354,13 @@ function startServer() {
                     peers: 0,
                 }));
                 send("torrents", { provider: "realdebrid", torrents: mapped, count: mapped.length, total: mapped.length, cached: true });
+                send("done", { message: "Returned cached data", cached: true });
+                res.end();
+                return;
             }
-            send("done", { message: "Returned cached data", cached: true });
-            res.end();
-            return;
+            // No cache - wait for in-flight request then fetch fresh
+            send("status", { message: "Waiting for data..." });
+            gotLock = await rateLimiter_1.rateLimiter.acquireLock(lockKey, true); // wait for lock
         }
         try {
             const activeProviders = config_1.config.providers.length > 0 ? config_1.config.providers : ["torbox"];
@@ -435,14 +439,15 @@ function startServer() {
         const send = (event, data) => {
             res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
         };
-        // Try to acquire lock - if another request is in-flight, return cached data
+        // Try to acquire lock - if another request is in-flight, check cache or wait
         const lockKey = "stream:downloads";
-        const gotLock = await rateLimiter_1.rateLimiter.acquireLock(lockKey);
+        let gotLock = await rateLimiter_1.rateLimiter.acquireLock(lockKey);
         if (!gotLock) {
-            // Return cached data if available
-            send("status", { message: "Using cached data (request in progress)..." });
+            // Check if we have cached data
             const cachedDownloads = rateLimiter_1.rateLimiter.getCache("rd:downloads:list");
-            if (cachedDownloads) {
+            if (cachedDownloads && cachedDownloads.length > 0) {
+                // Return cached data immediately
+                send("status", { message: "Using cached data..." });
                 const mapped = cachedDownloads.map((d) => ({
                     id: d.id,
                     name: d.filename,
@@ -456,10 +461,13 @@ function startServer() {
                     host: d.host,
                 }));
                 send("downloads", { provider: "realdebrid", type: "download", downloads: mapped, count: mapped.length, total: mapped.length, cached: true });
+                send("done", { message: "Returned cached data", cached: true });
+                res.end();
+                return;
             }
-            send("done", { message: "Returned cached data", cached: true });
-            res.end();
-            return;
+            // No cache - wait for in-flight request then fetch fresh
+            send("status", { message: "Waiting for data..." });
+            gotLock = await rateLimiter_1.rateLimiter.acquireLock(lockKey, true); // wait for lock
         }
         try {
             const activeProviders = config_1.config.providers.length > 0 ? config_1.config.providers : ["torbox"];

@@ -43,10 +43,17 @@ class RateLimiter {
     }
     /**
      * Acquire a lock for a specific endpoint (e.g., "realdebrid:torrents")
-     * Returns true if lock acquired, false if another request is in-flight
+     * If waitIfLocked is true and lock is held, waits for it to be released then acquires
+     * Returns true if lock acquired, false if another request is in-flight and waitIfLocked is false
      */
-    async acquireLock(lockKey) {
+    async acquireLock(lockKey, waitIfLocked = false) {
         if (this.inFlightLocks.has(lockKey)) {
+            if (waitIfLocked) {
+                console.log(`[${new Date().toISOString()}][rate-limiter] ${lockKey} waiting for in-flight request...`);
+                await this.inFlightLocks.get(lockKey);
+                // After waiting, try to acquire again (recursive but should succeed now)
+                return this.acquireLock(lockKey, false);
+            }
             console.log(`[${new Date().toISOString()}][rate-limiter] ${lockKey} request already in-flight, skipping`);
             return false;
         }
@@ -58,6 +65,16 @@ class RateLimiter {
         this.inFlightLocks.set(lockKey, promise);
         this.lockResolvers.set(lockKey, resolver);
         return true;
+    }
+    /**
+     * Wait for an existing lock to be released (does not acquire)
+     */
+    async waitForLock(lockKey) {
+        const existingLock = this.inFlightLocks.get(lockKey);
+        if (existingLock) {
+            console.log(`[${new Date().toISOString()}][rate-limiter] ${lockKey} waiting for lock release...`);
+            await existingLock;
+        }
     }
     /**
      * Release a lock for a specific endpoint
