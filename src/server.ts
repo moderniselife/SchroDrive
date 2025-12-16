@@ -332,6 +332,35 @@ export function startServer() {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
+    // Try to acquire lock - if another request is in-flight, return cached data
+    const lockKey = "stream:torrents";
+    const gotLock = await rateLimiter.acquireLock(lockKey);
+    
+    if (!gotLock) {
+      // Return cached data if available
+      send("status", { message: "Using cached data (request in progress)..." });
+      const cachedTorrents = rateLimiter.getCache<any[]>("rd:torrent:list");
+      if (cachedTorrents) {
+        const mapped = cachedTorrents.map((t: any) => ({
+          id: t.id,
+          name: t.filename || t.original_filename,
+          status: t.status || "unknown",
+          progress: typeof t.progress === "number" ? t.progress : 0,
+          size: t.bytes || 0,
+          provider: "realdebrid",
+          addedAt: t.added,
+          downloadSpeed: t.speed || 0,
+          uploadSpeed: 0,
+          seeds: t.seeders || 0,
+          peers: 0,
+        }));
+        send("torrents", { provider: "realdebrid", torrents: mapped, count: mapped.length, total: mapped.length, cached: true });
+      }
+      send("done", { message: "Returned cached data", cached: true });
+      res.end();
+      return;
+    }
+
     try {
       const activeProviders = config.providers.length > 0 ? config.providers : ["torbox"];
       send("status", { message: "Fetching torrents...", providers: activeProviders });
@@ -395,6 +424,8 @@ export function startServer() {
     } catch (err: any) {
       send("error", { error: err.message });
       res.end();
+    } finally {
+      rateLimiter.releaseLock(lockKey);
     }
   });
 
@@ -408,6 +439,34 @@ export function startServer() {
     const send = (event: string, data: any) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
+
+    // Try to acquire lock - if another request is in-flight, return cached data
+    const lockKey = "stream:downloads";
+    const gotLock = await rateLimiter.acquireLock(lockKey);
+    
+    if (!gotLock) {
+      // Return cached data if available
+      send("status", { message: "Using cached data (request in progress)..." });
+      const cachedDownloads = rateLimiter.getCache<any[]>("rd:downloads:list");
+      if (cachedDownloads) {
+        const mapped = cachedDownloads.map((d: any) => ({
+          id: d.id,
+          name: d.filename,
+          type: "download",
+          status: "downloaded",
+          progress: 100,
+          size: d.filesize || 0,
+          provider: "realdebrid",
+          addedAt: d.generated,
+          downloadUrl: d.download,
+          host: d.host,
+        }));
+        send("downloads", { provider: "realdebrid", type: "download", downloads: mapped, count: mapped.length, total: mapped.length, cached: true });
+      }
+      send("done", { message: "Returned cached data", cached: true });
+      res.end();
+      return;
+    }
 
     try {
       const activeProviders = config.providers.length > 0 ? config.providers : ["torbox"];
@@ -493,6 +552,8 @@ export function startServer() {
     } catch (err: any) {
       send("error", { error: err.message });
       res.end();
+    } finally {
+      rateLimiter.releaseLock(lockKey);
     }
   });
 

@@ -27,6 +27,10 @@ class RateLimiter {
   // Cache TTL must be >= max backoff to ensure cached data survives rate limit periods
   private cache: Map<string, { data: any; timestamp: number }> = new Map();
   private cacheTtlMs = 20 * 60 * 1000; // Cache for 20 minutes (longer than max backoff of 15min)
+  
+  // In-flight request locks to prevent concurrent requests to the same endpoint
+  private inFlightLocks: Map<string, Promise<void>> = new Map();
+  private lockResolvers: Map<string, () => void> = new Map();
 
   private getState(provider: string): RateLimitState {
     if (!this.states.has(provider)) {
@@ -46,6 +50,45 @@ class RateLimiter {
    */
   setThrottleDelay(provider: string, delayMs: number): void {
     this.minRequestDelayMs.set(provider, delayMs);
+  }
+
+  /**
+   * Acquire a lock for a specific endpoint (e.g., "realdebrid:torrents")
+   * Returns true if lock acquired, false if another request is in-flight
+   */
+  async acquireLock(lockKey: string): Promise<boolean> {
+    if (this.inFlightLocks.has(lockKey)) {
+      console.log(`[${new Date().toISOString()}][rate-limiter] ${lockKey} request already in-flight, skipping`);
+      return false;
+    }
+    
+    // Create a promise that will resolve when releaseLock is called
+    let resolver: () => void;
+    const promise = new Promise<void>((resolve) => {
+      resolver = resolve;
+    });
+    this.inFlightLocks.set(lockKey, promise);
+    this.lockResolvers.set(lockKey, resolver!);
+    return true;
+  }
+
+  /**
+   * Release a lock for a specific endpoint
+   */
+  releaseLock(lockKey: string): void {
+    const resolver = this.lockResolvers.get(lockKey);
+    if (resolver) {
+      resolver();
+    }
+    this.inFlightLocks.delete(lockKey);
+    this.lockResolvers.delete(lockKey);
+  }
+
+  /**
+   * Check if a lock is held
+   */
+  isLocked(lockKey: string): boolean {
+    return this.inFlightLocks.has(lockKey);
   }
 
   /**

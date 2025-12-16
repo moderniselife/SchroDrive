@@ -17,6 +17,7 @@ const overseerr_1 = require("./overseerr");
 const autoUpdate_1 = require("./autoUpdate");
 const configApi_1 = require("./configApi");
 const logger_1 = require("./logger");
+const rateLimiter_1 = require("./rateLimiter");
 function startServer() {
     const app = (0, express_1.default)();
     app.use(express_1.default.json({ limit: "1mb" }));
@@ -330,6 +331,33 @@ function startServer() {
         const send = (event, data) => {
             res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
         };
+        // Try to acquire lock - if another request is in-flight, return cached data
+        const lockKey = "stream:torrents";
+        const gotLock = await rateLimiter_1.rateLimiter.acquireLock(lockKey);
+        if (!gotLock) {
+            // Return cached data if available
+            send("status", { message: "Using cached data (request in progress)..." });
+            const cachedTorrents = rateLimiter_1.rateLimiter.getCache("rd:torrent:list");
+            if (cachedTorrents) {
+                const mapped = cachedTorrents.map((t) => ({
+                    id: t.id,
+                    name: t.filename || t.original_filename,
+                    status: t.status || "unknown",
+                    progress: typeof t.progress === "number" ? t.progress : 0,
+                    size: t.bytes || 0,
+                    provider: "realdebrid",
+                    addedAt: t.added,
+                    downloadSpeed: t.speed || 0,
+                    uploadSpeed: 0,
+                    seeds: t.seeders || 0,
+                    peers: 0,
+                }));
+                send("torrents", { provider: "realdebrid", torrents: mapped, count: mapped.length, total: mapped.length, cached: true });
+            }
+            send("done", { message: "Returned cached data", cached: true });
+            res.end();
+            return;
+        }
         try {
             const activeProviders = config_1.config.providers.length > 0 ? config_1.config.providers : ["torbox"];
             send("status", { message: "Fetching torrents...", providers: activeProviders });
@@ -394,6 +422,9 @@ function startServer() {
             send("error", { error: err.message });
             res.end();
         }
+        finally {
+            rateLimiter_1.rateLimiter.releaseLock(lockKey);
+        }
     });
     // SSE Streaming endpoint for downloads - sends data page by page as fetched
     app.get("/api/downloads/stream", async (req, res) => {
@@ -404,6 +435,32 @@ function startServer() {
         const send = (event, data) => {
             res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
         };
+        // Try to acquire lock - if another request is in-flight, return cached data
+        const lockKey = "stream:downloads";
+        const gotLock = await rateLimiter_1.rateLimiter.acquireLock(lockKey);
+        if (!gotLock) {
+            // Return cached data if available
+            send("status", { message: "Using cached data (request in progress)..." });
+            const cachedDownloads = rateLimiter_1.rateLimiter.getCache("rd:downloads:list");
+            if (cachedDownloads) {
+                const mapped = cachedDownloads.map((d) => ({
+                    id: d.id,
+                    name: d.filename,
+                    type: "download",
+                    status: "downloaded",
+                    progress: 100,
+                    size: d.filesize || 0,
+                    provider: "realdebrid",
+                    addedAt: d.generated,
+                    downloadUrl: d.download,
+                    host: d.host,
+                }));
+                send("downloads", { provider: "realdebrid", type: "download", downloads: mapped, count: mapped.length, total: mapped.length, cached: true });
+            }
+            send("done", { message: "Returned cached data", cached: true });
+            res.end();
+            return;
+        }
         try {
             const activeProviders = config_1.config.providers.length > 0 ? config_1.config.providers : ["torbox"];
             send("status", { message: "Fetching downloads...", providers: activeProviders });
@@ -488,6 +545,9 @@ function startServer() {
         catch (err) {
             send("error", { error: err.message });
             res.end();
+        }
+        finally {
+            rateLimiter_1.rateLimiter.releaseLock(lockKey);
         }
     });
     // Search endpoint
