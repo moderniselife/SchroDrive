@@ -37,6 +37,8 @@ export const config = {
   repoName: process.env.REPO_NAME || "SchroDrive",
   // Providers
   providers: (process.env.PROVIDERS || "torbox,realdebrid").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
+  // Add strategy: 'all' (add to all providers for redundancy), 'failover' (try first, fallback on failure), 'single' (first only)
+  addStrategy: (process.env.ADD_STRATEGY || "all") as "all" | "failover" | "single",
   // Real-Debrid API
   rdApiBase: process.env.RD_API_BASE || "https://api.real-debrid.com/rest/1.0",
   rdAccessToken: process.env.RD_ACCESS_TOKEN || "",
