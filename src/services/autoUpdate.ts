@@ -1,6 +1,6 @@
 import axios from "axios";
 import { exec } from "child_process";
-import { config } from "./config";
+import { config } from "../core/config";
 // Importing JSON is supported by tsconfig (resolveJsonModule)
 // This resolves at runtime to projectRoot/package.json from dist
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment

@@ -1,8 +1,7 @@
 import axios from "axios";
-import { config, requireEnv, providersSet } from "./config";
-import { searchIndexer, pickBestResult, getMagnet, getMagnetOrResolve, testIndexerConnection, getProviderName, isIndexerConfigured } from "./indexer";
-import { addMagnetToTorbox, checkExistingTorrents as checkExistingTorbox, listTorboxTorrents } from "./torbox";
-import { addMagnetToRD, selectAllFilesRD, isRDConfigured, listRDTorrents } from "./realdebrid";
+import { config, requireEnv } from "../core/config";
+import { searchIndexer, pickBestResult, getMagnet, getMagnetOrResolve, testIndexerConnection, getProviderName, isIndexerConfigured } from "../indexers/index";
+import { registry } from "../providers";
 
 interface MediaLike {
   title?: string;
@@ -116,13 +115,14 @@ export function startOverseerrPoller() {
   }
 
   // Ensure at least one provider is configured
-  const ps = providersSet();
-  const hasTB = ps.has("torbox") && !!config.torboxApiKey;
-  const hasRD = ps.has("realdebrid") && isRDConfigured();
-  if (!hasTB && !hasRD) {
+  const providers = registry.configured();
+  if (providers.length === 0) {
     throw new Error("No debrid provider configured. Set TORBOX_API_KEY and/or RD_ACCESS_TOKEN.");
   }
-  console.log(`[${new Date().toISOString()}][poller] providers configured`, { torbox: hasTB, realdebrid: hasRD, order: config.providers });
+  console.log(`[${new Date().toISOString()}][poller] providers configured`, { 
+    providers: providers.map(p => p.id),
+    order: registry.ordered().map(p => p.id),
+  });
 
   const processed = new Set<string>();
   const intervalMs = Math.max(5, Number(config.pollIntervalSeconds || 30)) * 1000;
@@ -230,77 +230,23 @@ export function startOverseerrPoller() {
           // Check for existing torrents across ALL configured providers
           // -----------------------------------------------------------------
           const torrentTitle = (chosenUsed as any)?.title || built.query;
-          let hasExisting = false;
-          
-          // Check TorBox
-          if (hasTB) {
-            try {
-              hasExisting = await checkExistingTorbox(torrentTitle);
-            } catch (e: any) {
-              console.warn(`[${new Date().toISOString()}][poller] TorBox duplicate check failed`, { err: e?.message });
-            }
-          }
-          
-          // Check RealDebrid (search torrent names)
-          if (!hasExisting && hasRD) {
-            try {
-              const rdTorrents = await listRDTorrents();
-              const normalised = torrentTitle.toLowerCase();
-              hasExisting = rdTorrents.some((t: any) => {
-                const name = (t.filename || t.original_filename || '').toLowerCase();
-                return name.includes(normalised) || normalised.includes(name);
-              });
-              if (hasExisting) {
-                console.log(`[${new Date().toISOString()}][poller] found existing RD torrent`, { title: torrentTitle });
-              }
-            } catch (e: any) {
-              console.warn(`[${new Date().toISOString()}][poller] RD duplicate check failed`, { err: e?.message });
-            }
-          }
+          const { exists: hasExisting, provider: existingProvider } = await registry.checkExistingAcrossAll(torrentTitle);
 
           if (hasExisting) {
-            console.log(`[${new Date().toISOString()}][poller] skipping duplicate torrent`, { id, title: torrentTitle });
+            console.log(`[${new Date().toISOString()}][poller] skipping duplicate torrent`, { id, title: torrentTitle, existingProvider });
             processed.add(id);
             continue;
           }
           
           // -----------------------------------------------------------------
-          // Add magnet to providers (try in PROVIDERS order, fall back)
+          // Add magnet to providers using configured strategy
           // -----------------------------------------------------------------
           const teaser = magnet.slice(0, 80) + '...';
-          let added = false;
-          const providerOrder = config.providers.filter(p => 
-            (p === 'torbox' && hasTB) || (p === 'realdebrid' && hasRD)
-          );
-
-          for (const provider of providerOrder) {
-            try {
-              if (provider === 'torbox') {
-                console.log(`[${new Date().toISOString()}][poller->torbox] adding magnet`, { id, title: torrentTitle, teaser });
-                await addMagnetToTorbox(magnet, torrentTitle);
-                console.log(`[${new Date().toISOString()}][poller->torbox] ✅ added`, { id });
-                added = true;
-                break;
-              } else if (provider === 'realdebrid') {
-                console.log(`[${new Date().toISOString()}][poller->rd] adding magnet`, { id, title: torrentTitle, teaser });
-                const rdResult = await addMagnetToRD(magnet);
-                if (rdResult?.id) {
-                  console.log(`[${new Date().toISOString()}][poller->rd] selecting all files`, { id, rdId: rdResult.id });
-                  await selectAllFilesRD(rdResult.id);
-                }
-                console.log(`[${new Date().toISOString()}][poller->rd] ✅ added`, { id, rdId: rdResult?.id });
-                added = true;
-                break;
-              }
-            } catch (err: any) {
-              console.warn(`[${new Date().toISOString()}][poller->${provider}] add failed, trying next provider`, { 
-                id, error: err?.message || String(err) 
-              });
-              // Continue to next provider
-            }
-          }
-
-          if (!added) {
+          const addStrategy = (config as any).addStrategy || 'all';
+          const { results: addResults } = await registry.addMagnetWithStrategy(magnet, torrentTitle, addStrategy);
+          
+          const anySuccess = addResults.some(r => r.success);
+          if (!anySuccess) {
             console.error(`[${new Date().toISOString()}][poller] ❌ failed to add to ANY provider`, { id, title: torrentTitle });
           }
 
