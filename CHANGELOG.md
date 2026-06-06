@@ -5,8 +5,8 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
-### Version [0.4.0] - 2026-06-06 🗄️
-*Status: SQLite persistence layer — state survives restarts*
+### Version [0.4.0] - 2026-06-06 🗄️🎬
+*Status: SQLite persistence + Stremio addon server + 4-provider repair*
 
 ### Added ✨
 - **SQLite persistence layer** (`src/core/db.ts`):
@@ -15,9 +15,19 @@ and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.
   - Graceful degradation: all DB writes wrapped in try/catch, app continues if DB is corrupted/deleted
   - Automatic schema migrations via `CREATE TABLE IF NOT EXISTS`
   - Daily pruning of stale data (30-day TTL for watchlist, expired cache cleanup)
+- **Stremio addon server** (`src/services/stremioAddon.ts`):
+  - Unique feature: SchröDrive exposes itself as an installable Stremio addon
+  - `GET /manifest.json` — Stremio addon manifest
+  - `GET /stream/:type/:id.json` — searches all scrapers, returns debrid-backed streams
+  - Separate port (default 7000), enabled via `STREMIO_ADDON_ENABLED=true`
+- **Torrent repair on AllDebrid + Premiumize** (`src/providers/alldebrid.ts`, `premiumize.ts`):
+  - All 4 providers now support `getInfoHash()` + `repairTorrent()`
+  - 3-phase repair works across all providers: same-provider → cross-provider → replace
 - New config entries:
   - `DATA_DIR` — persistent data directory (default: `./data`)
   - `DB_PATH` — SQLite database path (default: `./data/schrodrive.db`)
+  - `STREMIO_ADDON_ENABLED` — enable/disable Stremio addon server
+  - `STREMIO_ADDON_PORT` — Stremio addon port (default: 7000)
 
 ### Changed 🔄
 - **Blacklist** (`src/core/blacklist.ts`):
