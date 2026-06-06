@@ -122,9 +122,9 @@ function startOverseerrPoller() {
     });
     const runOnce = async () => {
         try {
-            const isStreaming = await (0, plex_1.isPlexStreaming)();
+            const isStreaming = await (0, plex_1.isAnyMediaServerStreaming)();
             if (isStreaming) {
-                console.log(`[${new Date().toISOString()}][poller] Active Plex stream detected. Skipping poller tick to avoid debrid rate limits.`);
+                console.log(`[${new Date().toISOString()}][poller] Active media stream detected. Skipping poller tick to avoid debrid rate limits.`);
                 return;
             }
             const configuredProviders = providers_1.registry.configured();
@@ -372,9 +372,9 @@ async function syncAllApprovedRequests() {
  * no corresponding torrent on debrid providers, searches and re-adds it.
  */
 async function checkAndReaddMissingRequests() {
-    const isStreaming = await (0, plex_1.isPlexStreaming)();
+    const isStreaming = await (0, plex_1.isAnyMediaServerStreaming)();
     if (isStreaming) {
-        console.log(`[${new Date().toISOString()}][poller-sync] Active Plex stream detected. Skipping recovery check.`);
+        console.log(`[${new Date().toISOString()}][poller-sync] Active media stream detected. Skipping recovery check.`);
         return;
     }
     const configuredProviders = providers_1.registry.configured();
