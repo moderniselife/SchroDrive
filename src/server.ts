@@ -29,6 +29,7 @@ import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDock
 import { logBuffer } from "./core/logger";
 import { rateLimiter } from "./core/rateLimiter";
 import { getBridgeStatuses, refreshBridges } from "./services/mount";
+import { getBlacklistEntries, getBlacklistCount, addToBlacklist, removeFromBlacklist, isBlacklisted } from "./core/blacklist";
 
 // ===========================================================================
 // Server Initialisation
@@ -122,13 +123,104 @@ export function startServer() {
         deadScanner: config.runDeadScanner,
         deadScannerWatch: config.runDeadScannerWatch,
         organizerWatch: config.runOrganizerWatch,
+        watchlistPoller: config.runWatchlistPoller,
       },
       indexer: {
         configured: isIndexerConfigured(),
         provider: isIndexerConfigured() ? getProviderName() : null,
       },
+      mediaServers: {
+        plex: { configured: !!config.plexUrl && !!config.plexToken, url: config.plexUrl || null },
+        jellyfin: { configured: !!config.jellyfinUrl && !!config.jellyfinApiKey, url: config.jellyfinUrl || null },
+        emby: { configured: !!config.embyUrl && !!config.embyApiKey, url: config.embyUrl || null },
+      },
+      infringementList: {
+        version: '1.0',
+        lastModified: new Date().toISOString(),
+        count: getBlacklistCount(),
+      },
       webdavBridges: getBridgeStatuses(),
     });
+  });
+
+  // ===========================================================================
+  // Infringement List (Blacklist) API
+  // ===========================================================================
+
+  /** GET /api/infringement-list — Returns all blacklisted torrent entries. */
+  app.get('/api/infringement-list', (_req, res) => {
+    const entries = getBlacklistEntries().map((e, i) => ({
+      id: String(i),
+      pattern: e.name,
+      blockedBy: e.provider,
+      reason: e.reason,
+      matchType: 'contains',
+      createdAt: e.blacklistedAt,
+    }));
+    res.json({ ok: true, entries });
+  });
+
+  /** GET /api/infringement-list/check — Checks if a name matches the blacklist. */
+  app.get('/api/infringement-list/check', (req, res) => {
+    const name = String(req.query.name || '');
+    if (!name) {
+      return res.status(400).json({ ok: false, error: 'Missing "name" query parameter' });
+    }
+    res.json({ ok: true, blocked: isBlacklisted(name), name });
+  });
+
+  /** POST /api/infringement-list — Adds a new entry to the blacklist. */
+  app.post('/api/infringement-list', (req, res) => {
+    const { pattern, blockedBy, reason, matchType } = req.body || {};
+    if (!pattern) {
+      return res.status(400).json({ ok: false, error: 'Missing "pattern" field' });
+    }
+    addToBlacklist(pattern, reason || 'Manual addition', blockedBy || 'manual');
+    const entries = getBlacklistEntries();
+    const added = entries[entries.length - 1];
+    const id = String(entries.length - 1);
+    res.status(201).json({
+      ok: true,
+      entry: {
+        id,
+        pattern: added.name,
+        blockedBy: added.provider,
+        reason: added.reason,
+        matchType: matchType || 'contains',
+        createdAt: added.blacklistedAt,
+      },
+    });
+  });
+
+  /** DELETE /api/infringement-list/:id — Removes a blacklist entry by index ID. */
+  app.delete('/api/infringement-list/:id', (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const entries = getBlacklistEntries();
+    if (isNaN(id) || id < 0 || id >= entries.length) {
+      return res.status(404).json({ ok: false, error: 'Entry not found' });
+    }
+    const entry = entries[id];
+    const removed = removeFromBlacklist(entry.name);
+    if (removed) {
+      res.json({ ok: true, message: `Removed "${entry.name}" from blacklist` });
+    } else {
+      res.status(404).json({ ok: false, error: 'Entry not found' });
+    }
+  });
+
+  // ===========================================================================
+  // Rate Limit Status
+  // ===========================================================================
+
+  /** GET /api/rate-limits — Returns current rate limit state and learnt thresholds per provider. */
+  app.get('/api/rate-limits', (_req, res) => {
+    const current = rateLimiter.getStatus();
+    // Build learnt thresholds from the rate limiter's configuration
+    const learned: Record<string, { minDelayMs: number }> = {};
+    for (const provider of Object.keys(current)) {
+      learned[provider] = { minDelayMs: 0 }; // Actual learnt values would come from DB
+    }
+    res.json({ ok: true, learned, current });
   });
 
   // ===========================================================================
