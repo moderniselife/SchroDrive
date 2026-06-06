@@ -457,6 +457,16 @@ async function testRemote(remote: string, cfgPath: string): Promise<boolean> {
  * 6. Performs a best-effort post-mount verification after a short delay
  */
 export async function mountVirtualDrive(): Promise<void> {
+  // -----------------------------------------------------------------------
+  // Phase 0: Force cleanup of all FUSE mounts to clear stale resources and unblock old daemons
+  // -----------------------------------------------------------------------
+  try {
+    unmountAll();
+    await sleep(1000);
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][mount] Startup unmount cleanup failed (non-fatal):`, err?.message);
+  }
+
   const ps = providersSet();
   const bridgePorts: Map<string, number> = new Map();
 
@@ -761,9 +771,7 @@ export function unmountAll(): void {
   console.log(`[${new Date().toISOString()}][mount] Cleaning up and unmounting all FUSE mount points...`);
   for (const m of mounts) {
     try {
-      if (fs.existsSync(m)) {
-        cleanupMountPath(m);
-      }
+      cleanupMountPath(m);
     } catch {}
   }
 }
