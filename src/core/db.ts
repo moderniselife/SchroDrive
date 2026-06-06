@@ -14,6 +14,8 @@
  * - `rate_limit_state` — persists per-provider rate limit backoff state
  * - `blacklist_backup` — mirrors the JSON blacklist for disaster recovery
  * - `response_cache` — key/value cache with TTL for API responses
+ * - `processed_overseerr` — persists which Overseerr requests have been processed (survives restarts)
+ * - `known_magnets` — infohash-based deduplication to prevent re-adding the same torrent
  *
  * @module db
  */
@@ -142,6 +144,20 @@ function runMigrations(database: Database): void {
       status TEXT,
       created_at INTEGER NOT NULL
     )`,
+    `CREATE TABLE IF NOT EXISTS processed_overseerr (
+      request_id TEXT PRIMARY KEY,
+      title TEXT,
+      media_type TEXT,
+      tmdb_id TEXT,
+      processed_at INTEGER NOT NULL,
+      magnet_hash TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS known_magnets (
+      info_hash TEXT PRIMARY KEY,
+      title TEXT,
+      provider TEXT,
+      added_at INTEGER NOT NULL
+    )`,
   ];
 
   for (const sql of migrations) {
@@ -177,8 +193,19 @@ export function pruneOldEntries(): void {
       'DELETE FROM response_cache WHERE expires_at < ?'
     ).run(Date.now());
 
+    // Prune processed overseerr entries older than 90 days
+    const ninetyDaysAgo = Date.now() - (90 * 24 * 60 * 60 * 1000);
+    database.prepare(
+      'DELETE FROM processed_overseerr WHERE processed_at < ?'
+    ).run(ninetyDaysAgo);
+
+    // Prune known magnets older than 90 days
+    database.prepare(
+      'DELETE FROM known_magnets WHERE added_at < ?'
+    ).run(ninetyDaysAgo);
+
     console.log(
-      `[${new Date().toISOString()}][db] Pruned stale watchlist + expired cache entries`
+      `[${new Date().toISOString()}][db] Pruned stale watchlist + expired cache + old processed overseerr + old known magnets`
     );
   } catch (err: any) {
     console.error(`[${new Date().toISOString()}][db] Prune failed: ${err?.message}`);
@@ -744,3 +771,110 @@ export function getAllOverseerrRequests(): OverseerrRequestRecord[] {
   }
 }
 
+// ===========================================================================
+// Processed Overseerr (Persistent)
+// ===========================================================================
+
+/**
+ * Checks whether an Overseerr request has already been processed.
+ * Unlike the old in-memory Set, this persists across restarts.
+ */
+export function isOverseerrProcessed(requestId: string): boolean {
+  try {
+    const database = getDb();
+    const row = database.prepare(
+      'SELECT 1 FROM processed_overseerr WHERE request_id = ?'
+    ).get(requestId);
+    return !!row;
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][db] isOverseerrProcessed error: ${err?.message}`);
+    return false;
+  }
+}
+
+/**
+ * Records an Overseerr request as processed (persistent).
+ */
+export function markOverseerrProcessed(
+  requestId: string,
+  title?: string,
+  mediaType?: string,
+  tmdbId?: string,
+  magnetHash?: string,
+): void {
+  try {
+    const database = getDb();
+    database.prepare(
+      'INSERT OR REPLACE INTO processed_overseerr (request_id, title, media_type, tmdb_id, processed_at, magnet_hash) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(requestId, title ?? null, mediaType ?? null, tmdbId ?? null, Date.now(), magnetHash ?? null);
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][db] markOverseerrProcessed error: ${err?.message}`);
+  }
+}
+
+/**
+ * Loads all processed Overseerr request IDs from the database.
+ * Used at startup to hydrate in-memory state.
+ */
+export function getProcessedOverseerrKeys(): Set<string> {
+  try {
+    const database = getDb();
+    const rows = database.prepare(
+      'SELECT request_id FROM processed_overseerr'
+    ).all() as Array<{ request_id: string }>;
+    return new Set(rows.map((r) => r.request_id));
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][db] getProcessedOverseerrKeys error: ${err?.message}`);
+    return new Set();
+  }
+}
+
+// ===========================================================================
+// Known Magnets (Infohash Deduplication)
+// ===========================================================================
+
+/**
+ * Checks whether a magnet infohash is already known (previously added).
+ * Prevents re-adding the same torrent content under different release names.
+ */
+export function isKnownMagnet(infoHash: string): boolean {
+  try {
+    const database = getDb();
+    const row = database.prepare(
+      'SELECT 1 FROM known_magnets WHERE info_hash = ?'
+    ).get(infoHash.toUpperCase());
+    return !!row;
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][db] isKnownMagnet error: ${err?.message}`);
+    return false;
+  }
+}
+
+/**
+ * Records a magnet infohash as known (successfully added to a provider).
+ */
+export function addKnownMagnet(infoHash: string, title?: string, provider?: string): void {
+  try {
+    const database = getDb();
+    database.prepare(
+      'INSERT OR IGNORE INTO known_magnets (info_hash, title, provider, added_at) VALUES (?, ?, ?, ?)'
+    ).run(infoHash.toUpperCase(), title ?? null, provider ?? null, Date.now());
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][db] addKnownMagnet error: ${err?.message}`);
+  }
+}
+
+/**
+ * Prunes known magnets older than 90 days.
+ */
+export function pruneOldMagnets(): void {
+  try {
+    const database = getDb();
+    const ninetyDaysAgo = Date.now() - (90 * 24 * 60 * 60 * 1000);
+    database.prepare(
+      'DELETE FROM known_magnets WHERE added_at < ?'
+    ).run(ninetyDaysAgo);
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][db] pruneOldMagnets error: ${err?.message}`);
+  }
+}
