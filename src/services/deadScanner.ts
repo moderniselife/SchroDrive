@@ -80,12 +80,49 @@ function torrentTitleLike(t: TorrentInfo): string {
 }
 
 /**
- * Attempts to re-add a dead torrent by searching the indexer and
- * adding the magnet to all OTHER providers (not the one it died on).
- *
- * Checks the blacklist before adding to prevent re-adding known bad torrents.
+ * Extracts the infohash from a magnet URI.
+ * `magnet:?xt=urn:btih:HASH&dn=...` → `hash` (lowercase)
  */
-async function tryReaddViaIndexer(rawTitle: string, excludeProvider?: string): Promise<boolean> {
+function extractHashFromMagnet(magnet: string): string | null {
+  const match = magnet.match(/btih:([a-f0-9]{40}|[a-z2-7]{32,})/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/**
+ * Extracts the infohash from a Prowlarr/Jackett result object.
+ * Checks the result's hash fields AND any embedded magnet URLs.
+ */
+function extractHashFromResult(r: any): string | null {
+  // Direct hash fields
+  const directHash = (r?.infoHash || r?.infohash || r?.hash || '').toString().trim().toLowerCase();
+  if (/^[a-f0-9]{40}$/.test(directHash)) return directHash;
+
+  // From embedded magnet URL
+  const magnetUrl = r?.magnetUrl || r?.guid || r?.link || '';
+  if (typeof magnetUrl === 'string' && magnetUrl.startsWith('magnet:')) {
+    return extractHashFromMagnet(magnetUrl);
+  }
+
+  return null;
+}
+
+/**
+ * Attempts to re-add a dead torrent by searching the indexer and
+ * adding the magnet to all configured providers.
+ *
+ * Ensures we don't re-add the same broken torrent by:
+ * 1. Blacklist check (name-based, bidirectional substring match)
+ * 2. Infohash exclusion (exact match against the dead torrent's hash)
+ *
+ * @param rawTitle - Original torrent name (will be cleaned for search).
+ * @param excludeProvider - Provider to skip when adding (optional).
+ * @param excludeHashes - Set of infohashes to exclude from results.
+ */
+async function tryReaddViaIndexer(
+  rawTitle: string,
+  excludeProvider?: string,
+  excludeHashes?: Set<string>,
+): Promise<boolean> {
   // Clean the torrent name into a searchable query
   const searchTitle = cleanTorrentTitle(rawTitle);
   if (!searchTitle) {
@@ -93,17 +130,30 @@ async function tryReaddViaIndexer(rawTitle: string, excludeProvider?: string): P
     return false;
   }
 
-  console.log(`[${new Date().toISOString()}][dead-scan] searching for replacement: "${searchTitle}" (from: "${rawTitle}")`);
+  console.log(`[${new Date().toISOString()}][dead-scan] searching for replacement: "${searchTitle}" (from: "${rawTitle}", excluding ${excludeHashes?.size || 0} hash(es))`);
   const results = await searchIndexer(searchTitle);
 
-  // Filter out blacklisted results before picking
+  // Filter out blacklisted results AND results with excluded hashes
   const filteredResults = results.filter((r: any) => {
     const resultTitle = r?.title || r?.name || '';
-    return !isBlacklisted(resultTitle);
+
+    // Check blacklist (name-based)
+    if (isBlacklisted(resultTitle)) return false;
+
+    // Check infohash exclusion (exact match)
+    if (excludeHashes && excludeHashes.size > 0) {
+      const resultHash = extractHashFromResult(r);
+      if (resultHash && excludeHashes.has(resultHash)) {
+        console.log(`[${new Date().toISOString()}][dead-scan] skipping result with matching hash: ${resultTitle} (${resultHash})`);
+        return false;
+      }
+    }
+
+    return true;
   });
 
   if (filteredResults.length === 0) {
-    console.warn(`[${new Date().toISOString()}][dead-scan] all results blacklisted for`, { searchTitle });
+    console.warn(`[${new Date().toISOString()}][dead-scan] no viable results for "${searchTitle}" (${results.length} total, all blacklisted or hash-excluded)`);
     return false;
   }
 
@@ -117,12 +167,19 @@ async function tryReaddViaIndexer(rawTitle: string, excludeProvider?: string): P
     return false;
   }
 
+  // Double-check: ensure the chosen result's hash doesn't match an excluded hash
+  const chosenHash = extractHashFromMagnet(magnet);
+  if (chosenHash && excludeHashes?.has(chosenHash)) {
+    console.warn(`[${new Date().toISOString()}][dead-scan] chosen result's magnet hash matches excluded hash — skipping`, { searchTitle, hash: chosenHash });
+    return false;
+  }
+
   // Try to add to any configured provider except the one it failed on
   const providers = registry.ordered().filter(p => p.id !== excludeProvider);
   for (const p of providers) {
     try {
       await p.addMagnet(magnet, searchTitle);
-      console.log(`[${new Date().toISOString()}][dead-scan] re-added to ${p.displayName}`, { searchTitle });
+      console.log(`[${new Date().toISOString()}][dead-scan] re-added to ${p.displayName}`, { searchTitle, hash: chosenHash });
       return true;
     } catch (e: any) {
       console.warn(`[${new Date().toISOString()}][dead-scan] ${p.id} add failed`, { searchTitle, err: e?.message || String(e) });
@@ -253,6 +310,16 @@ async function scanProviderDead(): Promise<Record<string, any>> {
 
         // Phase C: Delete, blacklist, and search for replacement
         // (only if repair and cross-repair both failed)
+
+        // Extract infohash BEFORE deletion so we can exclude it from replacement search
+        const excludeHashes = new Set<string>();
+        if (provider.getInfoHash) {
+          try {
+            const hash = await provider.getInfoHash(t.id);
+            if (hash) excludeHashes.add(hash.toLowerCase());
+          } catch {}
+        }
+
         try {
           await provider.deleteTorrent(t.id);
           console.log(`[${new Date().toISOString()}][dead-scan] deleted dead torrent from ${provider.id}`, { title, id: t.id });
@@ -261,9 +328,9 @@ async function scanProviderDead(): Promise<Record<string, any>> {
         }
 
         if (!crossRepaired) {
-          // Blacklist and search for replacement
+          // Blacklist and search for replacement (excluding the dead hash)
           addToBlacklist(title, `Dead torrent (status: ${t.status})`, provider.id);
-          const ok = await tryReaddViaIndexer(title, provider.id);
+          const ok = await tryReaddViaIndexer(title, provider.id, excludeHashes);
           if (ok) summary.readded.push({ from: provider.id, title });
         }
       }
@@ -316,6 +383,20 @@ async function scanBridgeDead(): Promise<Record<string, any>> {
         failures: info.failureCount,
       });
 
+      // 0. Extract infohash BEFORE deletion so we can exclude it from replacement
+      const excludeHashes = new Set<string>();
+      // The torrent ID itself might be the infohash (e.g. TorBox uses raw hashes)
+      if (/^[a-f0-9]{40}$/i.test(torrentId)) {
+        excludeHashes.add(torrentId.toLowerCase());
+      }
+      // Also try the provider API
+      if (provider.getInfoHash) {
+        try {
+          const hash = await provider.getInfoHash(torrentId);
+          if (hash) excludeHashes.add(hash.toLowerCase());
+        } catch {}
+      }
+
       // 1. Delete from provider
       try {
         await provider.deleteTorrent(torrentId);
@@ -330,19 +411,23 @@ async function scanBridgeDead(): Promise<Record<string, any>> {
         });
       }
 
-      // 2. Blacklist the name
+      // 2. Blacklist the name AND hash
       addToBlacklist(
         info.name,
         `Bridge-detected dead (${info.failureCount} consecutive download failures)`,
         providerName,
       );
+      // Also blacklist the hash itself if we have one
+      for (const h of excludeHashes) {
+        addToBlacklist(h, `Bridge-detected dead hash (from ${info.name})`, providerName);
+      }
 
       // 3. Clear the dead flag from the bridge
       bridge.clearDeadTorrent(torrentId);
 
-      // 4. Search for a replacement (add to ALL providers including the original)
+      // 4. Search for a replacement (excluding the dead hash)
       try {
-        const ok = await tryReaddViaIndexer(info.name);
+        const ok = await tryReaddViaIndexer(info.name, undefined, excludeHashes);
         if (ok) {
           summary.replaced++;
           console.log(`[${new Date().toISOString()}][dead-scan] replacement found for bridge-dead torrent`, { name: info.name });
