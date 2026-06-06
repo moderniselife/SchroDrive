@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.5.3] - 2026-06-06 🔌
+*Status: Graceful FUSE unmounting on graceful shutdown and auto-update exits*
+
+### Fixed 🐛
+- **Graceful FUSE unmounting**: Implemented a global graceful unmount procedure (`unmountAll`) that runs during graceful shutdown (SIGTERM/SIGINT) and when the auto-updater triggers a container restart/exit. This forcefully and lazily unmounts all active debrid FUSE mount points to cleanly terminate background `rclone` daemon processes and prevent container locks or stale mounts.
+
 ### Version [0.5.2] - 2026-06-06 🔧
 *Status: RealDebrid 404 repair retries, organiser dynamic provider scanning, and directory walk error logging*
 

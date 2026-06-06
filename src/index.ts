@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { startServer } from "./server";
 import { searchIndexer, pickBestResult, getMagnet, getProviderName } from "./indexers/index";
 import { registry } from "./providers";
-import { mountVirtualDrive } from "./services/mount";
+import { mountVirtualDrive, unmountAll } from "./services/mount";
 import { scanDeadOnce, startDeadScanner } from "./services/deadScanner";
 import { organizeOnce, startOrganizerWatch } from "./services/organizer";
 import { startWatchlistPoller } from "./services/mediaServerWatchlist";
@@ -29,7 +29,12 @@ program
 
     // Register graceful shutdown handlers
     const shutdown = () => {
-      console.log(`[${new Date().toISOString()}][serve] Shutting down — closing database...`);
+      console.log(`[${new Date().toISOString()}][serve] Shutting down — unmounting FUSE drives and closing database...`);
+      try {
+        unmountAll();
+      } catch (err: any) {
+        console.error(`[${new Date().toISOString()}][serve] Error during FUSE unmount (non-fatal): ${err?.message}`);
+      }
       closeDb();
       process.exit(0);
     };
