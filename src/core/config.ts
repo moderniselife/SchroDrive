@@ -179,6 +179,34 @@ export const config = {
   // --- Data Directory & Database ---
   dataDir: process.env.DATA_DIR || './data',
   dbPath: process.env.DB_PATH || path.join(process.env.DATA_DIR || './data', 'schrodrive.db'),
+
+  // =========================================================================
+  // Cloud Storage Mounts
+  // =========================================================================
+
+  /** Enable cloud storage mounting via rclone (Mega, Dropbox, GDrive, OneDrive). */
+  cloudMountsEnabled: String(process.env.CLOUD_MOUNTS_ENABLED ?? 'false').toLowerCase() === 'true',
+  /** Mount cloud storage as read-only (default: true — safer). */
+  cloudMountReadOnly: String(process.env.CLOUD_MOUNT_READ_ONLY ?? 'true').toLowerCase() !== 'false',
+
+  // MEGA (fully headless — email + password, no OAuth)
+  megaEmail: process.env.MEGA_EMAIL || '',
+  megaPassword: process.env.MEGA_PASSWORD || '',
+
+  // Dropbox (OAuth — needs pre-generated token via `rclone authorize "dropbox"`)
+  dropboxToken: process.env.DROPBOX_TOKEN || '',
+  dropboxClientId: process.env.DROPBOX_CLIENT_ID || '',
+  dropboxClientSecret: process.env.DROPBOX_CLIENT_SECRET || '',
+
+  // Google Drive (service account recommended for headless)
+  gdriveServiceAccountFile: process.env.GDRIVE_SERVICE_ACCOUNT_FILE || '',
+  gdriveToken: process.env.GDRIVE_TOKEN || '',
+  gdriveRootFolderId: process.env.GDRIVE_ROOT_FOLDER_ID || '',
+
+  // OneDrive (OAuth — needs pre-generated token via `rclone authorize "onedrive"`)
+  onedriveToken: process.env.ONEDRIVE_TOKEN || '',
+  onedriveDriveId: process.env.ONEDRIVE_DRIVE_ID || '',
+  onedriveDriveType: process.env.ONEDRIVE_DRIVE_TYPE || 'personal',
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {

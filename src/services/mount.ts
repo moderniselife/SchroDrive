@@ -300,6 +300,71 @@ function buildRcloneConfigFile(bridgePorts: Map<string, number>): string {
     }
   }
 
+  // =========================================================================
+  // Cloud Storage Providers (mounted via rclone combine remote)
+  // =========================================================================
+  if (config.cloudMountsEnabled) {
+    const cloudRemotes: string[] = [];
+
+    // MEGA — email + password auth (fully headless)
+    if (config.megaEmail && config.megaPassword) {
+      lines.push(`[mega]`);
+      lines.push(`type = mega`);
+      lines.push(`user = ${config.megaEmail}`);
+      lines.push(`pass = ${config.megaPassword}`);
+      lines.push(``);
+      cloudRemotes.push('mega');
+    }
+
+    // Dropbox — OAuth token
+    if (config.dropboxToken) {
+      lines.push(`[dropbox]`);
+      lines.push(`type = dropbox`);
+      if (config.dropboxClientId) lines.push(`client_id = ${config.dropboxClientId}`);
+      if (config.dropboxClientSecret) lines.push(`client_secret = ${config.dropboxClientSecret}`);
+      lines.push(`token = ${config.dropboxToken}`);
+      lines.push(``);
+      cloudRemotes.push('dropbox');
+    }
+
+    // Google Drive — service account or OAuth token
+    if (config.gdriveServiceAccountFile || config.gdriveToken) {
+      lines.push(`[gdrive]`);
+      lines.push(`type = drive`);
+      lines.push(`scope = drive`);
+      if (config.gdriveServiceAccountFile) {
+        lines.push(`service_account_file = ${config.gdriveServiceAccountFile}`);
+      }
+      if (config.gdriveToken) {
+        lines.push(`token = ${config.gdriveToken}`);
+      }
+      if (config.gdriveRootFolderId) {
+        lines.push(`root_folder_id = ${config.gdriveRootFolderId}`);
+      }
+      lines.push(``);
+      cloudRemotes.push('gdrive');
+    }
+
+    // OneDrive — OAuth token
+    if (config.onedriveToken) {
+      lines.push(`[onedrive]`);
+      lines.push(`type = onedrive`);
+      lines.push(`token = ${config.onedriveToken}`);
+      if (config.onedriveDriveId) lines.push(`drive_id = ${config.onedriveDriveId}`);
+      if (config.onedriveDriveType) lines.push(`drive_type = ${config.onedriveDriveType}`);
+      lines.push(``);
+      cloudRemotes.push('onedrive');
+    }
+
+    // Combine remote — presents all cloud providers under a single mount
+    if (cloudRemotes.length > 0) {
+      lines.push(`[cloud]`);
+      lines.push(`type = combine`);
+      lines.push(`upstreams = ${cloudRemotes.map(r => `${r}=${r}:`).join(' ')}`);
+      lines.push(``);
+    }
+  }
+
   if (!lines.length) {
     console.warn(`[${new Date().toISOString()}][mount] No mount sources available. Need WebDAV creds or API keys.`);
     return "";
@@ -748,6 +813,94 @@ export async function mountVirtualDrive(): Promise<void> {
     }
   }
 
+  // -----------------------------------------------------------------------
+  // Phase 4: Mount cloud storage providers (if configured)
+  // -----------------------------------------------------------------------
+  if (config.cloudMountsEnabled) {
+    const hasCloud = config.megaEmail || config.dropboxToken ||
+                     config.gdriveServiceAccountFile || config.gdriveToken ||
+                     config.onedriveToken;
+
+    if (hasCloud) {
+      const cloudPath = path.join(base, 'cloud');
+      ensureDir(cloudPath, { cleanupOnStale: true });
+
+      console.log(`[${new Date().toISOString()}][mount] Mounting cloud storage at ${cloudPath}`);
+
+      const cloudArgs = [
+        'mount', 'cloud:', cloudPath,
+        '--config', cfg,
+        '--daemon',
+        '--vfs-cache-mode=full',
+        '--dir-cache-time=1h',
+        '--vfs-cache-max-age=168h',
+        '--poll-interval=1m',
+        '--tpslimit=10',
+        '--allow-non-empty',
+      ];
+
+      if (canAllowOther()) {
+        cloudArgs.push('--allow-other');
+      }
+
+      if (config.cloudMountReadOnly) {
+        cloudArgs.push('--read-only');
+      }
+
+      // Ownership and permissions — match debrid mount patterns
+      if (typeof config.mountUid === 'number') {
+        cloudArgs.push('--uid', String(config.mountUid));
+      }
+      if (typeof config.mountGid === 'number') {
+        cloudArgs.push('--gid', String(config.mountGid));
+      }
+      if ((config.mountDirPerms || '').trim()) {
+        cloudArgs.push(`--dir-perms=${config.mountDirPerms}`);
+      }
+      if ((config.mountFilePerms || '').trim()) {
+        cloudArgs.push(`--file-perms=${config.mountFilePerms}`);
+      }
+      if (!(config.mountDirPerms || config.mountFilePerms)) {
+        cloudArgs.push('--umask', '0022');
+      }
+
+      // Logging
+      const cloudLogFile = path.join(tmpDir, 'rclone-cloud.log');
+      cloudArgs.push(`--log-file=${cloudLogFile}`);
+      cloudArgs.push('--log-level=NOTICE');
+
+      console.log(`[${new Date().toISOString()}][mount] rclone ${cloudArgs.join(' ')}`);
+
+      const cloudProc = spawn(config.rclonePath, cloudArgs, { stdio: 'inherit' });
+      cloudProc.on('error', (e) => {
+        console.error(`[${new Date().toISOString()}][mount] cloud mount failed`, { err: (e as any)?.message });
+      });
+      cloudProc.on('close', (code) => {
+        if (code !== 0) {
+          console.error(`[${new Date().toISOString()}][mount] cloud daemon exited with code ${code}`);
+        }
+      });
+
+      // Add to health monitor
+      mounts.push({ remote: 'cloud:', path: cloudPath });
+
+      // Post-mount verification (best-effort)
+      try {
+        await sleep(3000);
+        const items = await Promise.race([
+          fs.promises.readdir(cloudPath),
+          sleep(10000).then(() => { throw new Error('readdir timed out after 10s'); }),
+        ]);
+        console.log(`[${new Date().toISOString()}][mount] verify cloud: at ${cloudPath} -> entries=${(items as string[]).length}`);
+      } catch (e: any) {
+        console.warn(`[${new Date().toISOString()}][mount] verify warning for cloud: at ${cloudPath}`, { err: e?.message });
+        console.warn(`[${new Date().toISOString()}][mount] cloud mount may still be initialising — see rclone log: ${path.join(tmpDir, 'rclone-cloud.log')}`);
+      }
+
+      console.log(`[${new Date().toISOString()}][mount] Cloud storage mount initiated at ${cloudPath}`);
+    }
+  }
+
   console.log(`[${new Date().toISOString()}][mount] mounts initiated at ${base}`);
 
   // Start the mount health monitor to detect and recover from IO errors
@@ -767,6 +920,7 @@ export function unmountAll(): void {
   if (ps.has("torbox")) mounts.push(path.join(base, "torbox"));
   if (ps.has("alldebrid")) mounts.push(path.join(base, "alldebrid"));
   if (ps.has("premiumize")) mounts.push(path.join(base, "premiumize"));
+  if (config.cloudMountsEnabled) mounts.push(path.join(base, "cloud"));
 
   console.log(`[${new Date().toISOString()}][mount] Cleaning up and unmounting all FUSE mount points...`);
   for (const m of mounts) {
