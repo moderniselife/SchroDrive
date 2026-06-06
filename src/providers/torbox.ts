@@ -868,7 +868,11 @@ export class TorBoxProvider implements DebridProvider {
         }
       }
 
-      rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+      rateLimiter.recordRateLimit(
+        PROVIDER_NAME,
+        errorMsg,
+        retryAfterS ? retryAfterS * 1000 : undefined,
+      );
 
       // Feed into the learning store for long-term adaptation
       rateLimitStore.recordRateLimit(PROVIDER_NAME, operation, retryAfterS);
