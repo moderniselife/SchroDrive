@@ -14,7 +14,7 @@
 
 import { config } from "../core/config";
 import { isWatchlistProcessed, markWatchlistProcessed, getProcessedWatchlistKeys } from "../core/db";
-import { getPlexWatchlist, extractTmdbId, refreshPlexLibrary, type PlexWatchlistItem } from "../integrations/plex";
+import { getPlexWatchlist, extractTmdbId, refreshPlexLibrary, isAnyMediaServerStreaming, type PlexWatchlistItem } from "../integrations/plex";
 import { getJellyfinWatchlist, refreshJellyfinLibrary, type JellyfinWatchlistItem } from "../integrations/jellyfin";
 import { getEmbyWatchlist, refreshEmbyLibrary, type EmbyWatchlistItem } from "../integrations/emby";
 import { getTraktWatchlist, isTraktConfigured, type TraktWatchlistItem } from "../integrations/trakt";
@@ -312,6 +312,12 @@ async function processWatchlistItem(item: UnifiedWatchlistItem): Promise<boolean
  */
 async function pollOnce(): Promise<void> {
   try {
+    const isStreaming = await isAnyMediaServerStreaming();
+    if (isStreaming) {
+      console.log(`[${new Date().toISOString()}][watchlist] Active media stream detected. Skipping watchlist poll to avoid debrid rate limits.`);
+      return;
+    }
+
     console.log(`[${new Date().toISOString()}][watchlist] Polling all configured media servers...`);
     const items = await fetchAllWatchlists();
     console.log(`[${new Date().toISOString()}][watchlist] Total watchlist items: ${items.length}`);
