@@ -6,6 +6,50 @@ import { isAnyMediaServerStreaming } from "../integrations/plex";
 import { addToBlacklist, isBlacklisted, loadBlacklist } from "../core/blacklist";
 import type { DeadTorrentInfo } from "./webdavBridge";
 
+// ===========================================================================
+// Title Cleaning — extract searchable terms from torrent names
+// ===========================================================================
+
+/**
+ * Strips scene tags, resolution, codec info, and infohashes from torrent names
+ * to extract a meaningful search query.
+ *
+ * Examples:
+ *   "The.Big.Bang.Theory.S01.720p.AMZN.WEBRip.x264-GalaxyTV" → "The Big Bang Theory S01"
+ *   "5990e29607c45d2027fb614bc621218b1ae706c6" → "" (pure hash — needs fallback)
+ *   "Arrested.Development.S05.1080p.NF.WEB.DD5.1.x264-NTb[rartv]" → "Arrested Development S05"
+ */
+function cleanTorrentTitle(raw: string): string {
+  // If it looks like a bare infohash (40 hex chars), it's unsearchable
+  if (/^[a-f0-9]{40}$/i.test(raw.trim())) return '';
+
+  let title = raw;
+
+  // Replace dots and underscores with spaces
+  title = title.replace(/[._]/g, ' ');
+
+  // Remove content in square brackets (scene tags like [rartv], [EZTVx.to])
+  title = title.replace(/\[[^\]]*\]/g, '');
+
+  // Remove content in parentheses (group tags)
+  title = title.replace(/\([^)]*\)/g, '');
+
+  // Remove everything after resolution/codec markers
+  // Keep the season/episode pattern (S01, S01E01) but strip quality info
+  title = title.replace(
+    /\s+(2160p|1080p|720p|480p|4K|UHD|HEVC|x265|x264|AVC|AAC|DTS|DD5|DDP5|WEB|WEBRip|WEB-DL|BluRay|BDRip|HDTV|REMUX|NF|AMZN|DSNP|HMAX|ATVP)\b.*/i,
+    ''
+  );
+
+  // Remove release group suffix (-GroupName)
+  title = title.replace(/\s*-\s*[A-Za-z0-9]+\s*$/, '');
+
+  // Collapse multiple spaces and trim
+  title = title.replace(/\s+/g, ' ').trim();
+
+  return title;
+}
+
 /**
  * SchroDrive — Dead Torrent Scanner
  *
@@ -41,8 +85,16 @@ function torrentTitleLike(t: TorrentInfo): string {
  *
  * Checks the blacklist before adding to prevent re-adding known bad torrents.
  */
-async function tryReaddViaIndexer(title: string, excludeProvider?: string): Promise<boolean> {
-  const results = await searchIndexer(title);
+async function tryReaddViaIndexer(rawTitle: string, excludeProvider?: string): Promise<boolean> {
+  // Clean the torrent name into a searchable query
+  const searchTitle = cleanTorrentTitle(rawTitle);
+  if (!searchTitle) {
+    console.warn(`[${new Date().toISOString()}][dead-scan] unsearchable title (raw hash or garbage)`, { rawTitle });
+    return false;
+  }
+
+  console.log(`[${new Date().toISOString()}][dead-scan] searching for replacement: "${searchTitle}" (from: "${rawTitle}")`);
+  const results = await searchIndexer(searchTitle);
 
   // Filter out blacklisted results before picking
   const filteredResults = results.filter((r: any) => {
@@ -51,7 +103,7 @@ async function tryReaddViaIndexer(title: string, excludeProvider?: string): Prom
   });
 
   if (filteredResults.length === 0) {
-    console.warn(`[${new Date().toISOString()}][dead-scan] all results blacklisted for`, { title });
+    console.warn(`[${new Date().toISOString()}][dead-scan] all results blacklisted for`, { searchTitle });
     return false;
   }
 
@@ -61,7 +113,7 @@ async function tryReaddViaIndexer(title: string, excludeProvider?: string): Prom
     try { magnet = await getMagnetOrResolve(best); } catch {}
   }
   if (!magnet) {
-    console.warn(`[${new Date().toISOString()}][dead-scan] no magnet for`, { title });
+    console.warn(`[${new Date().toISOString()}][dead-scan] no magnet for`, { searchTitle });
     return false;
   }
 
@@ -69,11 +121,11 @@ async function tryReaddViaIndexer(title: string, excludeProvider?: string): Prom
   const providers = registry.ordered().filter(p => p.id !== excludeProvider);
   for (const p of providers) {
     try {
-      await p.addMagnet(magnet, title);
-      console.log(`[${new Date().toISOString()}][dead-scan] re-added to ${p.displayName}`, { title });
+      await p.addMagnet(magnet, searchTitle);
+      console.log(`[${new Date().toISOString()}][dead-scan] re-added to ${p.displayName}`, { searchTitle });
       return true;
     } catch (e: any) {
-      console.warn(`[${new Date().toISOString()}][dead-scan] ${p.id} add failed`, { title, err: e?.message || String(e) });
+      console.warn(`[${new Date().toISOString()}][dead-scan] ${p.id} add failed`, { searchTitle, err: e?.message || String(e) });
     }
   }
   return false;
@@ -339,9 +391,18 @@ export function startDeadScanner() {
   const run = async () => {
     try {
       const isStreaming = await isAnyMediaServerStreaming();
-      if (isStreaming) {
-        console.log(`[${new Date().toISOString()}][dead-scan] Active media stream detected. Skipping scan to avoid debrid rate limits.`);
+      const bridgeEntries = [...getActiveBridges().entries()];
+      const hasBridgeDead = bridgeEntries.some(([, bridge]) => bridge.getDeadTorrents().size > 0);
+
+      if (isStreaming && !hasBridgeDead) {
+        // Only skip if streaming AND there are no bridge-dead torrents.
+        // If there ARE bridge-dead torrents, we MUST run — otherwise the dead
+        // file causes Plex to "stream" the error video, which blocks this scanner,
+        // which never replaces the dead torrent. Deadlock!
+        console.log(`[${new Date().toISOString()}][dead-scan] Active media stream detected and no bridge-dead torrents. Skipping scan.`);
         return;
+      } else if (isStreaming && hasBridgeDead) {
+        console.log(`[${new Date().toISOString()}][dead-scan] Active stream detected BUT bridge has dead torrents — running scan to break deadlock`);
       }
 
       const configuredProviders = registry.configured();
