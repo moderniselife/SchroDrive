@@ -375,6 +375,39 @@ export class TorBoxProvider implements DebridProvider {
     return false;
   }
 
+  /**
+   * Deletes a torrent from TorBox by its ID.
+   *
+   * Uses the `POST /v1/api/torrents/controltorrent` endpoint with
+   * `operation: 'delete'`. Rate-limit aware.
+   *
+   * @param torrentId - The TorBox torrent ID to delete.
+   * @throws {Error} If the deletion fails.
+   */
+  async deleteTorrent(torrentId: string): Promise<void> {
+    if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+      throw new Error(`TorBox rate limited, cannot delete torrent ${torrentId}`);
+    }
+
+    await rateLimiter.throttle(PROVIDER_NAME);
+
+    const base = getBaseUrl();
+    const url = `${base}/v1/api/torrents/controltorrent`;
+
+    try {
+      await axiosIPv4.post(
+        url,
+        { torrent_id: Number(torrentId), operation: 'delete' },
+        { headers: torboxHeaders(), timeout: 20000 },
+      );
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+      console.log(`[${new Date().toISOString()}][torbox] deleted torrent ${torrentId}`);
+    } catch (err: any) {
+      this.handleError(err, `delete torrent ${torrentId}`);
+      throw err;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Download Operations
   // -------------------------------------------------------------------------
