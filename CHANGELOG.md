@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.7.0] - 2026-06-06 🚀
+*Status: .torrent file support, cloud storage mounts, STRM short-codes, error video fallback, organiser improvements*
+
+### Added ✨
+- **`.torrent` file support** (`src/indexers/`, `src/providers/`):
+  - Indexer results that return `.torrent` download URLs are no longer discarded
+  - New `MagnetOrTorrent` discriminated union type for magnet vs torrent URL
+  - `addTorrentFile()` implemented in all 4 providers (RD, TB, AD, PM)
+  - `addTorrentFileFromUrl()` in registry downloads and uploads `.torrent` files
+- **Cloud storage virtual mounts** (`src/core/config.ts`, `src/services/mount.ts`):
+  - Mega (email+password, fully headless), Google Drive (service account), Dropbox (OAuth), OneDrive (OAuth)
+  - Mounted via rclone's `combine` backend under `{mountBase}/cloud/`
+  - Default read-only, cloud-tuned flags (`--tpslimit=10`, `--dir-cache-time=1h`)
+- **STRM short-code service** (`src/services/strmService.ts`, `src/core/db.ts`):
+  - Stable 16-char alphanumeric codes that 302 redirect to ephemeral CDN URLs
+  - HTTP server on port 9120 (configurable via `STRM_PORT`)
+  - 7-day TTL with auto-refresh from provider on expiry
+  - SQLite-persisted with automatic pruning every 6 hours
+- **Error video fallback** (`assets/not_found.mp4`, `src/services/webdavBridge.ts`):
+  - 10-second black MP4 (~8KB) served when download URLs are broken
+  - Prevents media player hangs/crashes on 503 text responses
+- **Anime output category** (`src/services/organizer.ts`):
+  - Organiser now outputs anime to `Anime/` instead of lumping into `TV/`
+  - Uses `mediaClassifier.ts` for CRC hash + fansub detection
+
+### Changed 🔄
+- **Organiser mount awareness** (`src/services/organizer.ts`):
+  - Scans `__all__/` when Zurg-style layout detected (avoids duplicate processing)
+  - Dynamic `MOUNT_STOP_WORDS` set replaces hardcoded provider names
+  - Path walkers (`findShowHintFromPath`, `pickCandidateTitleFromPath`, `isLikelyTvContext`) skip category dirs
+
+### Version [0.6.0] - 2026-06-06 🧬
+*Status: Mount stability fix, persistent deduplication, Zurg-style organised mounts, Jellyseerr support*
+
+### Added ✨
+- **Zurg-style organised mounts** (`src/core/mediaClassifier.ts`, `src/services/webdavBridge.ts`):
+  - WebDAV bridge now presents virtual category directories: `__all__/`, `anime/`, `shows/`, `movies/`
+  - Classification matches Zurg's `config.yml` defaults with priority ordering (anime → shows → movies)
+  - Anime detection: CRC hash patterns (`[ABCD1234]`) + fansub heuristic patterns (OVA, ONA, Nyaa, etc.)
+  - TV show detection: comprehensive episode numbering (S01E01, Season 01, 1x01, Complete Series, etc.)
+  - Movies: catch-all with `only_show_the_biggest_file` filtering to hide samples/NFOs
+  - Full legacy fallback — existing flat torrent paths still work for backward compatibility
+- **Jellyseerr support** (`src/core/config.ts`):
+  - `JELLYSEERR_URL`, `JELLYSEERR_API_KEY`, `JELLYSEERR_AUTH` env vars as drop-in replacements
+  - Jellyseerr's API is Overseerr-compatible — either set of env vars works
+- **Persistent Overseerr processed state** (`src/core/db.ts`):
+  - New `processed_overseerr` SQLite table survives container restarts
+  - New `known_magnets` SQLite table for infohash-based deduplication
+  - Both tables auto-prune entries older than 90 days
+
+### Fixed 🐛
+- **Mount health monitor root cause fix** (`src/services/mount.ts`):
+  - Removed `502 Bad Gateway` and `503 Service Unavailable` from `MOUNT_ERROR_PATTERNS`
+  - The WebDAV bridge intentionally returns 503 for dead/unavailable torrents — counting these as fatal mount errors caused unnecessary remounts every ~5 minutes, killing active Plex streams
+  - Health check logic now separates log errors from mount accessibility
+  - Only mount inaccessibility (readdir failure/timeout) triggers a remount; log errors are informational
+  - Escalated failure increment (2x) when both log errors AND mount inaccessible occur together
+- **Repeated torrent re-adding** (`src/services/overseerr.ts`, `src/providers/registry.ts`):
+  - Overseerr poller's `processed` Set was in-memory only — lost on every restart, causing ALL approved requests to be re-processed. Now persisted to SQLite
+  - Added infohash-based deduplication in `addMagnetWithStrategy()` — prevents re-adding the same content under different torrent names
+  - Added blacklist checking in the Overseerr poller before searching
+  - Recovery scanner cooldown increased from 6h → 24h to reduce API spam
+  - Removed the 1000-item FIFO cap — SQLite handles unlimited persistence
+
 ### Version [0.5.3] - 2026-06-06 🔌
 *Status: Graceful FUSE unmounting on graceful shutdown and auto-update exits*
 

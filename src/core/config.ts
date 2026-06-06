@@ -23,10 +23,11 @@ export const config = {
   indexerProvider: (process.env.INDEXER_PROVIDER || "auto") as "prowlarr" | "jackett" | "auto",
   torboxApiKey: process.env.TORBOX_API_KEY || "",
   torboxBaseUrl: process.env.TORBOX_BASE_URL || "https://api.torbox.app",
-  overseerrAuth: process.env.OVERSEERR_AUTH || "",
-  // Overseerr API (poller) configuration
-  overseerrUrl: process.env.OVERSEERR_URL || "",
-  overseerrApiKey: process.env.OVERSEERR_API_KEY || "",
+  overseerrAuth: process.env.OVERSEERR_AUTH || process.env.JELLYSEERR_AUTH || "",
+  // Overseerr / Jellyseerr API (poller) configuration
+  // Jellyseerr is API-compatible with Overseerr — either set of env vars works
+  overseerrUrl: process.env.OVERSEERR_URL || process.env.JELLYSEERR_URL || "",
+  overseerrApiKey: process.env.OVERSEERR_API_KEY || process.env.JELLYSEERR_API_KEY || "",
   pollIntervalSeconds: Number(process.env.POLL_INTERVAL_S || 30),
   // Runtime toggles
   runWebhook: String(process.env.RUN_WEBHOOK ?? "true").toLowerCase() !== "false",
@@ -178,6 +179,34 @@ export const config = {
   // --- Data Directory & Database ---
   dataDir: process.env.DATA_DIR || './data',
   dbPath: process.env.DB_PATH || path.join(process.env.DATA_DIR || './data', 'schrodrive.db'),
+
+  // =========================================================================
+  // Cloud Storage Mounts
+  // =========================================================================
+
+  /** Enable cloud storage mounting via rclone (Mega, Dropbox, GDrive, OneDrive). */
+  cloudMountsEnabled: String(process.env.CLOUD_MOUNTS_ENABLED ?? 'false').toLowerCase() === 'true',
+  /** Mount cloud storage as read-only (default: true — safer). */
+  cloudMountReadOnly: String(process.env.CLOUD_MOUNT_READ_ONLY ?? 'true').toLowerCase() !== 'false',
+
+  // MEGA (fully headless — email + password, no OAuth)
+  megaEmail: process.env.MEGA_EMAIL || '',
+  megaPassword: process.env.MEGA_PASSWORD || '',
+
+  // Dropbox (OAuth — needs pre-generated token via `rclone authorize "dropbox"`)
+  dropboxToken: process.env.DROPBOX_TOKEN || '',
+  dropboxClientId: process.env.DROPBOX_CLIENT_ID || '',
+  dropboxClientSecret: process.env.DROPBOX_CLIENT_SECRET || '',
+
+  // Google Drive (service account recommended for headless)
+  gdriveServiceAccountFile: process.env.GDRIVE_SERVICE_ACCOUNT_FILE || '',
+  gdriveToken: process.env.GDRIVE_TOKEN || '',
+  gdriveRootFolderId: process.env.GDRIVE_ROOT_FOLDER_ID || '',
+
+  // OneDrive (OAuth — needs pre-generated token via `rclone authorize "onedrive"`)
+  onedriveToken: process.env.ONEDRIVE_TOKEN || '',
+  onedriveDriveId: process.env.ONEDRIVE_DRIVE_ID || '',
+  onedriveDriveType: process.env.ONEDRIVE_DRIVE_TYPE || 'personal',
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {

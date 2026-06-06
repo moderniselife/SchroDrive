@@ -8,7 +8,8 @@ import { organizeOnce, startOrganizerWatch } from "./services/organizer";
 import { startWatchlistPoller } from "./services/mediaServerWatchlist";
 import { startStremioAddonServer } from "./services/stremioAddon";
 import { config } from "./core/config";
-import { getDb, closeDb, pruneOldEntries } from "./core/db";
+import { getDb, closeDb, pruneOldEntries, pruneExpiredStrmCodes } from "./core/db";
+import { startStrmServer, stopStrmServer } from "./services/strmService";
 
 const program = new Command();
 program
@@ -37,6 +38,7 @@ program
       }
 
       console.log(`[${new Date().toISOString()}][serve] Waiting 3 seconds for FUSE mounts to clear...`);
+      stopStrmServer().catch(() => {});
       setTimeout(() => {
         console.log(`[${new Date().toISOString()}][serve] Closing database and exiting...`);
         closeDb();
@@ -51,6 +53,7 @@ program
     setInterval(() => {
       try {
         pruneOldEntries();
+        pruneExpiredStrmCodes();
       } catch (err: any) {
         console.error(`[${new Date().toISOString()}][serve] Scheduled prune failed: ${err?.message}`);
       }
@@ -87,6 +90,11 @@ program
 
     // Start Stremio addon server (separate port)
     startStremioAddonServer();
+
+    // Start STRM short-code service (port 9120)
+    startStrmServer().catch((err: any) => {
+      console.error(`[serve] Failed to start STRM service (non-fatal): ${err?.message}`);
+    });
     
     // If additional services are running, handle their errors
     if (promises.length > 0) {

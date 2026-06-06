@@ -126,14 +126,51 @@ Set via `ADD_STRATEGY` environment variable.
 - **Auto-detection** — configure one or both; SchröDrive picks the active one
 - Intelligent result ranking by seeders (fallback by size)
 - Automatic magnet resolution with redirect-following fallback
+- **`.torrent` File Support** — indexer results that return `.torrent` download URLs are now supported alongside magnet URIs. All 4 debrid providers (RealDebrid, TorBox, AllDebrid, Premiumize) support torrent file upload.
 
 ### 🗂️ Virtual Drive (rclone WebDAV Mounts)
 
 - Mount your debrid library as a local filesystem via rclone
 - **WebDAV Bridge** — built-in translation layer that converts debrid API keys into WebDAV endpoints for rclone (no native WebDAV credentials required!)
+- **Zurg-compatible organised directories** — automatic media classification into `anime/`, `shows/`, `movies/`, and `__all__/`
 - Configurable mount options (VFS cache, permissions, buffer sizes, chunk sizes)
 - Works with Plex, Jellyfin, Emby, and any media server that reads local files
 - Per-provider mount points under a shared base directory
+- **Cloud storage mounts** — mount MEGA, Dropbox, Google Drive, and OneDrive alongside debrid content via rclone
+
+#### Mount Structure
+
+```
+/mnt/schrodrive/
+├── realdebrid/
+│   ├── __all__/         # All torrents (unfiltered)
+│   ├── anime/           # CRC hash detected fansub releases
+│   ├── shows/           # Episode pattern detected (S01E01, etc.)
+│   └── movies/          # Everything else (biggest file only)
+├── torbox/
+│   ├── __all__/
+│   ├── anime/
+│   ├── shows/
+│   └── movies/
+├── ... (other providers)
+└── cloud/               # Cloud storage mounts
+    ├── mega/
+    ├── dropbox/
+    ├── gdrive/
+    └── onedrive/
+```
+
+### 🔗 STRM Short-Code Service (Port 9120)
+
+Stable 16-character alphanumeric URLs that redirect to ephemeral CDN download links. Media player bookmarks never break even when CDN links expire — URLs auto-refresh transparently.
+
+### 🎬 Error Video Fallback
+
+When content is temporarily unavailable (e.g. CDN link expired and refresh failed), a brief error video is served instead of hanging or crashing the media player. This keeps playback graceful during transient outages.
+
+### 🎌 Anime Classification
+
+The organiser now outputs anime to a separate `Anime/` directory (alongside `Movies/` and `TV/`) using CRC hash and fansub pattern detection.
 
 ### 🔄 Automation Engine
 
@@ -146,6 +183,7 @@ Set via `ADD_STRATEGY` environment variable.
 | **Organiser** | Creates symlinked views with TMDB/TVMaze metadata | `RUN_ORGANIZER_WATCH=true` |
 | **Auto-Update** | Checks GitHub releases and self-restarts | `AUTO_UPDATE_ENABLED=true` |
 | **FUSE Mount** | Mounts debrid content as local drives | `RUN_MOUNT=true` |
+| **STRM Redirector** | Stable URLs for media bookmarks (port 9120) | Always on |
 
 ### 🖥️ Web GUI (Dashboard)
 
@@ -553,14 +591,43 @@ All configuration is done via environment variables. Below is the complete refer
 | `JACKETT_TIMEOUT_MS` | `120000` | Search timeout (ms) |
 | `JACKETT_REDIRECT_MAX_HOPS` | `5` | Max redirects for magnet resolution |
 
-### 📡 Overseerr
+### 📡 Overseerr / Jellyseerr
+
+> **Jellyseerr support**: Jellyseerr is API-compatible with Overseerr (it's a fork). You can use either set of env vars below — `OVERSEERR_*` or `JELLYSEERR_*`. If both are set, `OVERSEERR_*` takes priority.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OVERSEERR_URL` | — | Overseerr API URL (include `/api/v1`) |
 | `OVERSEERR_API_KEY` | — | Overseerr API key |
 | `OVERSEERR_AUTH` | — | Optional webhook authorisation header |
+| `JELLYSEERR_URL` | — | Jellyseerr API URL (alias for `OVERSEERR_URL`) |
+| `JELLYSEERR_API_KEY` | — | Jellyseerr API key (alias for `OVERSEERR_API_KEY`) |
+| `JELLYSEERR_AUTH` | — | Jellyseerr auth header (alias for `OVERSEERR_AUTH`) |
 | `POLL_INTERVAL_S` | `30` | Poller interval (seconds) |
+
+### ☁️ Cloud Storage Mounts
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLOUD_MOUNTS_ENABLED` | `false` | Enable cloud storage mounting via rclone |
+| `CLOUD_MOUNT_READ_ONLY` | `true` | Mount cloud storage as read-only (safer default) |
+| `MEGA_EMAIL` | — | MEGA account email |
+| `MEGA_PASSWORD` | — | MEGA account password |
+| `DROPBOX_TOKEN` | — | Dropbox OAuth token (from `rclone authorize "dropbox"`) |
+| `DROPBOX_CLIENT_ID` | — | Optional Dropbox app client ID |
+| `DROPBOX_CLIENT_SECRET` | — | Optional Dropbox app client secret |
+| `GDRIVE_SERVICE_ACCOUNT_FILE` | — | Path to Google Drive service account JSON file |
+| `GDRIVE_TOKEN` | — | Google Drive OAuth token (alternative to service account) |
+| `GDRIVE_ROOT_FOLDER_ID` | — | Optional GDrive root folder to mount |
+| `ONEDRIVE_TOKEN` | — | OneDrive OAuth token (from `rclone authorize "onedrive"`) |
+| `ONEDRIVE_DRIVE_ID` | — | OneDrive drive ID |
+| `ONEDRIVE_DRIVE_TYPE` | `personal` | OneDrive type: `personal` or `business` |
+
+### 🔗 STRM Short-Codes
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STRM_PORT` | `9120` | HTTP port for the STRM short-code redirect service |
 
 ### 📺 Media Servers
 
@@ -701,6 +768,49 @@ All configuration is done via environment variables. Below is the complete refer
 |----------|---------|-------------|
 | `STREMIO_ADDON_ENABLED` | `false` | Expose SchröDrive as a Stremio addon |
 | `STREMIO_ADDON_PORT` | `7000` | Stremio addon server port |
+
+---
+
+## ☁️ Cloud Storage Setup
+
+SchröDrive can mount cloud storage providers alongside your debrid content via rclone. Set `CLOUD_MOUNTS_ENABLED=true` and configure credentials for the providers you want.
+
+### MEGA (Easiest — No OAuth)
+
+```env
+CLOUD_MOUNTS_ENABLED=true
+MEGA_EMAIL=your@email.com
+MEGA_PASSWORD=your_password
+```
+
+> [!WARNING]
+> MEGA 2FA must be disabled — rclone doesn't support it.
+
+### Google Drive (Service Account — Recommended)
+
+1. Create a Google Cloud project
+2. Enable the Google Drive API
+3. Create a service account and download the JSON key file
+4. Share the target Drive folder with the service account email
+
+```env
+CLOUD_MOUNTS_ENABLED=true
+GDRIVE_SERVICE_ACCOUNT_FILE=/config/gdrive-sa.json
+```
+
+### Dropbox & OneDrive (OAuth Token)
+
+1. On a machine with a browser, run: `rclone authorize "dropbox"` (or `"onedrive"`)
+2. Copy the token JSON blob from the output
+3. Set it as an env var:
+
+```env
+CLOUD_MOUNTS_ENABLED=true
+DROPBOX_TOKEN={"access_token":"...","token_type":"Bearer",...}
+```
+
+> [!TIP]
+> Cloud mounts appear under `/mnt/schrodrive/cloud/<provider>/`. Set `CLOUD_MOUNT_READ_ONLY=false` if you need write access.
 
 ---
 
