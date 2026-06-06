@@ -20,6 +20,9 @@ and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.
 - **Rotated token rate-limit bypass**: WebDAV bridge link resolution now bypasses the global rate-limit check for rotated tokens, allowing successful stream resolution even if the primary API token is rate-limited
 - **TV Organiser duplication**: Fixed an issue in TV media folder organisation to prevent duplicate directories and correctly handle filename patterns
 - **TypeScript compilation**: Fixed missing `guessTitleFromFilename` helper in `organizer.ts` to ensure clean builds
+- **WebDAV bridge port binding**: Resolved a startup promise race condition in the Bun runtime by explicitly waiting for the `listening` event, preventing false-positive server starts when ports are blocked
+- **Port probing self-healing**: Implemented automatic scanning (up to 20 sequential ports) when launching WebDAV bridges to dynamically find and bind to available ports, auto-updating the rclone config on-the-fly
+- **RealDebrid repair race condition**: Added a 2-second database propagation delay between deleting a broken torrent and re-adding the magnet during repairs to avoid `404 Not Found` file-selection errors
 
 ### Version [0.5.0] - 2026-06-06 🔑
 *Status: Multi-token download bypass + rate limiter hardening*
