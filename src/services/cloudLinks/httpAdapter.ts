@@ -54,6 +54,11 @@ function safeDecodeURIComponent(str: string): string {
   }
 }
 
+/** Promise-based delay for rate-limiting. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // ===========================================================================
 // HTML Directory Listing Parsers
 // ===========================================================================
@@ -251,12 +256,23 @@ function parseSize(sizeStr: string): number {
 // Adapter
 // ===========================================================================
 
+/** Milliseconds to wait between crawl requests to avoid hammering servers. */
+const CRAWL_DELAY_MS = 500;
+
+/** Maximum directory depth to crawl (prevents infinite recursion). */
+const CRAWL_MAX_DEPTH = 10;
+
 export class HttpAdapter implements CloudLinkAdapter {
   readonly type: CloudLinkProvider = 'http' as CloudLinkProvider;
   readonly name: string;
 
   private baseUrl: string;
   private initialised = false;
+
+  /** Whether a background deep crawl is currently running. */
+  private crawling = false;
+  /** Number of directories fetched during the current crawl. */
+  private crawlFetched = 0;
 
   /** In-memory cache of folder contents: url → entries. */
   private folderCache = new Map<string, { files: CloudFile[]; fetchedAt: number }>();
@@ -381,8 +397,91 @@ export class HttpAdapter implements CloudLinkAdapter {
 
       console.log(`[${new Date().toISOString()}][cloud-links][http] Verified "${this.name}" — ${entries.length} entries in root`);
       this.initialised = true;
+
+      // Kick off background deep crawl to pre-warm cache
+      this.startDeepCrawl();
     } catch (err: any) {
       throw new Error(`HTTP directory verification failed for "${this.name}": ${err?.message}`);
+    }
+  }
+
+  /**
+   * Launches a background deep crawl of the entire directory tree.
+   * Uses BFS with rate-limiting to avoid hammering the server.
+   * Skips directories that are already fresh in cache.
+   */
+  private startDeepCrawl(): void {
+    if (this.crawling) return;
+
+    // If we already have a substantial disk cache, skip crawling
+    // (the stale-while-revalidate will handle refreshes on-demand)
+    const cachedCount = this.folderCache.size;
+    if (cachedCount > 20) {
+      console.log(`[${new Date().toISOString()}][cloud-links][http] "${this.name}" — ${cachedCount} folders already cached, skipping deep crawl`);
+      return;
+    }
+
+    this.crawling = true;
+    this.crawlFetched = 0;
+
+    console.log(`[${new Date().toISOString()}][cloud-links][http] "${this.name}" — starting background deep crawl...`);
+
+    this.crawlDirectory(this.baseUrl, 0)
+      .then(() => {
+        // Final save
+        this.saveDiskCache();
+        console.log(
+          `[${new Date().toISOString()}][cloud-links][http] "${this.name}" — deep crawl complete. ` +
+          `Fetched ${this.crawlFetched} new dirs, ${this.folderCache.size} total cached.`
+        );
+      })
+      .catch((err) => {
+        console.error(`[${new Date().toISOString()}][cloud-links][http] "${this.name}" — deep crawl failed: ${err?.message}`);
+      })
+      .finally(() => {
+        this.crawling = false;
+      });
+  }
+
+  /**
+   * Recursively crawls a directory and all its subdirectories (BFS).
+   * Rate-limited with CRAWL_DELAY_MS between requests.
+   */
+  private async crawlDirectory(url: string, depth: number): Promise<void> {
+    if (depth > CRAWL_MAX_DEPTH) return;
+
+    // Check if we already have a fresh cache for this URL
+    const cached = this.folderCache.get(url);
+    let files: CloudFile[];
+
+    if (cached && (Date.now() - cached.fetchedAt) < HttpAdapter.FRESH_TTL_MS) {
+      // Already fresh — use cached data to discover subdirs without fetching
+      files = cached.files;
+    } else {
+      // Need to fetch
+      await sleep(CRAWL_DELAY_MS);
+      const fetched = await this.fetchRemoteListing(url);
+      if (!fetched) return; // Failed — skip this branch
+
+      files = fetched;
+      this.folderCache.set(url, { files, fetchedAt: Date.now() });
+      this.crawlFetched++;
+
+      // Save to disk periodically (every 50 fetches)
+      if (this.crawlFetched % 50 === 0) {
+        this.saveDiskCache();
+        console.log(
+          `[${new Date().toISOString()}][cloud-links][http] "${this.name}" — crawl progress: ` +
+          `${this.crawlFetched} fetched, ${this.folderCache.size} total cached`
+        );
+      }
+    }
+
+    // Recurse into subdirectories
+    const subdirs = files.filter((f) => f.isDirectory);
+    for (const subdir of subdirs) {
+      const subUrl = subdir.id.endsWith('/') ? subdir.id : subdir.id + '/';
+      await this.crawlDirectory(subUrl, depth + 1);
     }
   }
 
