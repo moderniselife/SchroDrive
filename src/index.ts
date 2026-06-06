@@ -1,17 +1,16 @@
 import { Command } from "commander";
 import { startServer } from "./server";
-import { searchIndexer, pickBestResult, getMagnet, getProviderName } from "./indexers/index";
-import { registry } from "./providers";
-import { mountVirtualDrive } from "./services/mount";
-import { scanDeadOnce, startDeadScanner } from "./services/deadScanner";
-import { organizeOnce, startOrganizerWatch } from "./services/organizer";
-import { startWatchlistPoller } from "./services/mediaServerWatchlist";
-import { config } from "./core/config";
+import { searchIndexer, pickBestResult, getMagnet, getProviderName } from "./indexer";
+import { addMagnetToTorbox } from "./torbox";
+import { mountVirtualDrive } from "./mount";
+import { scanDeadOnce, startDeadScanner } from "./deadScanner";
+import { organizeOnce, startOrganizerWatch } from "./organizer";
+import { config } from "./config";
 
 const program = new Command();
 program
   .name("schrodrive")
-  .description("CLI/Webhook tool to integrate Overseerr with Prowlarr/Jackett and debrid providers (plus API poller mode)")
+  .description("CLI/Webhook tool to integrate Overseerr with Prowlarr/Jackett and TorBox (plus API poller mode)")
   .version("0.1.0");
 
 program
@@ -37,11 +36,6 @@ program
     if (config.runOrganizerWatch) {
       console.log("[serve] Starting organizer watch (RUN_ORGANIZER_WATCH=true)");
       promises.push(Promise.resolve(startOrganizerWatch()));
-    }
-
-    if (config.runWatchlistPoller) {
-      console.log("[serve] Starting media server watchlist poller (RUN_WATCHLIST_POLLER=true)");
-      startWatchlistPoller();
     }
     
     // Start the main server
@@ -86,7 +80,7 @@ program
 
 program
   .command("add")
-  .description("Add a torrent magnet to configured debrid providers; if --query is provided, search indexer and add the best magnet")
+  .description("Add a torrent magnet to TorBox; if --query is provided, search indexer and add the best magnet")
   .option("-m, --magnet <magnet>", "Magnet URI to add")
   .option("-q, --query <query>", "Query to search in indexer; best result will be added")
   .action(async (opts: any) => {
@@ -105,8 +99,8 @@ program
 
     if (!magnet) throw new Error("No magnet found");
 
-    const { results } = await registry.addMagnetWithStrategy(magnet, chosen?.title, 'all');
-    console.log(JSON.stringify({ ok: true, chosen, results }, null, 2));
+    const added = await addMagnetToTorbox(magnet, chosen?.title);
+    console.log(JSON.stringify({ ok: true, chosen, torbox: added }, null, 2));
   });
 
 program
