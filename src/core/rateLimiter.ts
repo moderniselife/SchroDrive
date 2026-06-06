@@ -64,11 +64,15 @@ class RateLimiter {
   /**
    * Minimum delay between requests per provider (in milliseconds).
    * - Real-Debrid: 250 req/min ≈ 240ms minimum; using 500ms for safety margin
-   * - TorBox: Undocumented but strict rate limits; using 5s to be conservative
+   * - TorBox: "60 per hour" observed — starts at 5s but dynamically adjusted
+   * - AllDebrid: 12 req/s = 83ms minimum; using 100ms for safety margin
+   * - Premiumize: Undocumented threshold; using 1s conservative default
    */
   private minRequestDelayMs: Map<string, number> = new Map([
-    ["torbox", 5000],      // 5 seconds between TorBox requests (strict limits)
+    ["torbox", 5000],      // 5 seconds between TorBox requests (strict limits, dynamically adjusted)
     ["realdebrid", 500],   // 500ms between RD requests (250/min limit)
+    ["alldebrid", 100],    // 100ms between AD requests (12/s, 600/min limit)
+    ["premiumize", 1000],  // 1s between PM requests (undocumented limits, conservative)
   ]);
   
   /**

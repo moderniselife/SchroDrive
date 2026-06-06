@@ -19,6 +19,7 @@ import http from 'http';
 import https from 'https';
 import { config, requireEnv } from '../core/config';
 import { rateLimiter } from '../core/rateLimiter';
+import { rateLimitStore } from '../core/rateLimitStore';
 import type {
   DebridProvider,
   TorrentInfo,
@@ -375,6 +376,120 @@ export class TorBoxProvider implements DebridProvider {
     return false;
   }
 
+  /**
+   * Deletes a torrent from TorBox by its ID.
+   *
+   * Uses the `POST /v1/api/torrents/controltorrent` endpoint with
+   * `operation: 'delete'`. Rate-limit aware.
+   *
+   * @param torrentId - The TorBox torrent ID to delete.
+   * @throws {Error} If the deletion fails.
+   */
+  async deleteTorrent(torrentId: string): Promise<void> {
+    if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+      throw new Error(`TorBox rate limited, cannot delete torrent ${torrentId}`);
+    }
+
+    await rateLimiter.throttle(PROVIDER_NAME);
+
+    const base = getBaseUrl();
+    const url = `${base}/v1/api/torrents/controltorrent`;
+
+    try {
+      await axiosIPv4.post(
+        url,
+        { torrent_id: Number(torrentId), operation: 'delete' },
+        { headers: torboxHeaders(), timeout: 20000 },
+      );
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+      console.log(`[${new Date().toISOString()}][torbox] deleted torrent ${torrentId}`);
+    } catch (err: any) {
+      this.handleError(err, `delete torrent ${torrentId}`);
+      throw err;
+    }
+  }
+
+  /**
+   * Returns the info hash for a torrent, used for repair (re-adding).
+   *
+   * Fetches the torrent info from TorBox and returns the hash field.
+   * TorBox returns hash in the torrent data from the list endpoint,
+   * so we check cached data first before making an API call.
+   *
+   * @param torrentId - The TorBox torrent ID.
+   * @returns The info hash string, or null if not available.
+   */
+  async getInfoHash(torrentId: string): Promise<string | null> {
+    // Check cached torrent list first (avoid unnecessary API call)
+    const cached = rateLimiter.getCache<any[]>(TORRENT_LIST_CACHE_KEY);
+    if (cached) {
+      const torrent = cached.find((t: any) => String(t.id) === String(torrentId));
+      if (torrent?.hash) return torrent.hash;
+    }
+
+    // Fall back to API call
+    if (rateLimiter.isRateLimited(PROVIDER_NAME)) return null;
+    await rateLimiter.throttle(PROVIDER_NAME);
+
+    const base = getBaseUrl();
+    const url = `${base}/v1/api/torrents/torrentstatus?id=${encodeURIComponent(torrentId)}`;
+
+    try {
+      const res = await axiosIPv4.get(url, { headers: torboxHeaders(), timeout: 20000 });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+      const hash = res.data?.data?.hash;
+      return typeof hash === 'string' && hash.length >= 32 ? hash : null;
+    } catch (err: any) {
+      this.handleError(err, `get info hash ${torrentId}`);
+      return null;
+    }
+  }
+
+  /**
+   * Attempts to repair a dead torrent by re-adding the same magnet.
+   *
+   * Flow:
+   * 1. Fetch the info hash from the dead torrent
+   * 2. Delete the broken torrent
+   * 3. Re-add the same magnet to TorBox
+   * 4. If successful → repaired; if failed → needs replacement
+   *
+   * @param torrentId - The TorBox torrent ID to repair.
+   * @returns `true` if repair succeeded, `false` if the torrent should be replaced.
+   */
+  async repairTorrent(torrentId: string): Promise<boolean> {
+    console.log(`[${new Date().toISOString()}][torbox] attempting repair for torrent ${torrentId}`);
+
+    // Step 1: Get the info hash before deletion
+    const infoHash = await this.getInfoHash(torrentId);
+    if (!infoHash) {
+      console.warn(`[${new Date().toISOString()}][torbox] repair failed — could not get info hash for ${torrentId}`);
+      return false;
+    }
+
+    // Step 2: Delete the broken torrent
+    try {
+      await this.deleteTorrent(torrentId);
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}][torbox] repair delete failed for ${torrentId}`, { err: err?.message });
+      return false;
+    }
+
+    // Step 3: Re-add the same magnet
+    const magnet = `magnet:?xt=urn:btih:${infoHash.toUpperCase()}`;
+    try {
+      const result = await this.addMagnet(magnet);
+      if (result.id) {
+        console.log(`[${new Date().toISOString()}][torbox] repair successful — re-added as ${result.id}`, { hash: infoHash });
+        return true;
+      }
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}][torbox] repair re-add failed`, { hash: infoHash, err: err?.message });
+    }
+
+    return false;
+  }
+
   // -------------------------------------------------------------------------
   // Download Operations
   // -------------------------------------------------------------------------
@@ -691,6 +806,9 @@ export class TorBoxProvider implements DebridProvider {
    */
   private handleError(err: any, operation: string): void {
     const errorMsg = err?.message || String(err);
+    const responseData = err?.response?.data;
+    const responseStatus = err?.response?.status;
+    const responseHeaders = err?.response?.headers;
     const isNetworkError =
       err?.code === 'ECONNREFUSED' ||
       err?.code === 'ENOTFOUND' ||
@@ -701,17 +819,69 @@ export class TorBoxProvider implements DebridProvider {
 
     checkPlanError(err);
 
-    if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
+    // Detect rate limiting — TorBox may return 429 or include rate limit info in body
+    const isRateLimit = rateLimiter.isRateLimitError(err) || responseStatus === 429;
+
+    if (isRateLimit) {
+      // Try to extract specific rate limit details from TorBox's response
+      // TorBox often returns messages like "Rate limit: 60 per hour" or similar
+      let retryAfterS: number | undefined;
+      const bodyStr = typeof responseData === 'string'
+        ? responseData
+        : typeof responseData?.detail === 'string'
+          ? responseData.detail
+          : typeof responseData?.error === 'string'
+            ? responseData.error
+            : JSON.stringify(responseData || '');
+
+      // Parse "X per hour/minute/second" patterns from TorBox responses
+      const perTimeMatch = bodyStr.match(/(\d+)\s*per\s*(hour|minute|second)/i);
+      if (perTimeMatch) {
+        const limit = parseInt(perTimeMatch[1], 10);
+        const unit = perTimeMatch[2].toLowerCase();
+        let windowSeconds = 3600; // default hour
+        if (unit === 'minute') windowSeconds = 60;
+        else if (unit === 'second') windowSeconds = 1;
+
+        // Calculate optimal retry delay: window / limit with 20% safety margin
+        retryAfterS = Math.ceil((windowSeconds / limit) * 1.2);
+        console.warn(
+          `[${new Date().toISOString()}][torbox] Detected rate limit: ${limit} per ${unit} ` +
+          `→ calculated retry delay: ${retryAfterS}s`
+        );
+
+        // Update the global throttle delay to match learned limit
+        const newDelayMs = Math.ceil((windowSeconds / limit) * 1000 * 1.2);
+        rateLimiter.setThrottleDelay(PROVIDER_NAME, newDelayMs);
+        console.log(
+          `[${new Date().toISOString()}][torbox] Updated throttle delay to ${newDelayMs}ms ` +
+          `(${limit} req/${unit})`
+        );
+      }
+
+      // Also check Retry-After header (standard HTTP)
+      if (!retryAfterS && responseHeaders) {
+        const retryHeader = responseHeaders['retry-after'] || responseHeaders['Retry-After'];
+        if (retryHeader) {
+          const parsed = rateLimitStore.parseRetryAfter(String(retryHeader));
+          if (parsed) retryAfterS = parsed;
+        }
+      }
+
       rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+
+      // Feed into the learning store for long-term adaptation
+      rateLimitStore.recordRateLimit(PROVIDER_NAME, operation, retryAfterS);
     }
 
     console.error(`[${new Date().toISOString()}][torbox] ${operation} failed`, {
       error: errorMsg,
       code: err?.code,
-      status: err?.response?.status,
+      status: responseStatus,
       statusText: err?.response?.statusText,
       isNetworkError,
       rateLimited: rateLimiter.isRateLimited(PROVIDER_NAME),
+      responseDetail: typeof responseData === 'object' ? responseData?.detail || responseData?.error : undefined,
     });
   }
 }

@@ -50,6 +50,21 @@ export const config = {
   torboxWebdavUrl: process.env.TORBOX_WEBDAV_URL || "https://webdav.torbox.app",
   torboxWebdavUsername: process.env.TORBOX_WEBDAV_USERNAME || "",
   torboxWebdavPassword: process.env.TORBOX_WEBDAV_PASSWORD || "",
+  // AllDebrid API
+  alldebridApiKey: process.env.ALLDEBRID_API_KEY || "",
+  alldebridApiBase: process.env.ALLDEBRID_API_BASE || "https://api.alldebrid.com/v4",
+  alldebridAgent: process.env.ALLDEBRID_AGENT || "schrodrive",
+  // AllDebrid WebDAV (if supported)
+  alldebridWebdavUrl: process.env.ALLDEBRID_WEBDAV_URL || "",
+  alldebridWebdavUsername: process.env.ALLDEBRID_WEBDAV_USERNAME || "",
+  alldebridWebdavPassword: process.env.ALLDEBRID_WEBDAV_PASSWORD || "",
+  // Premiumize API
+  premiumizeApiKey: process.env.PREMIUMIZE_API_KEY || "",
+  premiumizeApiBase: process.env.PREMIUMIZE_API_BASE || "https://www.premiumize.me/api",
+  // Premiumize WebDAV
+  premiumizeWebdavUrl: process.env.PREMIUMIZE_WEBDAV_URL || "https://webdav.premiumize.me",
+  premiumizeWebdavUsername: process.env.PREMIUMIZE_WEBDAV_USERNAME || "",
+  premiumizeWebdavPassword: process.env.PREMIUMIZE_WEBDAV_PASSWORD || "",
   // Mount settings
   mountBase: defaultMountBase,
   rclonePath: process.env.RCLONE_PATH || "rclone",
@@ -110,8 +125,48 @@ export const config = {
   webdavBridgeEnabled: String(process.env.WEBDAV_BRIDGE_ENABLED ?? "true").toLowerCase() !== "false",
   webdavBridgePortRD: Number(process.env.WEBDAV_BRIDGE_PORT_RD || 9115),
   webdavBridgePortTB: Number(process.env.WEBDAV_BRIDGE_PORT_TB || 9116),
+  webdavBridgePortAD: Number(process.env.WEBDAV_BRIDGE_PORT_AD || 9117),
+  webdavBridgePortPM: Number(process.env.WEBDAV_BRIDGE_PORT_PM || 9118),
   webdavCacheTtlS: Number(process.env.WEBDAV_CACHE_TTL_S || 30),
-  webdavDownloadCacheTtlS: Number(process.env.WEBDAV_DOWNLOAD_CACHE_TTL_S || 300),
+  webdavDownloadCacheTtlS: Number(process.env.WEBDAV_DOWNLOAD_CACHE_TTL_S || 1800),
+  // --- Trakt Integration ---
+  traktClientId: process.env.TRAKT_CLIENT_ID || "",
+  traktClientSecret: process.env.TRAKT_CLIENT_SECRET || "",
+  traktAccessToken: process.env.TRAKT_ACCESS_TOKEN || "",
+  traktRefreshToken: process.env.TRAKT_REFRESH_TOKEN || "",
+  traktUsername: process.env.TRAKT_USERNAME || "",
+  // --- Mdblist Integration ---
+  mdblistApiKey: process.env.MDBLIST_API_KEY || "",
+  mdblistListIds: (process.env.MDBLIST_LIST_IDS || "").split(",").map(s => s.trim()).filter(Boolean),
+  // --- Listrr Integration ---
+  listrrApiKey: process.env.LISTRR_API_KEY || "",
+  // --- Stremio Addon Scrapers ---
+  // Scraper mode: 'merge' (combine with indexer results), 'fallback' (only when indexer returns 0)
+  scraperMode: (process.env.SCRAPER_MODE || "merge") as "merge" | "fallback",
+  // Torrentio
+  torrentioUrl: process.env.TORRENTIO_URL || "https://torrentio.strem.fun",
+  torrentioConfig: process.env.TORRENTIO_CONFIG || "",
+  torrentioEnabled: String(process.env.TORRENTIO_ENABLED ?? "false").toLowerCase() === "true",
+  // Comet
+  cometUrl: process.env.COMET_URL || "",
+  cometConfig: process.env.COMET_CONFIG || "",
+  cometEnabled: String(process.env.COMET_ENABLED ?? "false").toLowerCase() === "true",
+  // Zilean (DMM hashlists)
+  zileanUrl: process.env.ZILEAN_URL || "https://zilean.elfhosted.com",
+  zileanEnabled: String(process.env.ZILEAN_ENABLED ?? "false").toLowerCase() === "true",
+  // Mediafusion
+  mediafusionUrl: process.env.MEDIAFUSION_URL || "https://mediafusion.elfhosted.com",
+  mediafusionConfig: process.env.MEDIAFUSION_CONFIG || "",
+  mediafusionEnabled: String(process.env.MEDIAFUSION_ENABLED ?? "false").toLowerCase() === "true",
+  // --- Stremio Addon Server (expose SchröDrive as an addon) ---
+  stremioAddonEnabled: String(process.env.STREMIO_ADDON_ENABLED ?? "false").toLowerCase() === "true",
+  stremioAddonPort: Number(process.env.STREMIO_ADDON_PORT || 7000),
+  // --- Torrent Repair ---
+  enableRepair: String(process.env.ENABLE_REPAIR ?? "true").toLowerCase() !== "false",
+  repairMaxAttempts: Number(process.env.REPAIR_MAX_ATTEMPTS || 3),
+  // Pre-emptive repair: detect stalling torrents before they die
+  preemptiveRepairEnabled: String(process.env.PREEMPTIVE_REPAIR ?? "true").toLowerCase() !== "false",
+  preemptiveRepairStallMinutes: Number(process.env.PREEMPTIVE_REPAIR_STALL_MIN || 30),
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {
