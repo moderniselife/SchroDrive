@@ -409,6 +409,87 @@ export class TorBoxProvider implements DebridProvider {
     }
   }
 
+  /**
+   * Returns the info hash for a torrent, used for repair (re-adding).
+   *
+   * Fetches the torrent info from TorBox and returns the hash field.
+   * TorBox returns hash in the torrent data from the list endpoint,
+   * so we check cached data first before making an API call.
+   *
+   * @param torrentId - The TorBox torrent ID.
+   * @returns The info hash string, or null if not available.
+   */
+  async getInfoHash(torrentId: string): Promise<string | null> {
+    // Check cached torrent list first (avoid unnecessary API call)
+    const cached = rateLimiter.getCache<any[]>(TORRENT_LIST_CACHE_KEY);
+    if (cached) {
+      const torrent = cached.find((t: any) => String(t.id) === String(torrentId));
+      if (torrent?.hash) return torrent.hash;
+    }
+
+    // Fall back to API call
+    if (rateLimiter.isRateLimited(PROVIDER_NAME)) return null;
+    await rateLimiter.throttle(PROVIDER_NAME);
+
+    const base = getBaseUrl();
+    const url = `${base}/v1/api/torrents/torrentstatus?id=${encodeURIComponent(torrentId)}`;
+
+    try {
+      const res = await axiosIPv4.get(url, { headers: torboxHeaders(), timeout: 20000 });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+      const hash = res.data?.data?.hash;
+      return typeof hash === 'string' && hash.length >= 32 ? hash : null;
+    } catch (err: any) {
+      this.handleError(err, `get info hash ${torrentId}`);
+      return null;
+    }
+  }
+
+  /**
+   * Attempts to repair a dead torrent by re-adding the same magnet.
+   *
+   * Flow:
+   * 1. Fetch the info hash from the dead torrent
+   * 2. Delete the broken torrent
+   * 3. Re-add the same magnet to TorBox
+   * 4. If successful → repaired; if failed → needs replacement
+   *
+   * @param torrentId - The TorBox torrent ID to repair.
+   * @returns `true` if repair succeeded, `false` if the torrent should be replaced.
+   */
+  async repairTorrent(torrentId: string): Promise<boolean> {
+    console.log(`[${new Date().toISOString()}][torbox] attempting repair for torrent ${torrentId}`);
+
+    // Step 1: Get the info hash before deletion
+    const infoHash = await this.getInfoHash(torrentId);
+    if (!infoHash) {
+      console.warn(`[${new Date().toISOString()}][torbox] repair failed — could not get info hash for ${torrentId}`);
+      return false;
+    }
+
+    // Step 2: Delete the broken torrent
+    try {
+      await this.deleteTorrent(torrentId);
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}][torbox] repair delete failed for ${torrentId}`, { err: err?.message });
+      return false;
+    }
+
+    // Step 3: Re-add the same magnet
+    const magnet = `magnet:?xt=urn:btih:${infoHash.toUpperCase()}`;
+    try {
+      const result = await this.addMagnet(magnet);
+      if (result.id) {
+        console.log(`[${new Date().toISOString()}][torbox] repair successful — re-added as ${result.id}`, { hash: infoHash });
+        return true;
+      }
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}][torbox] repair re-add failed`, { hash: infoHash, err: err?.message });
+    }
+
+    return false;
+  }
+
   // -------------------------------------------------------------------------
   // Download Operations
   // -------------------------------------------------------------------------

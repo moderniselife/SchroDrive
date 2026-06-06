@@ -205,8 +205,9 @@ SchröDrive is designed to handle the real-world chaos of debrid services:
 | **Plex** | ✅ Watchlist + Refresh | ✅ Watchlist | ✅ | ✅ Watchlist + Refresh |
 | **Jellyfin** | ✅ Watchlist + Refresh | — | ✅ | ✅ Watchlist + Refresh |
 | **Emby** | ✅ Watchlist + Refresh | — | — | ✅ Watchlist + Refresh |
-| **Trakt/Mdblist/Listrr** | — | — | — | ✅ |
-| **Additional scrapers** | — | — | — | ✅ Torrentio, Comet, Zilean, etc. |
+| **Trakt/Mdblist/Listrr** | ✅ All three (OAuth2 + API key) | — | — | ✅ |
+| **Additional scrapers** | ✅ Torrentio, Comet, Zilean, Mediafusion | — | — | ✅ Torrentio, Comet, Zilean, etc. |
+| **Stremio addon server** | ✅ Expose as addon | — | — | — |
 
 ### Architecture & Resilience
 
@@ -216,8 +217,8 @@ SchröDrive is designed to handle the real-world chaos of debrid services:
 | **Runtime** | Bun/TypeScript | Python + Go | Go | TypeScript/Node.js |
 | **Config style** | Env vars only | Env vars + config files | Single YAML | Settings UI + compose |
 | **WebDAV Bridge** (no creds) | ✅ Built-in | — | — (is the WebDAV server) | — (built-in VFS) |
-| **Dead torrent handling** | ✅ Delete + blacklist + re-search | ✅ via Zurg | ✅ Repair feature | Not documented |
-| **Torrent repair** | — | ✅ via Zurg | ✅ `enable_repair` | Not documented |
+| **Dead torrent handling** | ✅ 3-phase: repair → cross-provider → replace | ✅ via Zurg | ✅ Repair feature | Not documented |
+| **Torrent repair** | ✅ Same-provider + cross-provider + pre-emptive | ✅ via Zurg | ✅ `enable_repair` | Not documented |
 | **423 Locked resilience** | ✅ Stale cache + retry + 503 Retry-After | Not documented | Rate-limit config (mitigation) | Not documented |
 | **Mount health monitoring** | ✅ Auto-remount | Not documented | Not applicable (WebDAV server) | Not applicable (built-in VFS) |
 | **Persistent blacklist** | ✅ | — | — | — |
@@ -226,10 +227,10 @@ SchröDrive is designed to handle the real-world chaos of debrid services:
 
 ### What Each Project Does Best
 
-- **SchröDrive** — All-in-one with 4-provider redundancy, aggressive self-healing, and the simplest deployment (single container, env vars only).
+- **SchröDrive** — All-in-one with 4-provider redundancy, 3-phase torrent repair (same-provider → cross-provider → replacement), 4 Stremio scrapers, 6 watchlist sources, and the simplest deployment (single container, env vars only). Also exposes itself as a Stremio addon.
 - **pd_zurg** — *Deprecated (Jan 2026).* Was the original all-in-one Docker solution. Successor is [DUMB](https://github.com/I-am-PUID-0/DUMB).
 - **Zurg** — Purpose-built, high-performance WebDAV server for RealDebrid. Excellent at what it does (serving files), but needs additional tools for automation.
-- **Riven** — The most feature-rich alternative with 7+ scrapers, Trakt/Mdblist integration, built-in VFS, and a settings UI. Best for users who want the widest integration ecosystem.
+- **Riven** — Feature-rich with 7+ scrapers, Trakt/Mdblist integration, built-in VFS, and a settings UI. However, requires multi-container deployment (App + PostgreSQL + Redis).
 
 ---
 
@@ -253,14 +254,22 @@ src/
 │   ├── mediaServerWatchlist.ts#  Plex/Jellyfin/Emby watchlist polling
 │   ├── autoUpdate.ts         #   GitHub release auto-updater
 │   └── infringementList.ts   #   Content filtering
-├── integrations/             # Media server clients
+├── integrations/             # Watchlist sources
 │   ├── plex.ts               #   Plex API client
 │   ├── jellyfin.ts           #   Jellyfin API client
-│   └── emby.ts               #   Emby API client
-├── indexers/                 # Search indexer clients
-│   ├── index.ts              #   Indexer abstraction + routing
+│   ├── emby.ts               #   Emby API client
+│   ├── trakt.ts              #   Trakt watchlist (OAuth2 + public)
+│   ├── mdblist.ts            #   Mdblist watchlist API
+│   └── listrr.ts             #   Listrr watchlist API
+├── indexers/                 # Search sources
+│   ├── index.ts              #   Unified indexer + scraper routing
 │   ├── prowlarr.ts           #   Prowlarr API client
-│   └── jackett.ts            #   Jackett API client
+│   ├── jackett.ts            #   Jackett API client
+│   ├── stremioScraper.ts     #   Shared Stremio addon helpers
+│   ├── torrentio.ts          #   Torrentio addon scraper
+│   ├── comet.ts              #   Comet addon scraper
+│   ├── zilean.ts             #   Zilean DMM hashlists
+│   └── mediafusion.ts        #   Mediafusion addon scraper
 ├── core/                     # Infrastructure
 │   ├── config.ts             #   Environment variable configuration
 │   ├── configApi.ts          #   Runtime config API endpoints
@@ -278,8 +287,11 @@ src/
 graph LR
     A[Overseerr] -->|Webhook / Poll| B[SchröDrive]
     C[Plex/Jellyfin/Emby] -->|Watchlist| B
+    C2[Trakt/Mdblist/Listrr] -->|Watchlist| B
     B -->|Search| D[Prowlarr / Jackett]
+    B -->|Search| D2[Torrentio / Comet / Zilean / Mediafusion]
     D -->|Results| B
+    D2 -->|Results| B
     B -->|Add Magnet| E[TorBox]
     B -->|Add Magnet| F[RealDebrid]
     B -->|Add Magnet| G2[AllDebrid]
@@ -300,9 +312,13 @@ graph TD
     B -->|No| D[Increment failure counter]
     D -->|< 10 failures| E[Serve stale cache URL]
     D -->|>= 10 failures| F[Flag as dead]
-    F --> G[Delete from provider]
+    F --> R1{Phase A: Same-provider repair}
+    R1 -->|Success| C
+    R1 -->|Fail| R2{Phase B: Cross-provider repair}
+    R2 -->|Success| C
+    R2 -->|Fail| G[Delete from provider]
     G --> H[Add to blacklist]
-    H --> I[Search indexer for replacement]
+    H --> I[Search indexer + scrapers for replacement]
     I --> J{Found?}
     J -->|Yes| K[Add to providers - filtered by blacklist]
     J -->|No| L[Log warning - manual action needed]
@@ -494,6 +510,52 @@ All configuration is done via environment variables. Below is the complete refer
 | `AUTO_UPDATE_STRATEGY` | `exit` | `exit` (restart) or `git` (pull + restart) |
 | `REPO_OWNER` | `moderniselife` | GitHub repository owner |
 | `REPO_NAME` | `SchroDrive` | GitHub repository name |
+
+### 🎯 Trakt / Mdblist / Listrr
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRAKT_CLIENT_ID` | — | Trakt API client ID (required for Trakt) |
+| `TRAKT_CLIENT_SECRET` | — | Trakt OAuth2 client secret (for private lists) |
+| `TRAKT_ACCESS_TOKEN` | — | Trakt OAuth2 access token (for private lists) |
+| `TRAKT_REFRESH_TOKEN` | — | Trakt OAuth2 refresh token (auto-renewed) |
+| `TRAKT_USERNAME` | — | Trakt username (required for Trakt) |
+| `MDBLIST_API_KEY` | — | Mdblist API key |
+| `MDBLIST_LIST_IDS` | — | Comma-separated Mdblist list IDs (or omit for all) |
+| `LISTRR_API_KEY` | — | Listrr API key |
+
+### 🔎 Stremio Addon Scrapers
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SCRAPER_MODE` | `merge` | `merge` (combine with indexer) or `fallback` (scrapers when indexer returns 0) |
+| `TORRENTIO_ENABLED` | `false` | Enable Torrentio scraper |
+| `TORRENTIO_URL` | `https://torrentio.strem.fun` | Torrentio instance URL |
+| `TORRENTIO_CONFIG` | — | Torrentio config string (quality, sort, etc.) |
+| `COMET_ENABLED` | `false` | Enable Comet scraper |
+| `COMET_URL` | — | Comet instance URL |
+| `COMET_CONFIG` | — | Comet config (Base64 encoded JSON) |
+| `ZILEAN_ENABLED` | `false` | Enable Zilean DMM hashlists scraper |
+| `ZILEAN_URL` | `https://zilean.elfhosted.com` | Zilean instance URL (self-hosted or default) |
+| `MEDIAFUSION_ENABLED` | `false` | Enable Mediafusion scraper |
+| `MEDIAFUSION_URL` | `https://mediafusion.elfhosted.com` | Mediafusion instance URL |
+| `MEDIAFUSION_CONFIG` | — | Mediafusion config string |
+
+### 🔧 Torrent Repair
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_REPAIR` | `true` | Enable torrent repair (same-provider + cross-provider) |
+| `REPAIR_MAX_ATTEMPTS` | `3` | Max repair attempts per torrent before giving up |
+| `PREEMPTIVE_REPAIR` | `true` | Detect and repair stalling torrents before they die |
+| `PREEMPTIVE_REPAIR_STALL_MIN` | `30` | Minutes of stalling before pre-emptive repair triggers |
+
+### 📡 Stremio Addon Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STREMIO_ADDON_ENABLED` | `false` | Expose SchröDrive as a Stremio addon |
+| `STREMIO_ADDON_PORT` | `7000` | Stremio addon server port |
 
 ---
 
