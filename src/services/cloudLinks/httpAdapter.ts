@@ -38,6 +38,23 @@ interface ParsedEntry {
 }
 
 // ===========================================================================
+// Helpers
+// ===========================================================================
+
+/**
+ * Safely decodes a URI component, falling back to the raw string if the
+ * input contains malformed percent-encoding sequences (e.g. the TV show
+ * "3%" produces "3%/" which is not valid percent-encoding).
+ */
+function safeDecodeURIComponent(str: string): string {
+  try {
+    return decodeURIComponent(str);
+  } catch {
+    return str;
+  }
+}
+
+// ===========================================================================
 // HTML Directory Listing Parsers
 // ===========================================================================
 
@@ -326,14 +343,22 @@ export class HttpAdapter implements CloudLinkAdapter {
       const html = await response.text();
       const entries = parseDirectoryListing(html, targetUrl);
 
-      const files: CloudFile[] = entries.map((entry) => ({
-        // Use the full URL as the ID for direct download
-        id: new URL(entry.href, targetUrl).toString(),
-        name: decodeURIComponent(entry.name),
-        size: entry.size,
-        isDirectory: entry.isDirectory,
-        mimeType: entry.isDirectory ? 'application/directory' : guessMimeType(entry.name),
-      }));
+      const files: CloudFile[] = [];
+      for (const entry of entries) {
+        try {
+          files.push({
+            // Use the full URL as the ID for direct download
+            id: new URL(entry.href, targetUrl).toString(),
+            name: safeDecodeURIComponent(entry.name),
+            size: entry.size,
+            isDirectory: entry.isDirectory,
+            mimeType: entry.isDirectory ? 'application/directory' : guessMimeType(entry.name),
+          });
+        } catch (entryErr: any) {
+          // Skip individual broken entries instead of killing the whole listing
+          console.warn(`[${new Date().toISOString()}][cloud-links][http] Skipping entry "${entry.name}": ${entryErr?.message}`);
+        }
+      }
 
       // Cache the results
       this.folderCache.set(targetUrl, {
