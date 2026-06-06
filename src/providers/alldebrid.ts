@@ -433,6 +433,88 @@ export class AllDebridProvider implements DebridProvider {
     }
   }
 
+  /**
+   * Returns the info hash for a magnet, used for repair (re-adding).
+   *
+   * Fetches the magnet info from AllDebrid and returns the hash field.
+   * AllDebrid exposes the hash via `GET /v4/magnet/status?id=ID`.
+   *
+   * @param torrentId - The AllDebrid magnet ID.
+   * @returns The info hash string, or null if not available.
+   */
+  async getInfoHash(torrentId: string): Promise<string | null> {
+    // Check cached torrent list first (avoid unnecessary API call)
+    const cached = rateLimiter.getCache<any[]>(TORRENT_LIST_CACHE_KEY);
+    if (cached) {
+      const magnet = cached.find((m: any) => String(m.id) === String(torrentId));
+      if (magnet?.hash) return magnet.hash;
+    }
+
+    // Fall back to API call for specific magnet
+    if (rateLimiter.isRateLimited(PROVIDER_NAME)) return null;
+    await rateLimiter.throttle(PROVIDER_NAME);
+
+    try {
+      const url = buildUrl('/magnet/status', { id: torrentId });
+      const res = await axiosIPv4.get(url, { timeout: 20000 });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+
+      const data = unwrapResponse(res, 'get magnet info');
+      // Single magnet query returns { magnets: { ... } } (object, not array)
+      const magnet = Array.isArray(data?.magnets) ? data.magnets[0] : data?.magnets;
+      const hash = magnet?.hash;
+      return typeof hash === 'string' && hash.length >= 32 ? hash : null;
+    } catch (err: any) {
+      this.handleError(err, `get info hash ${torrentId}`);
+      return null;
+    }
+  }
+
+  /**
+   * Attempts to repair a dead magnet by re-adding the same magnet.
+   *
+   * Flow:
+   * 1. Fetch the info hash from the dead magnet
+   * 2. Delete the broken magnet
+   * 3. Re-add the same magnet to AllDebrid
+   * 4. If successful → repaired; if failed → needs replacement
+   *
+   * @param torrentId - The AllDebrid magnet ID to repair.
+   * @returns `true` if repair succeeded, `false` if the magnet should be replaced.
+   */
+  async repairTorrent(torrentId: string): Promise<boolean> {
+    console.log(`[${new Date().toISOString()}][ad] attempting repair for magnet ${torrentId}`);
+
+    // Step 1: Get the info hash before deletion
+    const infoHash = await this.getInfoHash(torrentId);
+    if (!infoHash) {
+      console.warn(`[${new Date().toISOString()}][ad] repair failed — could not get info hash for ${torrentId}`);
+      return false;
+    }
+
+    // Step 2: Delete the broken magnet
+    try {
+      await this.deleteTorrent(torrentId);
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}][ad] repair delete failed for ${torrentId}`, { err: err?.message });
+      return false;
+    }
+
+    // Step 3: Re-add the same magnet
+    const magnet = `magnet:?xt=urn:btih:${infoHash.toUpperCase()}`;
+    try {
+      const result = await this.addMagnet(magnet);
+      if (result.id) {
+        console.log(`[${new Date().toISOString()}][ad] repair successful — re-added as ${result.id}`, { hash: infoHash });
+        return true;
+      }
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}][ad] repair re-add failed`, { hash: infoHash, err: err?.message });
+    }
+
+    return false;
+  }
+
   // -------------------------------------------------------------------------
   // WebDAV Bridge Support
   // -------------------------------------------------------------------------
