@@ -17,6 +17,7 @@ import http from 'http';
 import https from 'https';
 import { config, requireEnv } from '../core/config';
 import { rateLimiter } from '../core/rateLimiter';
+import { tokenRotator } from '../core/tokenRotator';
 import type {
   DebridProvider,
   TorrentInfo,
@@ -49,8 +50,8 @@ const TRANSFER_LIST_CACHE_KEY = 'premiumize_transfers';
  *
  * @returns A headers object containing the Bearer token.
  */
-function premiumizeHeaders(): Record<string, string> {
-  return { Authorization: `Bearer ${config.premiumizeApiKey}` };
+function premiumizeHeaders(overrideToken?: string): Record<string, string> {
+  return { Authorization: `Bearer ${overrideToken || config.premiumizeApiKey}` };
 }
 
 /**
@@ -527,11 +528,7 @@ export class PremiumizeProvider implements DebridProvider {
 
       return directories;
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.error(`[${new Date().toISOString()}][premiumize] failed to fetch directories`, { error: errorMsg });
+      this.handleError(err, 'fetch directories');
       return [];
     }
   }
@@ -553,6 +550,8 @@ export class PremiumizeProvider implements DebridProvider {
       return null;
     }
 
+    const downloadToken = tokenRotator.getDownloadToken(PROVIDER_NAME) || config.premiumizeApiKey;
+
     await rateLimiter.throttle(PROVIDER_NAME);
 
     const base = getBaseUrl();
@@ -561,7 +560,7 @@ export class PremiumizeProvider implements DebridProvider {
       // First, try to get the transfer details to find the folder_id
       const transferUrl = `${base}/transfer/list`;
       const transferRes = await axiosIPv4.get(transferUrl, {
-        headers: premiumizeHeaders(),
+        headers: premiumizeHeaders(downloadToken),
         timeout: 20000,
       });
       rateLimiter.recordSuccess(PROVIDER_NAME);
@@ -574,7 +573,7 @@ export class PremiumizeProvider implements DebridProvider {
       await rateLimiter.throttle(PROVIDER_NAME);
       const folderUrl = `${base}/folder/list`;
       const folderRes = await axiosIPv4.get(folderUrl, {
-        headers: premiumizeHeaders(),
+        headers: premiumizeHeaders(downloadToken),
         params: { id: folderId },
         timeout: 20000,
       });
@@ -598,13 +597,12 @@ export class PremiumizeProvider implements DebridProvider {
       console.error(`[${new Date().toISOString()}][premiumize] no download link found for transfer ${torrentId}, file ${fileId}`);
       return null;
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+      this.handleError(err, `resolve download URL for transfer ${torrentId}, file ${fileId}`, downloadToken);
+      const status = err?.response?.status;
+      if ((status === 503 || status === 429) && downloadToken !== config.premiumizeApiKey) {
+        const duration = status === 429 ? 60 * 60 * 1000 : undefined; // 1 hour for 429
+        tokenRotator.markTokenLimited(PROVIDER_NAME, downloadToken, `${status} ${err?.response?.statusText || 'limit'}`, duration);
       }
-      console.error(`[${new Date().toISOString()}][premiumize] failed to resolve download URL for transfer ${torrentId}, file ${fileId}`, {
-        error: errorMsg,
-      });
       return null;
     }
   }
@@ -734,8 +732,9 @@ export class PremiumizeProvider implements DebridProvider {
    * @param err - The error object.
    * @param operation - A human-readable description of the failed operation.
    */
-  private handleError(err: any, operation: string): void {
+  private handleError(err: any, operation: string, overrideToken?: string): void {
     const errorMsg = err?.message || String(err);
+    const responseHeaders = err?.response?.headers;
     const isNetworkError =
       err?.code === 'ECONNREFUSED' ||
       err?.code === 'ENOTFOUND' ||
@@ -745,7 +744,23 @@ export class PremiumizeProvider implements DebridProvider {
       errorMsg.includes('network');
 
     if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-      rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+      // If we used a rotated download token, do NOT globally rate-limit the provider
+      const primaryToken = config.premiumizeApiKey;
+      if (overrideToken && overrideToken !== primaryToken) {
+        console.warn(
+          `[${new Date().toISOString()}][premiumize] Rotated download token hit 429/rate-limit. Bypassing global rate limit.`
+        );
+      } else {
+        let backoffMs: number | undefined;
+        if (responseHeaders) {
+          const retryAfter = responseHeaders['retry-after'] || responseHeaders['Retry-After'];
+          if (retryAfter) {
+            const seconds = parseInt(String(retryAfter), 10);
+            if (Number.isFinite(seconds) && seconds > 0) backoffMs = seconds * 1000;
+          }
+        }
+        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg, backoffMs);
+      }
     }
 
     console.error(`[${new Date().toISOString()}][premiumize] ${operation} failed`, {
@@ -765,3 +780,4 @@ export class PremiumizeProvider implements DebridProvider {
 
 import { registry } from './index';
 registry.register(new PremiumizeProvider());
+tokenRotator.registerProvider(PROVIDER_NAME, config.premiumizeApiKey, config.premiumizeDownloadTokens);

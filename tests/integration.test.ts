@@ -111,7 +111,8 @@ async function readFirstSseEvent(
 
 async function runTest(
   name: string,
-  fn: () => Promise<string | void>
+  fn: () => Promise<string | void>,
+  timeoutMs: number = TEST_TIMEOUT
 ): Promise<TestResult> {
   const start = performance.now();
   try {
@@ -119,8 +120,8 @@ async function runTest(
       fn(),
       new Promise<never>((_, reject) =>
         setTimeout(
-          () => reject(new Error(`Test timed out after ${TEST_TIMEOUT}ms`)),
-          TEST_TIMEOUT
+          () => reject(new Error(`Test timed out after ${timeoutMs}ms`)),
+          timeoutMs
         )
       ),
     ]);
@@ -149,7 +150,7 @@ async function runTest(
 /** State shared between infringement CRUD tests */
 let createdInfringementId: string | null = null;
 
-const tests: Array<{ name: string; fn: () => Promise<string | void> }> = [
+const tests: Array<{ name: string; fn: () => Promise<string | void>; timeoutMs?: number }> = [
   // 1. Health
   {
     name: "Health check",
@@ -227,20 +228,14 @@ const tests: Array<{ name: string; fn: () => Promise<string | void> }> = [
     },
   },
 
-  // 6. Downloads
+  // 6. Downloads (longer timeout — hits multiple provider APIs)
   {
     name: 'Downloads endpoint',
+    timeoutMs: 30_000,
     fn: async () => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000);
-      try {
-        const res = await fetch(`${BASE_URL}/api/downloads`, { signal: controller.signal });
-        const body = await res.json() as Record<string, unknown>;
-        assert(body.ok === true, 'Expected ok: true');
-        assertType(body.downloads, 'array', 'downloads');
-      } finally {
-        clearTimeout(timeout);
-      }
+      const { body } = await fetchJson('/api/downloads');
+      assert(body.ok === true, 'Expected ok: true');
+      assertType(body.downloads, 'array', 'downloads');
     },
   },
 
@@ -529,7 +524,7 @@ async function main(): Promise<void> {
 
   for (const test of tests) {
     process.stdout.write(`  Running: ${test.name}...`);
-    const result = await runTest(test.name, test.fn);
+    const result = await runTest(test.name, test.fn, test.timeoutMs);
     results.push(result);
     const icon = result.passed ? "✅" : "❌";
     process.stdout.write(`\r  ${icon} ${test.name} (${result.durationMs}ms)\n`);

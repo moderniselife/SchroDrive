@@ -304,6 +304,7 @@ class ProviderRegistry {
   ): Promise<{ results: Array<{ provider: string; success: boolean; result?: AddMagnetResult; error?: string }> }> {
     const providers = this.ordered();
     const results: Array<{ provider: string; success: boolean; result?: AddMagnetResult; error?: string }> = [];
+    let legallyBlocked = false;
 
     for (const p of providers) {
       try {
@@ -317,13 +318,29 @@ class ProviderRegistry {
         }
       } catch (err: any) {
         const error = err?.message || String(err);
+        const status = err?.response?.status || err?.status;
         console.warn(`[${new Date().toISOString()}][providers] ❌ ${p.id} add failed`, { error });
         results.push({ provider: p.id, success: false, error });
+
+        // HTTP 451 = Unavailable For Legal Reasons — auto-blacklist
+        if (status === 451) {
+          legallyBlocked = true;
+          console.warn(`[${new Date().toISOString()}][providers] ⚖️ ${p.id} returned 451 (legally blocked)`, { name });
+        }
 
         if (strategy === 'single') {
           break; // Only try one
         }
         // 'all' and 'failover' continue to next provider
+      }
+    }
+
+    // If ANY provider returned 451, auto-blacklist this torrent so we never retry it
+    if (legallyBlocked && name) {
+      const { addToBlacklist, isBlacklisted } = await import('../core/blacklist');
+      if (!isBlacklisted(name)) {
+        addToBlacklist(name, 'HTTP 451 — Unavailable For Legal Reasons', 'auto');
+        console.log(`[${new Date().toISOString()}][providers] ⚖️ auto-blacklisted "${name}" (451 legally blocked)`);
       }
     }
 
