@@ -1,10 +1,38 @@
+/**
+ * SchroDrive — TorBox API Client
+ *
+ * Provides functions for interacting with the TorBox debrid service API.
+ * Handles listing torrents, adding magnets, checking for existing torrents,
+ * listing web/usenet downloads, and detecting plan limitation errors.
+ *
+ * Uses the `node-torbox-api` SDK client for torrent operations and falls
+ * back to direct Axios requests for web/usenet download endpoints.
+ * All requests are rate-limited via the shared {@link rateLimiter} singleton.
+ *
+ * @module torbox
+ */
+
 import { TorboxClient } from "node-torbox-api";
 import axios from "axios";
 import { config, requireEnv } from "./config";
 import { rateLimiter } from "./rateLimiter";
 
+// ===========================================================================
+// Client Initialisation
+// ===========================================================================
+
+/** Lazily-initialised TorBox SDK client singleton. */
 let client: TorboxClient | null = null as any;
 
+/**
+ * Returns the TorBox SDK client, initialising it on first use.
+ * Requires the `torboxApiKey` environment variable to be set.
+ *
+ * The API key is partially masked in log output for security.
+ *
+ * @returns The initialised TorboxClient instance.
+ * @throws {Error} If `torboxApiKey` is not configured.
+ */
 function getClient(): TorboxClient {
   requireEnv("torboxApiKey");
   if (!client) {
@@ -17,18 +45,41 @@ function getClient(): TorboxClient {
 
 const PROVIDER_NAME = "torbox";
 
-// Track if API access is disabled due to plan limitations
+// ===========================================================================
+// Plan Limitation Tracking
+// ===========================================================================
+
+/** Flag indicating the API has been disabled due to plan limitations (e.g. free tier). */
 let apiDisabled = false;
+/** Human-readable reason the API was disabled. */
 let apiDisabledReason = "";
 
+/**
+ * Checks whether TorBox API access has been disabled due to plan limitations.
+ *
+ * @returns `true` if the API is disabled (user needs to upgrade their plan).
+ */
 export function isTorboxApiDisabled(): boolean {
   return apiDisabled;
 }
 
+/**
+ * Returns the human-readable reason the TorBox API was disabled.
+ *
+ * @returns The disabled reason string, or empty if not disabled.
+ */
 export function getTorboxApiDisabledReason(): string {
   return apiDisabledReason;
 }
 
+/**
+ * Inspects an error to determine if it indicates a plan limitation (HTTP 403
+ * with "plan" or "upgrade" in the message). If so, permanently disables
+ * further API calls until the application is restarted.
+ *
+ * @param err - The error object to inspect.
+ * @returns `true` if the error was a plan limitation error.
+ */
 function checkPlanError(err: any): boolean {
   const msg = String(err?.message || err || "").toLowerCase();
   if (msg.includes("403") && (msg.includes("plan") || msg.includes("upgrade"))) {
@@ -40,14 +91,43 @@ function checkPlanError(err: any): boolean {
   return false;
 }
 
+// ===========================================================================
+// Rate Limit Status
+// ===========================================================================
+
+/**
+ * Checks whether TorBox API requests are currently rate-limited.
+ *
+ * @returns `true` if the provider is in a backoff period.
+ */
 export function isTorboxRateLimited(): boolean {
   return rateLimiter.isRateLimited(PROVIDER_NAME);
 }
 
+/**
+ * Returns the remaining wait time (in seconds) before TorBox requests
+ * can resume after a rate limit.
+ *
+ * @returns Remaining wait time in seconds, or 0 if not rate-limited.
+ */
 export function getTorboxWaitTime(): number {
   return rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
 }
 
+// ===========================================================================
+// Torrent Operations
+// ===========================================================================
+
+/**
+ * Checks whether a torrent with a matching title already exists in TorBox.
+ *
+ * Fetches the current torrent list and performs a case-insensitive
+ * substring match in both directions (search ⊂ torrent name or
+ * torrent name ⊂ search) to catch partial matches.
+ *
+ * @param searchTitle - The title to search for among existing torrents.
+ * @returns `true` if a matching torrent already exists.
+ */
 export async function checkExistingTorrents(searchTitle: string): Promise<boolean> {
   // Check if API is disabled due to plan limitations
   if (apiDisabled) {
@@ -86,7 +166,7 @@ export async function checkExistingTorrents(searchTitle: string): Promise<boolea
     });
     
     // Check if any existing torrent matches our search title
-    // We'll do a case-insensitive contains check
+    // Bi-directional case-insensitive substring match
     const normalizedSearch = searchTitle.toLowerCase();
     const hasExisting = existingTorrents.some((torrent: any) => {
       const torrentName = (torrent.name || '').toLowerCase();
@@ -125,6 +205,17 @@ export async function checkExistingTorrents(searchTitle: string): Promise<boolea
   }
 }
 
+/**
+ * Adds a magnet link to TorBox for downloading.
+ *
+ * Throws if the API is disabled (plan limitation), rate-limited,
+ * or if the SDK request fails.
+ *
+ * @param magnet - The magnet URI to add.
+ * @param name - Optional human-readable name for the torrent.
+ * @returns The response from the TorBox `createTorrent` API call.
+ * @throws {Error} If the API is disabled, rate-limited, or the request fails.
+ */
 export async function addMagnetToTorbox(magnet: string, name?: string) {
   // Check if API is disabled due to plan limitations
   if (apiDisabled) {
@@ -177,6 +268,12 @@ export async function addMagnetToTorbox(magnet: string, name?: string) {
 
 const TORRENT_LIST_CACHE_KEY = "torbox_torrents";
 
+/**
+ * Fetches the list of torrents from TorBox. Returns cached data when
+ * rate-limited or on error.
+ *
+ * @returns An array of torrent objects from the TorBox API.
+ */
 export async function listTorboxTorrents(): Promise<any[]> {
   // Check if API is disabled due to plan limitations
   if (apiDisabled) {
@@ -202,6 +299,7 @@ export async function listTorboxTorrents(): Promise<any[]> {
   try {
     const res = await c.torrents.getTorrentList({ limit: 100 });
     rateLimiter.recordSuccess(PROVIDER_NAME);
+    // API may return a single object or an array — normalise to array
     const list = Array.isArray(res?.data) ? res.data : [res?.data].filter(Boolean);
     // Cache the successful result
     rateLimiter.setCache(TORRENT_LIST_CACHE_KEY, list);
@@ -241,8 +339,18 @@ export async function listTorboxTorrents(): Promise<any[]> {
   }
 }
 
+/**
+ * Determines whether a TorBox torrent is considered "dead" (failed, stalled, or inactive).
+ *
+ * A torrent is NOT dead if its progress has reached 100%. Otherwise, it is
+ * considered dead if its status contains "failed", "stalled", or "inactive".
+ *
+ * @param t - The torrent object from the TorBox API.
+ * @returns `true` if the torrent is dead/failed.
+ */
 export function isTorboxTorrentDead(t: any): boolean {
   const status = String(t?.status || t?.state || "").toLowerCase();
+  // Completed torrents are never dead, regardless of status string
   if (typeof t?.progress === "number" && t.progress >= 100) return false;
   if (status.includes("failed")) return true;
   if (status.includes("stalled")) return true;
@@ -250,6 +358,16 @@ export function isTorboxTorrentDead(t: any): boolean {
   return false;
 }
 
+// ===========================================================================
+// Download Operations
+// ===========================================================================
+
+/**
+ * Builds the authorisation headers required for direct TorBox API requests
+ * (used for endpoints not covered by the SDK client).
+ *
+ * @returns A headers object containing the Bearer token.
+ */
 function torboxHeaders() {
   return { Authorization: `Bearer ${config.torboxApiKey}` };
 }
@@ -257,6 +375,15 @@ function torboxHeaders() {
 const WEB_DOWNLOADS_CACHE_KEY = "torbox_webdownloads";
 const USENET_DOWNLOADS_CACHE_KEY = "torbox_usenetdownloads";
 
+/**
+ * Fetches the list of web downloads from TorBox.
+ * Uses the direct REST API (not the SDK) as this endpoint isn't
+ * covered by the `node-torbox-api` package.
+ *
+ * Returns cached data when rate-limited or on error.
+ *
+ * @returns An array of web download objects from the TorBox API.
+ */
 export async function listTorboxWebDownloads(): Promise<any[]> {
   if (!config.torboxApiKey) return [];
   
@@ -286,6 +413,7 @@ export async function listTorboxWebDownloads(): Promise<any[]> {
   try {
     const res = await axios.get(url, { headers: torboxHeaders(), timeout: 20000 });
     rateLimiter.recordSuccess(PROVIDER_NAME);
+    // TorBox wraps the list in a nested `data.data` structure
     const list = Array.isArray(res?.data?.data) ? res.data.data : [];
     rateLimiter.setCache(WEB_DOWNLOADS_CACHE_KEY, list);
     return list;
@@ -312,6 +440,15 @@ export async function listTorboxWebDownloads(): Promise<any[]> {
   }
 }
 
+/**
+ * Fetches the list of Usenet downloads from TorBox.
+ * Uses the direct REST API (not the SDK) as this endpoint isn't
+ * covered by the `node-torbox-api` package.
+ *
+ * Returns cached data when rate-limited or on error.
+ *
+ * @returns An array of Usenet download objects from the TorBox API.
+ */
 export async function listTorboxUsenetDownloads(): Promise<any[]> {
   if (!config.torboxApiKey) return [];
   
@@ -341,6 +478,7 @@ export async function listTorboxUsenetDownloads(): Promise<any[]> {
   try {
     const res = await axios.get(url, { headers: torboxHeaders(), timeout: 20000 });
     rateLimiter.recordSuccess(PROVIDER_NAME);
+    // TorBox wraps the list in a nested `data.data` structure
     const list = Array.isArray(res?.data?.data) ? res.data.data : [];
     rateLimiter.setCache(USENET_DOWNLOADS_CACHE_KEY, list);
     return list;

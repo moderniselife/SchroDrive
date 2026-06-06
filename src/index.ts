@@ -5,6 +5,7 @@ import { addMagnetToTorbox } from "./torbox";
 import { mountVirtualDrive } from "./mount";
 import { scanDeadOnce, startDeadScanner } from "./deadScanner";
 import { organizeOnce, startOrganizerWatch } from "./organizer";
+import { startWatchlistPoller } from "./mediaServerWatchlist";
 import { config } from "./config";
 
 const program = new Command();
@@ -36,6 +37,11 @@ program
     if (config.runOrganizerWatch) {
       console.log("[serve] Starting organizer watch (RUN_ORGANIZER_WATCH=true)");
       promises.push(Promise.resolve(startOrganizerWatch()));
+    }
+
+    if (config.runWatchlistPoller) {
+      console.log("[serve] Starting media server watchlist poller (RUN_WATCHLIST_POLLER=true)");
+      startWatchlistPoller();
     }
     
     // Start the main server
