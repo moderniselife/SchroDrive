@@ -808,14 +808,22 @@ class WebDAVBridge {
         }
         const app = this.createExpressApp();
         return new Promise((resolve, reject) => {
-            this.server = app.listen(this.port, () => {
-                log(this.provider, `Starting ${this.provider} bridge on port ${this.port}`);
-                resolve();
+            let resolved = false;
+            this.server = app.listen(this.port);
+            this.server.on("listening", () => {
+                if (!resolved) {
+                    resolved = true;
+                    log(this.provider, `Starting ${this.provider} bridge on port ${this.port}`);
+                    resolve();
+                }
             });
             this.server.on("error", (err) => {
-                logError(this.provider, `Failed to start bridge on port ${this.port}`, { error: err.message });
-                this.server = null;
-                reject(err);
+                if (!resolved) {
+                    resolved = true;
+                    logError(this.provider, `Failed to start bridge on port ${this.port}`, { error: err.message });
+                    this.server = null;
+                    reject(err);
+                }
             });
         });
     }
