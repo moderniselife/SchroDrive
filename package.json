@@ -13,7 +13,8 @@
     "start": "bun dist/index.js serve",
     "serve": "bun dist/index.js serve",
     "dev": "bun --watch src/index.ts serve",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:integration": "bun tests/integration.test.ts"
   },
   "engines": {
     "bun": ">=1.2.0"
