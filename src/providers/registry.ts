@@ -1,3 +1,6 @@
+import axios from 'axios';
+import http from 'http';
+import https from 'https';
 import { config } from '../core/config';
 import type { DebridProvider, AddStrategy, AddMagnetResult } from './index';
 import { isKnownMagnet, addKnownMagnet } from '../core/db';
@@ -143,6 +146,74 @@ class ProviderRegistry {
       if (!isBlacklisted(name)) {
         addToBlacklist(name, 'HTTP 451 — Unavailable For Legal Reasons', 'auto');
         console.log(`[${new Date().toISOString()}][providers] ⚖️ auto-blacklisted "${name}" (451 legally blocked)`);
+      }
+    }
+
+    return { results };
+  }
+
+  /**
+   * Downloads a .torrent file from a URL and uploads it to debrid providers
+   * using the configured strategy.
+   *
+   * Falls back through ordered providers if a provider doesn't support
+   * `.torrent` file uploads. Logs each step with ISO timestamps.
+   *
+   * @param torrentUrl - The HTTP(S) URL of the .torrent file.
+   * @param name - Human-readable name for the torrent.
+   * @param strategy - The distribution strategy. Defaults to `'all'`.
+   * @returns An object containing per-provider results.
+   */
+  async addTorrentFileFromUrl(
+    torrentUrl: string,
+    name: string,
+    strategy: AddStrategy = 'all',
+  ): Promise<{ results: Array<{ provider: string; success: boolean; result?: AddMagnetResult; error?: string }> }> {
+    const results: Array<{ provider: string; success: boolean; result?: AddMagnetResult; error?: string }> = [];
+
+    // Download the .torrent file
+    console.log(`[${new Date().toISOString()}][registry] Downloading .torrent file: ${torrentUrl}`);
+    let fileBuffer: Buffer;
+    try {
+      const resp = await axios.get(torrentUrl, {
+        responseType: 'arraybuffer',
+        timeout: 30000,
+        httpAgent: new http.Agent({ family: 4 }),
+        httpsAgent: new https.Agent({ family: 4 }),
+      });
+      fileBuffer = Buffer.from(resp.data);
+      console.log(`[${new Date().toISOString()}][registry] Downloaded .torrent file (${fileBuffer.length} bytes)`);
+    } catch (err: any) {
+      const error = `Failed to download .torrent file: ${err?.message || String(err)}`;
+      console.error(`[${new Date().toISOString()}][registry] ${error}`);
+      return { results: [{ provider: 'registry', success: false, error }] };
+    }
+
+    // Upload to providers using the same strategy pattern as addMagnetWithStrategy
+    const providers = this.ordered();
+    for (const p of providers) {
+      try {
+        if (p.addTorrentFile) {
+          console.log(`[${new Date().toISOString()}][registry] Uploading .torrent file to ${p.id}`, { name });
+          const result = await p.addTorrentFile(fileBuffer, name);
+          console.log(`[${new Date().toISOString()}][registry] ✅ .torrent file added to ${p.id}`, { id: result.id });
+          results.push({ provider: p.id, success: true, result });
+
+          if (strategy === 'failover' || strategy === 'single') {
+            break; // Success — don't try more providers
+          }
+        } else {
+          console.warn(`[${new Date().toISOString()}][registry] ${p.id} does not support .torrent file upload — skipping`);
+          results.push({ provider: p.id, success: false, error: 'Provider does not support .torrent file upload' });
+        }
+      } catch (err: any) {
+        const error = err?.message || String(err);
+        console.error(`[${new Date().toISOString()}][registry] ❌ Failed to upload .torrent to ${p.id}: ${error}`);
+        results.push({ provider: p.id, success: false, error });
+
+        if (strategy === 'single') {
+          break; // Only try one
+        }
       }
     }
 

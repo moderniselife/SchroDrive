@@ -290,6 +290,54 @@ export class RealDebridProvider implements DebridProvider {
   }
 
   /**
+   * Uploads a .torrent file buffer to RealDebrid.
+   *
+   * Uses `PUT /torrents/addTorrent` with the raw binary body and
+   * `Content-Type: application/x-bittorrent`. Automatically selects
+   * all files after upload (same as addMagnet).
+   *
+   * @param fileBuffer - The raw .torrent file contents.
+   * @param name - Optional human-readable name for logging.
+   * @returns An object containing the torrent `id` from the RD response.
+   * @throws {Error} If the provider is rate-limited or the request fails.
+   */
+  async addTorrentFile(fileBuffer: Buffer, name?: string): Promise<AddMagnetResult> {
+    if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+      const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+      throw new Error(`RealDebrid rate limited, retry in ${waitTime}s`);
+    }
+
+    await rateLimiter.throttle(PROVIDER_NAME);
+
+    const base = getBaseUrl();
+    const url = `${base}/torrents/addTorrent`;
+    console.log(`[${new Date().toISOString()}][rd] Uploading .torrent file${name ? `: ${name}` : ''}`);
+
+    try {
+      const res = await axiosIPv4.put(url, fileBuffer, {
+        headers: {
+          ...rdHeaders(),
+          'Content-Type': 'application/x-bittorrent',
+        },
+        timeout: 30000,
+      });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+
+      const data = res.data || {};
+      const torrentId = String(data.id || '');
+      if (!torrentId) throw new Error('RealDebrid addTorrent returned no ID');
+
+      // Automatically select all files after adding the torrent
+      await this.selectAllFiles(torrentId);
+
+      return { id: torrentId, uri: data.uri };
+    } catch (err: any) {
+      this.handleError(err, 'add torrent file');
+      throw err;
+    }
+  }
+
+  /**
    * Selects all files within a RealDebrid torrent for download.
    *
    * Called internally after adding a magnet to ensure all files in the
