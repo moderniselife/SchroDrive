@@ -1,54 +1,51 @@
 # syntax=docker/dockerfile:1
 
 # ==================== Backend Build ====================
-FROM oven/bun:latest AS deps
+FROM node:20-alpine AS deps
 WORKDIR /app
-COPY package.json bun.lock* ./
-RUN bun install --frozen-lockfile 2>/dev/null || bun install
+COPY package*.json ./
+RUN npm install
 
-FROM oven/bun:latest AS build
+FROM node:20-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY package.json ./
+COPY package*.json ./
 COPY tsconfig.json ./
 COPY src ./src
-RUN bun run build
+RUN npm run build
 
 # ==================== Web GUI Build ====================
-FROM oven/bun:latest AS web-deps
+FROM node:20-alpine AS web-deps
 WORKDIR /app/web
-COPY web/package.json web/bun.lock* ./
-RUN bun install --frozen-lockfile 2>/dev/null || bun install
+COPY web/package*.json ./
+RUN npm install
 
-FROM oven/bun:latest AS web-build
+FROM node:20-alpine AS web-build
 WORKDIR /app/web
 COPY --from=web-deps /app/web/node_modules ./node_modules
 COPY web/ ./
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
-RUN bun run build
+RUN npm run build
 
 # ==================== Final Runner ====================
-FROM oven/bun:latest AS runner
+FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
 # Install system dependencies
-# Note: oven/bun is Debian-based, not Alpine — use apt instead of apk
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    rclone fuse3 curl ca-certificates supervisor \
-    && rm -rf /var/lib/apt/lists/* \
-    && printf 'user_allow_other\n' >> /etc/fuse.conf || true
+RUN apk add --no-cache rclone fuse3 curl ca-certificates supervisor && update-ca-certificates
+RUN printf 'user_allow_other\n' >> /etc/fuse.conf || true
 
 # Copy backend
-COPY package.json ./
-RUN bun install --production
+COPY package*.json ./
+RUN npm install --omit=dev
 COPY --from=build /app/dist ./dist
 
 # Copy web GUI
 COPY --from=web-build /app/web/.next ./web/.next
 COPY --from=web-build /app/web/public ./web/public
-COPY --from=web-build /app/web/package.json ./web/
+COPY --from=web-build /app/web/package*.json ./web/
 COPY --from=web-build /app/web/node_modules ./web/node_modules
 
 # Copy entrypoint script

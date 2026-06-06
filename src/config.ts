@@ -37,8 +37,6 @@ export const config = {
   repoName: process.env.REPO_NAME || "SchroDrive",
   // Providers
   providers: (process.env.PROVIDERS || "torbox,realdebrid").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
-  // Add strategy: 'all' (add to all providers for redundancy), 'failover' (try first, fallback on failure), 'single' (first only)
-  addStrategy: (process.env.ADD_STRATEGY || "all") as "all" | "failover" | "single",
   // Real-Debrid API
   rdApiBase: process.env.RD_API_BASE || "https://api.real-debrid.com/rest/1.0",
   rdAccessToken: process.env.RD_ACCESS_TOKEN || "",
@@ -50,21 +48,6 @@ export const config = {
   torboxWebdavUrl: process.env.TORBOX_WEBDAV_URL || "https://webdav.torbox.app",
   torboxWebdavUsername: process.env.TORBOX_WEBDAV_USERNAME || "",
   torboxWebdavPassword: process.env.TORBOX_WEBDAV_PASSWORD || "",
-  // AllDebrid API
-  alldebridApiKey: process.env.ALLDEBRID_API_KEY || "",
-  alldebridApiBase: process.env.ALLDEBRID_API_BASE || "https://api.alldebrid.com/v4",
-  alldebridAgent: process.env.ALLDEBRID_AGENT || "schrodrive",
-  // AllDebrid WebDAV (if supported)
-  alldebridWebdavUrl: process.env.ALLDEBRID_WEBDAV_URL || "",
-  alldebridWebdavUsername: process.env.ALLDEBRID_WEBDAV_USERNAME || "",
-  alldebridWebdavPassword: process.env.ALLDEBRID_WEBDAV_PASSWORD || "",
-  // Premiumize API
-  premiumizeApiKey: process.env.PREMIUMIZE_API_KEY || "",
-  premiumizeApiBase: process.env.PREMIUMIZE_API_BASE || "https://www.premiumize.me/api",
-  // Premiumize WebDAV
-  premiumizeWebdavUrl: process.env.PREMIUMIZE_WEBDAV_URL || "https://webdav.premiumize.me",
-  premiumizeWebdavUsername: process.env.PREMIUMIZE_WEBDAV_USERNAME || "",
-  premiumizeWebdavPassword: process.env.PREMIUMIZE_WEBDAV_PASSWORD || "",
   // Mount settings
   mountBase: defaultMountBase,
   rclonePath: process.env.RCLONE_PATH || "rclone",
@@ -97,76 +80,12 @@ export const config = {
   runMount: String(process.env.RUN_MOUNT ?? "false").toLowerCase() === "true",
   runDeadScanner: String(process.env.RUN_DEAD_SCANNER ?? "false").toLowerCase() === "true",
   runDeadScannerWatch: String(process.env.RUN_DEAD_SCANNER_WATCH ?? "false").toLowerCase() === "true",
-  // Organiser (symlinked view)
+  // Organizer (symlinked view)
   tmdbApiKey: process.env.TMDB_API_KEY || "",
   organizedBase: process.env.ORGANIZED_BASE || `${defaultMountBase}/organized`,
   organizerMode: (process.env.ORGANIZER_MODE || "symlink") as "symlink" | "copy" | "move",
   runOrganizerWatch: String(process.env.RUN_ORGANIZER_WATCH ?? "false").toLowerCase() === "true",
   orgScanIntervalSeconds: Number(process.env.ORG_SCAN_INTERVAL_S || 300),
-  // --- Media Server Integration ---
-  // Plex
-  plexUrl: process.env.PLEX_URL || process.env.PLEX_ADDRESS || "",
-  plexToken: process.env.PLEX_TOKEN || "",
-  plexMountDir: process.env.PLEX_MOUNT_DIR || "",
-  // Jellyfin
-  jellyfinUrl: process.env.JELLYFIN_URL || process.env.JF_ADDRESS || "",
-  jellyfinApiKey: process.env.JELLYFIN_API_KEY || process.env.JF_API_KEY || "",
-  jellyfinUserId: process.env.JELLYFIN_USER_ID || "",
-  // Emby
-  embyUrl: process.env.EMBY_URL || "",
-  embyApiKey: process.env.EMBY_API_KEY || "",
-  embyUserId: process.env.EMBY_USER_ID || "",
-  // Watchlist poller
-  runWatchlistPoller: String(process.env.RUN_WATCHLIST_POLLER ?? "false").toLowerCase() === "true",
-  watchlistPollIntervalSeconds: Number(process.env.WATCHLIST_POLL_INTERVAL_S || 60),
-  // Refresh library after adding content
-  refreshLibraryOnAdd: String(process.env.REFRESH_LIBRARY_ON_ADD ?? "true").toLowerCase() !== "false",
-  // --- WebDAV Bridge (API-to-filesystem translation) ---
-  webdavBridgeEnabled: String(process.env.WEBDAV_BRIDGE_ENABLED ?? "true").toLowerCase() !== "false",
-  webdavBridgePortRD: Number(process.env.WEBDAV_BRIDGE_PORT_RD || 9115),
-  webdavBridgePortTB: Number(process.env.WEBDAV_BRIDGE_PORT_TB || 9116),
-  webdavBridgePortAD: Number(process.env.WEBDAV_BRIDGE_PORT_AD || 9117),
-  webdavBridgePortPM: Number(process.env.WEBDAV_BRIDGE_PORT_PM || 9118),
-  webdavCacheTtlS: Number(process.env.WEBDAV_CACHE_TTL_S || 30),
-  webdavDownloadCacheTtlS: Number(process.env.WEBDAV_DOWNLOAD_CACHE_TTL_S || 1800),
-  // --- Trakt Integration ---
-  traktClientId: process.env.TRAKT_CLIENT_ID || "",
-  traktClientSecret: process.env.TRAKT_CLIENT_SECRET || "",
-  traktAccessToken: process.env.TRAKT_ACCESS_TOKEN || "",
-  traktRefreshToken: process.env.TRAKT_REFRESH_TOKEN || "",
-  traktUsername: process.env.TRAKT_USERNAME || "",
-  // --- Mdblist Integration ---
-  mdblistApiKey: process.env.MDBLIST_API_KEY || "",
-  mdblistListIds: (process.env.MDBLIST_LIST_IDS || "").split(",").map(s => s.trim()).filter(Boolean),
-  // --- Listrr Integration ---
-  listrrApiKey: process.env.LISTRR_API_KEY || "",
-  // --- Stremio Addon Scrapers ---
-  // Scraper mode: 'merge' (combine with indexer results), 'fallback' (only when indexer returns 0)
-  scraperMode: (process.env.SCRAPER_MODE || "merge") as "merge" | "fallback",
-  // Torrentio
-  torrentioUrl: process.env.TORRENTIO_URL || "https://torrentio.strem.fun",
-  torrentioConfig: process.env.TORRENTIO_CONFIG || "",
-  torrentioEnabled: String(process.env.TORRENTIO_ENABLED ?? "false").toLowerCase() === "true",
-  // Comet
-  cometUrl: process.env.COMET_URL || "",
-  cometConfig: process.env.COMET_CONFIG || "",
-  cometEnabled: String(process.env.COMET_ENABLED ?? "false").toLowerCase() === "true",
-  // Zilean (DMM hashlists)
-  zileanUrl: process.env.ZILEAN_URL || "https://zilean.elfhosted.com",
-  zileanEnabled: String(process.env.ZILEAN_ENABLED ?? "false").toLowerCase() === "true",
-  // Mediafusion
-  mediafusionUrl: process.env.MEDIAFUSION_URL || "https://mediafusion.elfhosted.com",
-  mediafusionConfig: process.env.MEDIAFUSION_CONFIG || "",
-  mediafusionEnabled: String(process.env.MEDIAFUSION_ENABLED ?? "false").toLowerCase() === "true",
-  // --- Stremio Addon Server (expose SchröDrive as an addon) ---
-  stremioAddonEnabled: String(process.env.STREMIO_ADDON_ENABLED ?? "false").toLowerCase() === "true",
-  stremioAddonPort: Number(process.env.STREMIO_ADDON_PORT || 7000),
-  // --- Torrent Repair ---
-  enableRepair: String(process.env.ENABLE_REPAIR ?? "true").toLowerCase() !== "false",
-  repairMaxAttempts: Number(process.env.REPAIR_MAX_ATTEMPTS || 3),
-  // Pre-emptive repair: detect stalling torrents before they die
-  preemptiveRepairEnabled: String(process.env.PREEMPTIVE_REPAIR ?? "true").toLowerCase() !== "false",
-  preemptiveRepairStallMinutes: Number(process.env.PREEMPTIVE_REPAIR_STALL_MIN || 30),
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {

@@ -1,8 +1,8 @@
 {
   "name": "schrodrive",
-  "version": "0.2.0",
+  "version": "0.1.26",
   "private": true,
-  "description": "Unified cloud debrid mount manager — integrates Overseerr, Prowlarr/Jackett, RealDebrid, TorBox, Plex, Jellyfin, and Emby",
+  "description": "CLI/Webhook service to listen for Overseerr requests, search Prowlarr, and add torrents to TorBox",
   "main": "dist/index.js",
   "bin": {
     "schrodrive": "dist/index.js"
@@ -10,14 +10,11 @@
   "type": "commonjs",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "bun dist/index.js serve",
-    "serve": "bun dist/index.js serve",
-    "dev": "bun --watch src/index.ts serve",
-    "typecheck": "tsc --noEmit",
-    "test:integration": "bun tests/integration.test.ts"
+    "start": "node dist/index.js serve",
+    "serve": "node dist/index.js serve"
   },
   "engines": {
-    "bun": ">=1.2.0"
+    "node": ">=20"
   },
   "dependencies": {
     "axios": "^1.13.2",
@@ -30,7 +27,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.5",
     "@types/node": "^24.10.0",
-    "@types/bun": "latest",
+    "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }
 }
