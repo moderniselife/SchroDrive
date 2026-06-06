@@ -758,6 +758,7 @@ export class AllDebridProvider implements DebridProvider {
    */
   private handleError(err: any, operation: string): void {
     const errorMsg = err?.message || String(err);
+    const responseHeaders = err?.response?.headers;
     const isNetworkError =
       err?.code === 'ECONNREFUSED' ||
       err?.code === 'ENOTFOUND' ||
@@ -767,7 +768,15 @@ export class AllDebridProvider implements DebridProvider {
       errorMsg.includes('network');
 
     if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-      rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+      let backoffMs: number | undefined;
+      if (responseHeaders) {
+        const retryAfter = responseHeaders['retry-after'] || responseHeaders['Retry-After'];
+        if (retryAfter) {
+          const seconds = parseInt(String(retryAfter), 10);
+          if (Number.isFinite(seconds) && seconds > 0) backoffMs = seconds * 1000;
+        }
+      }
+      rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg, backoffMs);
     }
 
     console.error(`[${new Date().toISOString()}][ad] ${operation} failed`, {
