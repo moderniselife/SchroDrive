@@ -19,7 +19,7 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import axios from "axios";
-import { config } from "./config";
+import { config } from "../core/config";
 
 // ===========================================================================
 // Types & Constants

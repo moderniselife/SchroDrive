@@ -12,13 +12,12 @@
  * @module mediaServerWatchlist
  */
 
-import { config } from "./config";
-import { getPlexWatchlist, extractTmdbId, refreshPlexLibrary, type PlexWatchlistItem } from "./plex";
-import { getJellyfinWatchlist, refreshJellyfinLibrary, type JellyfinWatchlistItem } from "./jellyfin";
-import { getEmbyWatchlist, refreshEmbyLibrary, type EmbyWatchlistItem } from "./emby";
-import { searchIndexer, pickBestResult, getMagnet, getMagnetOrResolve, getProviderName, isIndexerConfigured } from "./indexer";
-import { addMagnetToTorbox, checkExistingTorrents } from "./torbox";
-import { addMagnetToRD } from "./realdebrid";
+import { config } from "../core/config";
+import { getPlexWatchlist, extractTmdbId, refreshPlexLibrary, type PlexWatchlistItem } from "../integrations/plex";
+import { getJellyfinWatchlist, refreshJellyfinLibrary, type JellyfinWatchlistItem } from "../integrations/jellyfin";
+import { getEmbyWatchlist, refreshEmbyLibrary, type EmbyWatchlistItem } from "../integrations/emby";
+import { searchIndexer, pickBestResult, getMagnet, getMagnetOrResolve, getProviderName, isIndexerConfigured } from "../indexers/index";
+import { registry } from "../providers";
 
 // =============================================================================
 // Types
@@ -211,35 +210,16 @@ async function processWatchlistItem(item: UnifiedWatchlistItem): Promise<boolean
   }
 
   // Check for duplicates
-  const hasExisting = await checkExistingTorrents(chosenTitle);
+  const { exists: hasExisting } = await registry.checkExistingAcrossAll(chosenTitle);
   if (hasExisting) {
     console.log(`[${new Date().toISOString()}][watchlist] Skipping duplicate: "${chosenTitle}"`);
     return true; // Mark as processed since it already exists
   }
 
-  // Add to configured debrid providers
-  const providers = config.providers;
-  let added = false;
-
-  if (providers.includes("torbox") && config.torboxApiKey) {
-    try {
-      console.log(`[${new Date().toISOString()}][watchlist→torbox] Adding: "${chosenTitle}"`);
-      await addMagnetToTorbox(magnet, chosenTitle);
-      added = true;
-    } catch (err: any) {
-      console.error(`[${new Date().toISOString()}][watchlist→torbox] Add failed:`, err?.message || String(err));
-    }
-  }
-
-  if (providers.includes("realdebrid") && config.rdAccessToken) {
-    try {
-      console.log(`[${new Date().toISOString()}][watchlist→realdebrid] Adding: "${chosenTitle}"`);
-      await addMagnetToRD(magnet);
-      added = true;
-    } catch (err: any) {
-      console.error(`[${new Date().toISOString()}][watchlist→realdebrid] Add failed:`, err?.message || String(err));
-    }
-  }
+  // Add to all configured debrid providers
+  const addStrategy = (config as any).addStrategy || 'all';
+  const { results: addResults } = await registry.addMagnetWithStrategy(magnet, chosenTitle, addStrategy);
+  const added = addResults.some(r => r.success);
 
   // Refresh the source media server library after successful add
   if (added) {

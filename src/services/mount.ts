@@ -22,7 +22,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { spawnSync, spawn } from "child_process";
-import { config, providersSet } from "./config";
+import { config, providersSet } from "../core/config";
 import { WebDAVBridge } from "./webdavBridge";
 import type { BridgeStatus } from "./webdavBridge";
 
