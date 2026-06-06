@@ -131,9 +131,27 @@ Set via `ADD_STRATEGY` environment variable.
 
 - Mount your debrid library as a local filesystem via rclone
 - **WebDAV Bridge** — built-in translation layer that converts debrid API keys into WebDAV endpoints for rclone (no native WebDAV credentials required!)
+- **Zurg-compatible organised directories** — automatic media classification into `anime/`, `shows/`, `movies/`, and `__all__/`
 - Configurable mount options (VFS cache, permissions, buffer sizes, chunk sizes)
 - Works with Plex, Jellyfin, Emby, and any media server that reads local files
 - Per-provider mount points under a shared base directory
+
+#### Mount Structure
+
+```
+/mnt/schrodrive/
+├── realdebrid/
+│   ├── __all__/         # All torrents (unfiltered)
+│   ├── anime/           # CRC hash detected fansub releases
+│   ├── shows/           # Episode pattern detected (S01E01, etc.)
+│   └── movies/          # Everything else (biggest file only)
+├── torbox/
+│   ├── __all__/
+│   ├── anime/
+│   ├── shows/
+│   └── movies/
+└── ... (other providers)
+```
 
 ### 🔄 Automation Engine
 
@@ -553,13 +571,18 @@ All configuration is done via environment variables. Below is the complete refer
 | `JACKETT_TIMEOUT_MS` | `120000` | Search timeout (ms) |
 | `JACKETT_REDIRECT_MAX_HOPS` | `5` | Max redirects for magnet resolution |
 
-### 📡 Overseerr
+### 📡 Overseerr / Jellyseerr
+
+> **Jellyseerr support**: Jellyseerr is API-compatible with Overseerr (it's a fork). You can use either set of env vars below — `OVERSEERR_*` or `JELLYSEERR_*`. If both are set, `OVERSEERR_*` takes priority.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OVERSEERR_URL` | — | Overseerr API URL (include `/api/v1`) |
 | `OVERSEERR_API_KEY` | — | Overseerr API key |
 | `OVERSEERR_AUTH` | — | Optional webhook authorisation header |
+| `JELLYSEERR_URL` | — | Jellyseerr API URL (alias for `OVERSEERR_URL`) |
+| `JELLYSEERR_API_KEY` | — | Jellyseerr API key (alias for `OVERSEERR_API_KEY`) |
+| `JELLYSEERR_AUTH` | — | Jellyseerr auth header (alias for `OVERSEERR_AUTH`) |
 | `POLL_INTERVAL_S` | `30` | Poller interval (seconds) |
 
 ### 📺 Media Servers
