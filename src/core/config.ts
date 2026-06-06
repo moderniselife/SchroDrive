@@ -207,6 +207,21 @@ export const config = {
   onedriveToken: process.env.ONEDRIVE_TOKEN || '',
   onedriveDriveId: process.env.ONEDRIVE_DRIVE_ID || '',
   onedriveDriveType: process.env.ONEDRIVE_DRIVE_TYPE || 'personal',
+
+  // =========================================================================
+  // Cloud Link Manager — Public Shared Folder Mounting
+  // =========================================================================
+
+  /** Enable the Cloud Link Manager (mounts public shared folder links). */
+  cloudLinksEnabled: String(process.env.CLOUD_LINKS_ENABLED ?? 'false').toLowerCase() === 'true',
+  /** Path to JSON file containing cloud link configurations. */
+  cloudLinksFile: process.env.CLOUD_LINKS_FILE || '/config/cloud_links.json',
+  /** Inline JSON array of cloud link configs (fallback if file not found). */
+  cloudLinksJson: process.env.CLOUD_LINKS || '',
+  /** Google Drive API key (for public folder access — no OAuth needed). */
+  gdriveApiKey: process.env.GDRIVE_API_KEY || '',
+  /** Port for the Cloud Links WebDAV bridge. */
+  cloudLinksBridgePort: Number(process.env.CLOUD_LINKS_PORT || 9121),
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {
