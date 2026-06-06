@@ -81,7 +81,7 @@ let tmpDir = path.join(os.tmpdir(), "schrodrive");
  */
 function isStaleMountErr(e) {
     const code = (e?.code || "").toString();
-    return code === "ENOTCONN" || code === "EBUSY" || code === "EIO";
+    return code === "ENOTCONN" || code === "EBUSY" || code === "EIO" || code === "EEXIST";
 }
 /**
  * Attempts to forcefully unmount a stale FUSE mountpoint at the given path.
