@@ -18,6 +18,7 @@ import https from 'https';
 import http from 'http';
 import { config } from '../core/config';
 import { rateLimiter } from '../core/rateLimiter';
+import { tokenRotator } from '../core/tokenRotator';
 import type {
   DebridProvider,
   TorrentInfo,
@@ -52,8 +53,8 @@ const DOWNLOADS_CACHE_KEY = 'realdebrid_downloads';
  *
  * @returns A headers object containing the Bearer token.
  */
-function rdHeaders(): Record<string, string> {
-  return { Authorization: `Bearer ${config.rdAccessToken}` };
+function rdHeaders(overrideToken?: string): Record<string, string> {
+  return { Authorization: `Bearer ${overrideToken || config.rdAccessToken}` };
 }
 
 /**
@@ -727,6 +728,8 @@ export class RealDebridProvider implements DebridProvider {
       return null;
     }
 
+    const downloadToken = tokenRotator.getDownloadToken(PROVIDER_NAME) || config.rdAccessToken;
+
     await rateLimiter.throttle(PROVIDER_NAME);
 
     const base = getBaseUrl();
@@ -734,7 +737,7 @@ export class RealDebridProvider implements DebridProvider {
     try {
       // First, get the torrent info to retrieve the link
       const infoUrl = `${base}/torrents/info/${encodeURIComponent(torrentId)}`;
-      const infoRes = await axiosIPv4.get(infoUrl, { headers: rdHeaders(), timeout: 30000 });
+      const infoRes = await axiosIPv4.get(infoUrl, { headers: rdHeaders(downloadToken), timeout: 30000 });
       rateLimiter.recordSuccess(PROVIDER_NAME);
 
       const links: string[] = Array.isArray(infoRes?.data?.links) ? infoRes.data.links : [];
@@ -752,7 +755,7 @@ export class RealDebridProvider implements DebridProvider {
       params.set('link', link);
 
       const unrestrictRes = await axiosIPv4.post(unrestrictUrl, params, {
-        headers: { ...rdHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { ...rdHeaders(downloadToken), 'Content-Type': 'application/x-www-form-urlencoded' },
         timeout: 20000,
       });
       rateLimiter.recordSuccess(PROVIDER_NAME);
@@ -765,7 +768,12 @@ export class RealDebridProvider implements DebridProvider {
 
       return downloadUrl;
     } catch (err: any) {
-      this.handleError(err, `resolve download URL for torrent ${torrentId}, link ${linkIndex}`);
+      this.handleError(err, `resolve download URL for torrent ${torrentId}, link ${linkIndex}`, downloadToken);
+      const status = err?.response?.status;
+      if ((status === 503 || status === 429) && downloadToken !== config.rdAccessToken) {
+        const duration = status === 429 ? 60 * 60 * 1000 : undefined; // 1 hour for 429
+        tokenRotator.markTokenLimited(PROVIDER_NAME, downloadToken, `${status} ${err?.response?.statusText || 'limit'}`, duration);
+      }
       return null;
     }
   }
@@ -873,7 +881,7 @@ export class RealDebridProvider implements DebridProvider {
    * @param err - The error object.
    * @param operation - A human-readable description of the failed operation.
    */
-  private handleError(err: any, operation: string): void {
+  private handleError(err: any, operation: string, overrideToken?: string): void {
     const errorMsg = err?.message || String(err);
     const responseHeaders = err?.response?.headers;
     const isNetworkError =
@@ -885,18 +893,26 @@ export class RealDebridProvider implements DebridProvider {
       errorMsg.includes('network');
 
     if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-      // Try to extract Retry-After header from RD's response
-      let backoffMs: number | undefined;
-      if (responseHeaders) {
-        const retryAfter = responseHeaders['retry-after'] || responseHeaders['Retry-After'];
-        if (retryAfter) {
-          const seconds = parseInt(String(retryAfter), 10);
-          if (Number.isFinite(seconds) && seconds > 0) {
-            backoffMs = seconds * 1000;
+      // If we used a rotated download token, do NOT globally rate-limit the provider
+      const primaryToken = config.rdAccessToken;
+      if (overrideToken && overrideToken !== primaryToken) {
+        console.warn(
+          `[${new Date().toISOString()}][rd] Rotated download token hit 429/rate-limit. Bypassing global rate limit.`
+        );
+      } else {
+        // Try to extract Retry-After header from RD's response
+        let backoffMs: number | undefined;
+        if (responseHeaders) {
+          const retryAfter = responseHeaders['retry-after'] || responseHeaders['Retry-After'];
+          if (retryAfter) {
+            const seconds = parseInt(String(retryAfter), 10);
+            if (Number.isFinite(seconds) && seconds > 0) {
+              backoffMs = seconds * 1000;
+            }
           }
         }
+        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg, backoffMs);
       }
-      rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg, backoffMs);
     }
 
     console.error(`[${new Date().toISOString()}][rd] ${operation} failed`, {
@@ -916,3 +932,4 @@ export class RealDebridProvider implements DebridProvider {
 
 import { registry } from './index';
 registry.register(new RealDebridProvider());
+tokenRotator.registerProvider(PROVIDER_NAME, config.rdAccessToken, config.rdDownloadTokens);

@@ -190,6 +190,73 @@ SchröDrive is designed to handle the real-world chaos of debrid services:
 - **Stale symlink pruning** — automatic cleanup of dead symlinks on every organiser pass
 - **Plan limitation detection** — graceful degradation when API limits are hit (e.g. TorBox free tier)
 
+### 🔑 Multi-Token Download Bypass
+
+Inspired by [Zurg's](https://github.com/debridmediamanager/zurg-testing) `download_tokens` feature, SchröDrive supports **multiple debrid account tokens** for download and streaming operations. This lets you scale bandwidth beyond a single account's limits and bypass rate limits.
+
+**How it works:**
+
+- Your **primary token** manages content (adding, listing, and deleting torrents)
+- **Download tokens** are used exclusively for download/streaming operations
+- When a download token hits bandwidth limits (HTTP 503) or rate limits (HTTP 429), SchröDrive automatically **marks that token as limited** (for 24 hours on 503, or 1 hour on 429) and **rotates** to the next available token
+- **Cool rate-limit bypass trick**: Since download tokens represent separate accounts/subscriptions, a 429/rate-limit error on a rotated download token **does not** trigger global provider rate limiting. This allows SchröDrive to immediately switch to another healthy token/account to continue serving streams without interruption!
+- All tokens **auto-reset daily at midnight** (configurable timezone)
+- Works with **ALL providers**: RealDebrid, TorBox, AllDebrid, and Premiumize
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RD_DOWNLOAD_TOKENS` | — | Comma-separated list of additional RealDebrid API tokens for downloads |
+| `TORBOX_DOWNLOAD_TOKENS` | — | Comma-separated list of additional TorBox API keys for downloads |
+| `AD_DOWNLOAD_TOKENS` | — | Comma-separated list of additional AllDebrid API keys for downloads |
+| `PM_DOWNLOAD_TOKENS` | — | Comma-separated list of additional Premiumize API keys for downloads |
+| `TOKEN_RESET_TIMEZONE` | `Australia/Sydney` | Timezone for the daily token reset schedule |
+
+**Example configuration:**
+
+```env
+# Primary token manages content (add/list/delete)
+RD_ACCESS_TOKEN=primary_token
+
+# Additional tokens rotate for downloads when bandwidth/rate limits are hit
+RD_DOWNLOAD_TOKENS=token2,token3
+```
+
+**Monitoring:** Use `GET /api/tokens` to view the status of all tokens — including which are active, exhausted, or cooling down.
+
+> [!TIP]
+> You only need download tokens if you're hitting bandwidth caps. A single primary token handles everything by default.
+
+### 🛡️ Intelligent Rate Limiting
+
+SchröDrive implements **provider-specific rate limiting** that goes beyond simple backoff:
+
+- **Respects `Retry-After` headers** — when a provider returns rate limit responses, SchröDrive honours the exact cooldown period
+- **Parses provider responses** — understands provider-specific messages (e.g. TorBox's `"60 per hour"`) and calculates exact wait times
+- **Exponential backoff** — `60s → 120s → 240s → 480s → 900s` (capped at 15 minutes)
+- **Backoff-aware recovery** — successful requests during a backoff window don't prematurely clear the rate limit; the full cooldown is always respected
+- **HTTP 451 auto-blacklisting** — torrents that receive `451 Unavailable For Legal Reasons` are automatically blacklisted to prevent repeated futile requests
+
+### 💀 Dead Torrent Detection & Repair
+
+SchröDrive proactively detects and recovers from dead torrents through a **3-phase recovery** process:
+
+**Explicit status detection** — the dead scanner checks for provider-specific failure states:
+- RealDebrid: `magnet_error`, `error`, `virus`, `dead`, `compressing_error`
+- Other providers: equivalent error/failure statuses
+
+**3-phase recovery pipeline:**
+
+1. **Phase A: Same-provider repair** — attempts to repair the torrent on the same debrid provider (re-add the magnet hash)
+2. **Phase B: Cross-provider repair** — if the same provider can't recover it, the torrent is attempted on other configured providers
+3. **Phase C: Delete + replace** — if repair fails entirely, the torrent is deleted, blacklisted, and a replacement search is triggered via indexers and scrapers
+
+**Pre-emptive repair** — SchröDrive monitors for **stalling torrents** (configurable idle threshold) and initiates repair *before* they're flagged as dead, minimising downtime.
+
+> [!NOTE]
+> See the [Dead Torrent Lifecycle](#dead-torrent-lifecycle) diagram in the Architecture section for a visual overview of this process.
+
 ---
 
 ## 🏆 SchröDrive vs the Alternatives
@@ -359,7 +426,7 @@ graph LR
 
 ```mermaid
 graph TD
-    A[Download Failure] -->|Retry with backoff| B{Resolved?}
+    A[Download Failure] -->|Retry with backoff<br/>rotates download tokens on 429/503| B{Resolved?}
     B -->|Yes| C[Reset failure counter]
     B -->|No| D[Increment failure counter]
     D -->|< 10 failures| E[Serve stale cache URL]
@@ -429,6 +496,16 @@ All configuration is done via environment variables. Below is the complete refer
 | `PREMIUMIZE_WEBDAV_URL` | `https://webdav.premiumize.me` | Native WebDAV URL |
 | `PREMIUMIZE_WEBDAV_USERNAME` | — | WebDAV username (customer ID) |
 | `PREMIUMIZE_WEBDAV_PASSWORD` | — | WebDAV password (API key) |
+
+#### Download Tokens (Multi-Account Bypass)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RD_DOWNLOAD_TOKENS` | — | Comma-separated additional RealDebrid tokens for download rotation |
+| `TORBOX_DOWNLOAD_TOKENS` | — | Comma-separated additional TorBox keys for download rotation |
+| `AD_DOWNLOAD_TOKENS` | — | Comma-separated additional AllDebrid keys for download rotation |
+| `PM_DOWNLOAD_TOKENS` | — | Comma-separated additional Premiumize keys for download rotation |
+| `TOKEN_RESET_TIMEZONE` | `Australia/Sydney` | Timezone for daily token reset (midnight) |
 
 ### 🔍 Indexers
 
@@ -776,6 +853,7 @@ registry.register(new YourProvider());
 | `POST` | `/api/config` | Update configuration |
 | `GET` | `/api/bridges` | WebDAV bridge status |
 | `POST` | `/api/bridges/refresh` | Refresh bridge caches |
+| `GET` | `/api/tokens` | Download token status (active, exhausted, cooldown) |
 
 ---
 
@@ -905,6 +983,9 @@ Two CI workflows:
 
 ## 📝 Notes
 
+- **Runtime:** SchröDrive is built with [Bun](https://bun.sh/) as its runtime and package manager
+- **Persistence:** Uses SQLite via `bun:sqlite` with WAL mode for zero-config embedded persistence
+- **Language:** Australian English is used throughout the codebase and documentation (e.g. "organiser", "licence", "colour")
 - A git pre-commit hook automatically increments the package version on main/master commits
 - Duplicate detection uses bi-directional case-insensitive substring matching across ALL configured providers
 - The WebDAV bridge enables mounting without native WebDAV credentials — only an API key is needed

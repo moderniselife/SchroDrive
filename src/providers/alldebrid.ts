@@ -21,6 +21,7 @@ import https from 'https';
 import http from 'http';
 import { config } from '../core/config';
 import { rateLimiter } from '../core/rateLimiter';
+import { tokenRotator } from '../core/tokenRotator';
 import type {
   DebridProvider,
   TorrentInfo,
@@ -96,9 +97,9 @@ function getBaseUrl(): string {
  *
  * @returns An object containing the `apikey` and `agent` parameters.
  */
-function authParams(): Record<string, string> {
+function authParams(overrideApiKey?: string): Record<string, string> {
   return {
-    apikey: config.alldebridApiKey,
+    apikey: overrideApiKey || config.alldebridApiKey,
     agent: config.alldebridAgent || 'schrodrive',
   };
 }
@@ -108,12 +109,13 @@ function authParams(): Record<string, string> {
  *
  * @param path - The API path (e.g. `/v4/magnet/status`).
  * @param extra - Additional query parameters to include.
+ * @param overrideApiKey - Optional API key override for token rotation.
  * @returns The fully-qualified URL string.
  */
-function buildUrl(path: string, extra: Record<string, string> = {}): string {
+function buildUrl(path: string, extra: Record<string, string> = {}, overrideApiKey?: string): string {
   const base = getBaseUrl();
   const url = new URL(path.startsWith('http') ? path : `${base}${path}`);
-  const params = { ...authParams(), ...extra };
+  const params = { ...authParams(overrideApiKey), ...extra };
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, value);
   }
@@ -588,11 +590,13 @@ export class AllDebridProvider implements DebridProvider {
       return null;
     }
 
+    const downloadToken = tokenRotator.getDownloadToken(PROVIDER_NAME) || config.alldebridApiKey;
+
     await rateLimiter.throttle(PROVIDER_NAME);
 
     try {
       // Fetch the magnet info to retrieve the file link
-      const infoUrl = buildUrl('/magnet/status', { id: torrentId });
+      const infoUrl = buildUrl('/magnet/status', { id: torrentId }, downloadToken);
       const infoRes = await axiosIPv4.get(infoUrl, { timeout: 30000 });
       rateLimiter.recordSuccess(PROVIDER_NAME);
 
@@ -615,7 +619,7 @@ export class AllDebridProvider implements DebridProvider {
 
       // Unlock the link to get the direct download URL
       await rateLimiter.throttle(PROVIDER_NAME);
-      const unlockUrl = buildUrl('/link/unlock');
+      const unlockUrl = buildUrl('/link/unlock', {}, downloadToken);
       const params = new URLSearchParams();
       params.set('link', fileLink);
 
@@ -635,7 +639,12 @@ export class AllDebridProvider implements DebridProvider {
 
       return downloadUrl;
     } catch (err: any) {
-      this.handleError(err, `resolve download URL for magnet ${torrentId}, file ${fileId}`);
+      this.handleError(err, `resolve download URL for magnet ${torrentId}, file ${fileId}`, downloadToken);
+      const status = err?.response?.status;
+      if ((status === 503 || status === 429) && downloadToken !== config.alldebridApiKey) {
+        const duration = status === 429 ? 60 * 60 * 1000 : undefined; // 1 hour for 429
+        tokenRotator.markTokenLimited(PROVIDER_NAME, downloadToken, `${status} ${err?.response?.statusText || 'limit'}`, duration);
+      }
       return null;
     }
   }
@@ -739,7 +748,7 @@ export class AllDebridProvider implements DebridProvider {
    * @param err - The error object.
    * @param operation - A human-readable description of the failed operation.
    */
-  private handleError(err: any, operation: string): void {
+  private handleError(err: any, operation: string, overrideToken?: string): void {
     const errorMsg = err?.message || String(err);
     const responseHeaders = err?.response?.headers;
     const isNetworkError =
@@ -751,15 +760,23 @@ export class AllDebridProvider implements DebridProvider {
       errorMsg.includes('network');
 
     if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-      let backoffMs: number | undefined;
-      if (responseHeaders) {
-        const retryAfter = responseHeaders['retry-after'] || responseHeaders['Retry-After'];
-        if (retryAfter) {
-          const seconds = parseInt(String(retryAfter), 10);
-          if (Number.isFinite(seconds) && seconds > 0) backoffMs = seconds * 1000;
+      // If we used a rotated download token, do NOT globally rate-limit the provider
+      const primaryToken = config.alldebridApiKey;
+      if (overrideToken && overrideToken !== primaryToken) {
+        console.warn(
+          `[${new Date().toISOString()}][ad] Rotated download token hit 429/rate-limit. Bypassing global rate limit.`
+        );
+      } else {
+        let backoffMs: number | undefined;
+        if (responseHeaders) {
+          const retryAfter = responseHeaders['retry-after'] || responseHeaders['Retry-After'];
+          if (retryAfter) {
+            const seconds = parseInt(String(retryAfter), 10);
+            if (Number.isFinite(seconds) && seconds > 0) backoffMs = seconds * 1000;
+          }
         }
+        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg, backoffMs);
       }
-      rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg, backoffMs);
     }
 
     console.error(`[${new Date().toISOString()}][ad] ${operation} failed`, {
@@ -779,3 +796,4 @@ export class AllDebridProvider implements DebridProvider {
 
 import { registry } from './index';
 registry.register(new AllDebridProvider());
+tokenRotator.registerProvider(PROVIDER_NAME, config.alldebridApiKey, config.alldebridDownloadTokens);
