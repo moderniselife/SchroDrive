@@ -29,6 +29,14 @@ and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.
 - **Anime output category** (`src/services/organizer.ts`):
   - Organiser now outputs anime to `Anime/` instead of lumping into `TV/`
   - Uses `mediaClassifier.ts` for CRC hash + fansub detection
+- **Cloud Link Manager** (`src/services/cloudLinks/`):
+  - Mount public shared folder links (Mega, GDrive, Dropbox) as FUSE directories
+  - No account login needed for MEGA (uses `megajs` for client-side decryption)
+  - Google Drive uses free API key only — 302 redirects to direct download URLs
+  - Dropbox reuses existing `DROPBOX_TOKEN` from cloud mounts config
+  - WebDAV bridge on port 9121 (configurable via `CLOUD_LINKS_PORT`)
+  - Config via JSON file (`/config/cloud_links.json`) and/or `CLOUD_LINKS` env var
+  - 5-minute folder listing cache to respect rate limits
 
 ### Changed 🔄
 - **Organiser mount awareness** (`src/services/organizer.ts`):
