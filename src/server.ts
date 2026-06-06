@@ -29,6 +29,7 @@ import { startAutoUpdater } from "./autoUpdate";
 import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDocker, CONFIG_SCHEMA } from "./configApi";
 import { logBuffer } from "./logger";
 import { rateLimiter } from "./rateLimiter";
+import { getBridgeStatuses, refreshBridges } from "./mount";
 
 // ===========================================================================
 // Server Initialisation
@@ -127,7 +128,27 @@ export function startServer() {
         configured: isIndexerConfigured(),
         provider: isIndexerConfigured() ? getProviderName() : null,
       },
+      webdavBridges: getBridgeStatuses(),
     });
+  });
+
+  // ===========================================================================
+  // WebDAV Bridge Management
+  // ===========================================================================
+
+  /** GET /api/webdav/status — Returns status of all active WebDAV bridge instances. */
+  app.get("/api/webdav/status", (_req, res) => {
+    res.json({ ok: true, bridges: getBridgeStatuses() });
+  });
+
+  /** POST /api/webdav/refresh — Forces a cache refresh on all active bridges. */
+  app.post("/api/webdav/refresh", async (_req, res) => {
+    try {
+      await refreshBridges();
+      res.json({ ok: true, message: "Cache refreshed", bridges: getBridgeStatuses() });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || String(err) });
+    }
   });
 
   // ===========================================================================

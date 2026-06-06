@@ -1,9 +1,16 @@
 /**
  * SchroDrive — Virtual Filesystem Mount Manager
  *
- * Handles mounting WebDAV-based debrid provider filesystems via rclone.
- * Builds rclone configuration files for configured providers (Real-Debrid, TorBox),
- * manages FUSE mount lifecycle including stale mount cleanup, permission handling,
+ * Handles mounting debrid provider filesystems via rclone. Supports two modes:
+ *
+ * 1. **Direct WebDAV** — When WebDAV credentials are provided (RD_WEBDAV_*,
+ *    TORBOX_WEBDAV_*), rclone connects directly to the provider's WebDAV endpoint.
+ *
+ * 2. **Bridge mode** — When only API keys are available, SchroDrive starts a
+ *    built-in WebDAV server ({@link WebDAVBridge}) that translates provider REST
+ *    API calls into a filesystem view. rclone then mounts the local bridge.
+ *
+ * Manages FUSE mount lifecycle including stale mount cleanup, permission handling,
  * and post-mount verification. Rclone is spawned as a daemon process.
  *
  * Supports both Linux (FUSE/fusermount) and macOS (diskutil) mount management.
@@ -16,6 +23,8 @@ import * as os from "os";
 import * as path from "path";
 import { spawnSync, spawn } from "child_process";
 import { config, providersSet } from "./config";
+import { WebDAVBridge } from "./webdavBridge";
+import type { BridgeStatus } from "./webdavBridge";
 
 // ===========================================================================
 // Mount Utilities
@@ -117,42 +126,115 @@ function obscurePassword(password: string): string {
   return password;
 }
 
+// ===========================================================================
+// Active WebDAV Bridges (module-level for status reporting)
+// ===========================================================================
+
+/** Active bridge instances, keyed by provider name. */
+const activeBridges: Map<string, WebDAVBridge> = new Map();
+
+/**
+ * Returns the status of all active WebDAV bridge instances.
+ * Used by the API status endpoint.
+ */
+export function getBridgeStatuses(): BridgeStatus[] {
+  return Array.from(activeBridges.values()).map((b) => b.getStatus());
+}
+
+/**
+ * Forces a cache refresh on all active WebDAV bridges.
+ * Used by the API refresh endpoint.
+ */
+export async function refreshBridges(): Promise<void> {
+  for (const b of activeBridges.values()) {
+    await b.refresh();
+  }
+}
+
+/**
+ * Checks if a provider has direct WebDAV credentials configured.
+ */
+function hasDirectWebDAV(provider: string): boolean {
+  if (provider === "realdebrid") {
+    return !!(config.rdWebdavUrl && config.rdWebdavUsername && config.rdWebdavPassword);
+  }
+  if (provider === "torbox") {
+    return !!(config.torboxWebdavUrl && config.torboxWebdavUsername && config.torboxWebdavPassword);
+  }
+  return false;
+}
+
+/**
+ * Checks if a provider has an API key configured (for bridge mode).
+ */
+function hasApiKey(provider: string): boolean {
+  if (provider === "realdebrid") return !!config.rdAccessToken;
+  if (provider === "torbox") return !!config.torboxApiKey;
+  return false;
+}
+
 /**
  * Generates a temporary rclone configuration file containing WebDAV
  * remote definitions for all configured providers.
  *
- * Each provider gets a named section (e.g. `[rd]`, `[torbox]`) with
- * the WebDAV URL, vendor type, username, and obscured password.
+ * Supports two modes per provider:
+ * - **Direct WebDAV**: Uses external WebDAV credentials (RD_WEBDAV_*, TORBOX_WEBDAV_*)
+ * - **Bridge mode**: Uses the built-in WebDAV bridge on localhost (API key only)
  *
- * @returns The absolute path to the generated rclone config file.
- * @throws {Error} If no WebDAV providers are configured.
+ * @param bridgePorts - Map of provider name to local bridge port (for bridge-mode providers)
+ * @returns The absolute path to the generated rclone config file, or empty string if nothing to mount.
  */
-function buildRcloneConfigFile(): string {
+function buildRcloneConfigFile(bridgePorts: Map<string, number>): string {
   const lines: string[] = [];
   const ps = providersSet();
 
-  if (ps.has("realdebrid") && config.rdWebdavUrl && config.rdWebdavUsername && config.rdWebdavPassword) {
-    lines.push(`[rd]`);
-    lines.push(`type = webdav`);
-    lines.push(`url = ${config.rdWebdavUrl}`);
-    lines.push(`vendor = other`);
-    lines.push(`user = ${config.rdWebdavUsername}`);
-    lines.push(`pass = ${obscurePassword(config.rdWebdavPassword)}`);
-    lines.push("");
+  // RealDebrid: direct WebDAV or bridge
+  if (ps.has("realdebrid")) {
+    if (hasDirectWebDAV("realdebrid")) {
+      console.log(`[${new Date().toISOString()}][mount] RealDebrid: using direct WebDAV credentials`);
+      lines.push(`[rd]`);
+      lines.push(`type = webdav`);
+      lines.push(`url = ${config.rdWebdavUrl}`);
+      lines.push(`vendor = other`);
+      lines.push(`user = ${config.rdWebdavUsername}`);
+      lines.push(`pass = ${obscurePassword(config.rdWebdavPassword)}`);
+      lines.push("");
+    } else if (bridgePorts.has("realdebrid")) {
+      const port = bridgePorts.get("realdebrid")!;
+      console.log(`[${new Date().toISOString()}][mount] RealDebrid: using WebDAV bridge on port ${port}`);
+      lines.push(`[rd]`);
+      lines.push(`type = webdav`);
+      lines.push(`url = http://localhost:${port}`);
+      lines.push(`vendor = other`);
+      // No auth needed for local bridge
+      lines.push("");
+    }
   }
 
-  if (ps.has("torbox") && config.torboxWebdavUrl && config.torboxWebdavUsername && config.torboxWebdavPassword) {
-    lines.push(`[torbox]`);
-    lines.push(`type = webdav`);
-    lines.push(`url = ${config.torboxWebdavUrl}`);
-    lines.push(`vendor = other`);
-    lines.push(`user = ${config.torboxWebdavUsername}`);
-    lines.push(`pass = ${obscurePassword(config.torboxWebdavPassword)}`);
-    lines.push("");
+  // TorBox: direct WebDAV or bridge
+  if (ps.has("torbox")) {
+    if (hasDirectWebDAV("torbox")) {
+      console.log(`[${new Date().toISOString()}][mount] TorBox: using direct WebDAV credentials`);
+      lines.push(`[torbox]`);
+      lines.push(`type = webdav`);
+      lines.push(`url = ${config.torboxWebdavUrl}`);
+      lines.push(`vendor = other`);
+      lines.push(`user = ${config.torboxWebdavUsername}`);
+      lines.push(`pass = ${obscurePassword(config.torboxWebdavPassword)}`);
+      lines.push("");
+    } else if (bridgePorts.has("torbox")) {
+      const port = bridgePorts.get("torbox")!;
+      console.log(`[${new Date().toISOString()}][mount] TorBox: using WebDAV bridge on port ${port}`);
+      lines.push(`[torbox]`);
+      lines.push(`type = webdav`);
+      lines.push(`url = http://localhost:${port}`);
+      lines.push(`vendor = other`);
+      lines.push("");
+    }
   }
 
   if (!lines.length) {
-    console.warn(`[${new Date().toISOString()}][mount] No WebDAV providers configured. Set RD_WEBDAV_* or TORBOX_WEBDAV_* envs. Mount skipped.`);
+    console.warn(`[${new Date().toISOString()}][mount] No mount sources available. Need WebDAV creds or API keys.`);
     return "";
   }
 
@@ -255,39 +337,101 @@ function testRemote(remote: string, cfgPath: string): boolean {
 }
 
 /**
- * Mounts all configured WebDAV providers as virtual filesystems using rclone.
+ * Mounts all configured debrid providers as virtual filesystems using rclone.
  *
- * For each configured provider:
- * 1. Builds the rclone configuration file with WebDAV credentials
- * 2. Tests the remote is accessible via `rclone lsd`
- * 3. Constructs mount arguments (VFS cache settings, permissions, logging)
- * 4. Spawns rclone as a daemon process
- * 5. Performs a best-effort post-mount verification after a short delay
+ * Supports two mount strategies per provider:
+ * - **Direct WebDAV**: rclone connects to the provider's remote WebDAV endpoint
+ * - **Bridge mode**: A local WebDAV server is started first ({@link WebDAVBridge}),
+ *   translating provider API calls into a filesystem. rclone then mounts the
+ *   local bridge endpoint.
  *
- * Mount options can be overridden via `config.mountOptions`. If not provided,
- * sensible defaults are used for poll interval, cache mode, buffer size, etc.
+ * Priority: Direct WebDAV credentials > API key (bridge) > skip
  *
- * @throws {Error} If no providers are configured or no mounts can be created.
+ * For each provider:
+ * 1. Determines mount strategy (direct vs bridge)
+ * 2. Starts WebDAV bridges for API-key-only providers
+ * 3. Builds rclone config pointing at the appropriate WebDAV endpoints
+ * 4. Tests the remote is accessible via `rclone lsd`
+ * 5. Spawns rclone as a daemon process
+ * 6. Performs a best-effort post-mount verification after a short delay
  */
 export async function mountVirtualDrive(): Promise<void> {
-  const cfg = buildRcloneConfigFile();
+  const ps = providersSet();
+  const bridgePorts: Map<string, number> = new Map();
+
+  // -----------------------------------------------------------------------
+  // Phase 1: Start WebDAV bridges for providers with API keys but no WebDAV creds
+  // -----------------------------------------------------------------------
+  if (config.webdavBridgeEnabled) {
+    if (ps.has("realdebrid") && !hasDirectWebDAV("realdebrid") && hasApiKey("realdebrid")) {
+      console.log(`[${new Date().toISOString()}][mount] RealDebrid: no WebDAV creds, starting API bridge...`);
+      try {
+        const bridge = new WebDAVBridge({
+          provider: "realdebrid",
+          port: config.webdavBridgePortRD,
+          cacheTtlS: config.webdavCacheTtlS,
+          downloadCacheTtlS: config.webdavDownloadCacheTtlS,
+        });
+        await bridge.start();
+        activeBridges.set("realdebrid", bridge);
+        bridgePorts.set("realdebrid", config.webdavBridgePortRD);
+        console.log(`[${new Date().toISOString()}][mount] RealDebrid bridge started on port ${config.webdavBridgePortRD}`);
+      } catch (err: any) {
+        console.error(`[${new Date().toISOString()}][mount] Failed to start RealDebrid bridge:`, err?.message);
+      }
+    }
+
+    if (ps.has("torbox") && !hasDirectWebDAV("torbox") && hasApiKey("torbox")) {
+      console.log(`[${new Date().toISOString()}][mount] TorBox: no WebDAV creds, starting API bridge...`);
+      try {
+        const bridge = new WebDAVBridge({
+          provider: "torbox",
+          port: config.webdavBridgePortTB,
+          cacheTtlS: config.webdavCacheTtlS,
+          downloadCacheTtlS: config.webdavDownloadCacheTtlS,
+        });
+        await bridge.start();
+        activeBridges.set("torbox", bridge);
+        bridgePorts.set("torbox", config.webdavBridgePortTB);
+        console.log(`[${new Date().toISOString()}][mount] TorBox bridge started on port ${config.webdavBridgePortTB}`);
+      } catch (err: any) {
+        console.error(`[${new Date().toISOString()}][mount] Failed to start TorBox bridge:`, err?.message);
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Phase 2: Build rclone config (uses direct WebDAV or bridge endpoints)
+  // -----------------------------------------------------------------------
+  const cfg = buildRcloneConfigFile(bridgePorts);
   if (!cfg) {
-    console.warn(`[${new Date().toISOString()}][mount] Skipping mount — no WebDAV providers configured.`);
-    console.warn(`[${new Date().toISOString()}][mount] To enable mounting, set RD_WEBDAV_URL/USERNAME/PASSWORD or TORBOX_WEBDAV_URL/USERNAME/PASSWORD.`);
+    console.warn(`[${new Date().toISOString()}][mount] No mount sources configured. Skipping FUSE mount.`);
+    console.warn(`[${new Date().toISOString()}][mount] Provide WebDAV credentials OR API keys with WEBDAV_BRIDGE_ENABLED=true.`);
     return;
   }
+
   const base = config.mountBase;
   // Never attempt to unmount/cleanup the base — it may be a bind mount from host
   ensureDir(base, { cleanupOnStale: false });
   const tmpDir = path.join(os.tmpdir(), "schrodrive");
   ensureDir(tmpDir, { cleanupOnStale: false });
 
+  // -----------------------------------------------------------------------
+  // Phase 3: Determine which remotes to mount
+  // -----------------------------------------------------------------------
   const mounts: Array<{ remote: string; path: string }> = [];
-  const ps = providersSet();
-  if (ps.has("realdebrid") && config.rdWebdavUsername) mounts.push({ remote: "rd:", path: path.join(base, "realdebrid") });
-  if (ps.has("torbox") && config.torboxWebdavUsername) mounts.push({ remote: "torbox:", path: path.join(base, "torbox") });
+  // Mount if we have direct WebDAV OR a running bridge
+  if (ps.has("realdebrid") && (hasDirectWebDAV("realdebrid") || bridgePorts.has("realdebrid"))) {
+    mounts.push({ remote: "rd:", path: path.join(base, "realdebrid") });
+  }
+  if (ps.has("torbox") && (hasDirectWebDAV("torbox") || bridgePorts.has("torbox"))) {
+    mounts.push({ remote: "torbox:", path: path.join(base, "torbox") });
+  }
 
-  if (!mounts.length) throw new Error("Nothing to mount. Check PROVIDERS and credentials.");
+  if (!mounts.length) {
+    console.warn(`[${new Date().toISOString()}][mount] No providers ready to mount.`);
+    return;
+  }
 
   for (const m of mounts) {
     // Safe to cleanup the leaf mount path only
