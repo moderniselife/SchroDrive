@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.5.0] - 2026-06-06 🔑
+*Status: Multi-token download bypass + rate limiter hardening*
+
+### Added ✨
+- **Multi-token download bypass** (`src/core/tokenRotator.ts`):
+  - Inspired by Zurg's `download_tokens` feature — provider-agnostic token rotation
+  - Primary token manages content (add/list/delete); download tokens rotate for streaming
+  - When a token hits HTTP 503 (bandwidth limit), automatically rotates to the next
+  - Tokens auto-reset daily at midnight in configurable timezone (default: Australia/Sydney)
+  - SQLite-persisted state survives container restarts
+  - Works with all 4 providers: RealDebrid, TorBox, AllDebrid, Premiumize
+  - New env vars: `RD_DOWNLOAD_TOKENS`, `TORBOX_DOWNLOAD_TOKENS`, `AD_DOWNLOAD_TOKENS`, `PM_DOWNLOAD_TOKENS`, `TOKEN_RESET_TIMEZONE`
+- **API endpoints for token management**:
+  - `GET /api/tokens` — token pool status per provider (active/limited/cooldown)
+  - `POST /api/tokens/reset` — manually reset all token limits
+- **Token rotation summary** in `GET /api/status` response
+
+### Fixed 🐛
+- **Rate limiter**: `recordSuccess()` no longer clears active rate-limit backoffs prematurely — backoffs must expire naturally before the limiter resets
+- **Rate limiter**: `recordRateLimit()` now accepts `backoffOverrideMs` so providers can specify exact cooldown periods (e.g. TorBox's "60 per hour" = 72s)
+- **All 4 providers**: Parse `Retry-After` headers and pass as explicit backoff overrides
+- **All 4 providers**: Routed all inline `recordRateLimit()` calls through `handleError()` for consistent Retry-After parsing
+- **TorBox**: Parsed "X per Y" delay now fed directly to the rate limiter (was only stored in learning DB)
+
 ### Version [0.4.2] - 2026-06-06 🧪
 *Status: Integration tests aligned with actual API surface*
 

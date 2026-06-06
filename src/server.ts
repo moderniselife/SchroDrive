@@ -30,6 +30,7 @@ import { logBuffer } from "./core/logger";
 import { rateLimiter } from "./core/rateLimiter";
 import { getBridgeStatuses, refreshBridges } from "./services/mount";
 import { getBlacklistEntries, getBlacklistCount, addToBlacklist, removeFromBlacklist, isBlacklisted } from "./core/blacklist";
+import { tokenRotator } from "./core/tokenRotator";
 
 // ===========================================================================
 // Server Initialisation
@@ -140,6 +141,18 @@ export function startServer() {
         count: getBlacklistCount(),
       },
       webdavBridges: getBridgeStatuses(),
+      tokenRotation: (() => {
+        const status = tokenRotator.getAllStatus();
+        const summary: Record<string, { activeTokens: number; limitedTokens: number; totalTokens: number }> = {};
+        for (const [provider, s] of Object.entries(status)) {
+          summary[provider] = {
+            activeTokens: s.activeCount,
+            limitedTokens: s.limitedCount,
+            totalTokens: s.downloadTokens.length || 1,
+          };
+        }
+        return summary;
+      })(),
     });
   });
 
@@ -221,6 +234,37 @@ export function startServer() {
       learned[provider] = { minDelayMs: 0 }; // Actual learnt values would come from DB
     }
     res.json({ ok: true, learned, current });
+  });
+
+  /**
+   * GET /api/tokens — Returns the status of all download token pools per provider.
+   * Shows active/limited counts, masked token identifiers, and remaining cooldown.
+   */
+  app.get('/api/tokens', (_req, res) => {
+    const status = tokenRotator.getAllStatus();
+    // Mask token values in the response for security
+    const masked: Record<string, any> = {};
+    for (const [provider, summary] of Object.entries(status)) {
+      masked[provider] = {
+        ...summary,
+        downloadTokens: summary.downloadTokens.map((t) => ({
+          ...t,
+          token: t.token.length > 4 ? `***${t.token.slice(-4)}` : '****',
+          limitedUntil: t.isLimited ? t.limitedUntil : 0,
+          remainingSeconds: t.isLimited ? Math.max(0, Math.ceil((t.limitedUntil - Date.now()) / 1000)) : 0,
+        })),
+      };
+    }
+    res.json({ ok: true, tokens: masked });
+  });
+
+  /**
+   * POST /api/tokens/reset — Manually resets all download token limits.
+   * Useful for forcing a reset without waiting for the daily cron.
+   */
+  app.post('/api/tokens/reset', (_req, res) => {
+    tokenRotator.resetAllTokens();
+    res.json({ ok: true, message: 'All token limits cleared' });
   });
 
   // ===========================================================================
@@ -1083,6 +1127,9 @@ export function startServer() {
 
   // Optional: start auto-updater for self-update checks
   startAutoUpdater();
+
+  // Start the download token daily reset cron (midnight in configured timezone)
+  tokenRotator.startDailyReset();
 }
 
 // ===========================================================================

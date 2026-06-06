@@ -26,6 +26,7 @@ import https from "https";
 import axios from "axios";
 import { config } from "../core/config";
 import { rateLimiter } from "../core/rateLimiter";
+import { tokenRotator } from "../core/tokenRotator";
 import { registry } from "../providers";
 import {
   upsertDeadTorrent,
@@ -537,8 +538,8 @@ class BridgeCache {
  *
  * @returns Headers object with Bearer token.
  */
-function rdHeaders(): Record<string, string> {
-  return { Authorization: `Bearer ${config.rdAccessToken}` };
+function rdHeaders(overrideToken?: string): Record<string, string> {
+  return { Authorization: `Bearer ${overrideToken || config.rdAccessToken}` };
 }
 
 /**
@@ -676,6 +677,8 @@ async function resolveRDDownloadUrl(torrentId: string, linkIndex: number): Promi
     return null;
   }
 
+  const downloadToken = tokenRotator.getDownloadToken(providerName) || config.rdAccessToken;
+
   await rateLimiter.throttle(providerName);
 
   const base = (config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
@@ -683,7 +686,7 @@ async function resolveRDDownloadUrl(torrentId: string, linkIndex: number): Promi
   try {
     // First, get the torrent info to retrieve the link
     const infoUrl = `${base}/torrents/info/${encodeURIComponent(torrentId)}`;
-    const infoRes = await axiosIPv4.get(infoUrl, { headers: rdHeaders(), timeout: 30000 });
+    const infoRes = await axiosIPv4.get(infoUrl, { headers: rdHeaders(downloadToken), timeout: 30000 });
     rateLimiter.recordSuccess(providerName);
 
     const links: string[] = Array.isArray(infoRes?.data?.links) ? infoRes.data.links : [];
@@ -701,7 +704,7 @@ async function resolveRDDownloadUrl(torrentId: string, linkIndex: number): Promi
     params.set("link", link);
 
     const unrestrictRes = await axiosIPv4.post(unrestrictUrl, params, {
-      headers: { ...rdHeaders(), "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { ...rdHeaders(downloadToken), "Content-Type": "application/x-www-form-urlencoded" },
       timeout: 20000,
     });
     rateLimiter.recordSuccess(providerName);
@@ -715,8 +718,20 @@ async function resolveRDDownloadUrl(torrentId: string, linkIndex: number): Promi
     return downloadUrl;
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
-    if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-      rateLimiter.recordRateLimit(providerName, errorMsg);
+    const status = err?.response?.status;
+    const isRotated = downloadToken !== config.rdAccessToken;
+
+    if (rateLimiter.isRateLimitError(err) || status === 429) {
+      if (!isRotated) {
+        rateLimiter.recordRateLimit(providerName, errorMsg);
+      } else {
+        const masked = downloadToken.length > 4 ? `***${downloadToken.slice(-4)}` : '****';
+        logWarn(providerName, `Rotated download token ${masked} hit 429 rate limit — bypassing global rate limit`);
+      }
+    }
+    if ((status === 503 || status === 429) && isRotated) {
+      const duration = status === 429 ? 60 * 60 * 1000 : undefined; // 1 hour for 429
+      tokenRotator.markTokenLimited(providerName, downloadToken, `${status} ${err?.response?.statusText || 'limit'}`, duration);
     }
     logError(providerName, `Failed to resolve download URL for torrent ${torrentId}`, { error: errorMsg });
     return null;
@@ -803,13 +818,15 @@ async function resolveTBDownloadUrl(torrentId: string, fileId: string): Promise<
     return null;
   }
 
+  const downloadToken = tokenRotator.getDownloadToken(providerName) || config.torboxApiKey;
+
   await rateLimiter.throttle(providerName);
 
   const base = (config.torboxBaseUrl || "https://api.torbox.app").replace(/\/$/, "");
 
   try {
     const params = new URLSearchParams({
-      token: config.torboxApiKey,
+      token: downloadToken,
       torrent_id: torrentId,
       file_id: fileId,
       zip_link: "false",
@@ -827,8 +844,20 @@ async function resolveTBDownloadUrl(torrentId: string, fileId: string): Promise<
     return downloadUrl;
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
-    if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-      rateLimiter.recordRateLimit(providerName, errorMsg);
+    const status = err?.response?.status;
+    const isRotated = downloadToken !== config.torboxApiKey;
+
+    if (rateLimiter.isRateLimitError(err) || status === 429) {
+      if (!isRotated) {
+        rateLimiter.recordRateLimit(providerName, errorMsg);
+      } else {
+        const masked = downloadToken.length > 4 ? `***${downloadToken.slice(-4)}` : '****';
+        logWarn(providerName, `Rotated download token ${masked} hit 429 rate limit — bypassing global rate limit`);
+      }
+    }
+    if ((status === 503 || status === 429) && isRotated) {
+      const duration = status === 429 ? 60 * 60 * 1000 : undefined; // 1 hour for 429
+      tokenRotator.markTokenLimited(providerName, downloadToken, `${status} ${err?.response?.statusText || 'limit'}`, duration);
     }
     logError(providerName, `Failed to resolve download URL for torrent ${torrentId}, file ${fileId}`, {
       error: errorMsg,
