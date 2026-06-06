@@ -5,8 +5,8 @@
  * across restarts. This is a BONUS persistence layer — the app must still
  * function correctly if the database is corrupted, missing, or deleted.
  *
- * Uses `better-sqlite3` for synchronous, zero-dependency SQLite access
- * with WAL journalling for concurrent read performance.
+ * Uses Bun's built-in `bun:sqlite` for synchronous, zero-dependency SQLite
+ * access with WAL journalling for concurrent read performance.
  *
  * Tables:
  * - `processed_watchlist` — tracks which watchlist items have been processed
@@ -18,7 +18,7 @@
  * @module db
  */
 
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import path from 'path';
 import fs from 'fs';
 import { config } from './config';
@@ -28,7 +28,7 @@ import { config } from './config';
 // ===========================================================================
 
 /** The singleton database connection. */
-let db: Database.Database | null = null;
+let db: Database | null = null;
 
 // ===========================================================================
 // Lifecycle
@@ -41,7 +41,7 @@ let db: Database.Database | null = null;
  *
  * @returns The initialised `better-sqlite3` database instance.
  */
-export function getDb(): Database.Database {
+export function getDb(): Database {
   if (db) return db;
 
   const dbPath = config.dbPath;
@@ -52,12 +52,12 @@ export function getDb(): Database.Database {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  db = new Database(dbPath);
+  db = new Database(dbPath, { create: true });
 
   // WAL mode provides better concurrent read performance
-  db.pragma('journal_mode = WAL');
+  db.exec('PRAGMA journal_mode = WAL');
   // Wait up to 5 seconds if the database is locked by another connection
-  db.pragma('busy_timeout = 5000');
+  db.exec('PRAGMA busy_timeout = 5000');
 
   // Run schema migrations
   runMigrations(db);
@@ -94,7 +94,7 @@ export function closeDb(): void {
  *
  * @param database - The database instance to migrate.
  */
-function runMigrations(database: Database.Database): void {
+function runMigrations(database: Database): void {
   const migrations = [
     `CREATE TABLE IF NOT EXISTS processed_watchlist (
       key TEXT PRIMARY KEY,
@@ -160,17 +160,16 @@ export function pruneOldEntries(): void {
     const database = getDb();
     const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
 
-    const watchlistResult = database.prepare(
+    database.prepare(
       'DELETE FROM processed_watchlist WHERE processed_at < ?'
     ).run(thirtyDaysAgo);
 
-    const cacheResult = database.prepare(
+    database.prepare(
       'DELETE FROM response_cache WHERE expires_at < ?'
     ).run(Date.now());
 
     console.log(
-      `[${new Date().toISOString()}][db] Pruned ${watchlistResult.changes} old watchlist entries, ` +
-      `${cacheResult.changes} expired cache entries`
+      `[${new Date().toISOString()}][db] Pruned stale watchlist + expired cache entries`
     );
   } catch (err: any) {
     console.error(`[${new Date().toISOString()}][db] Prune failed: ${err?.message}`);
@@ -640,13 +639,9 @@ export function getCacheEntry(key: string): string | null {
 export function pruneExpiredCache(): void {
   try {
     const database = getDb();
-    const result = database.prepare(
+    database.prepare(
       'DELETE FROM response_cache WHERE expires_at < ?'
     ).run(Date.now());
-
-    if (result.changes > 0) {
-      console.log(`[${new Date().toISOString()}][db] Pruned ${result.changes} expired cache entries`);
-    }
   } catch (err: any) {
     console.error(`[${new Date().toISOString()}][db] pruneExpiredCache error: ${err?.message}`);
   }
