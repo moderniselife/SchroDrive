@@ -12,7 +12,7 @@
  * Files are served via 302 redirect to the direct download URL — no stream
  * proxying needed (unlike MEGA).
  *
- * Rate limits: Varies by server. Some open directories (e.g. 10.0.0.100)
+ * Rate limits: Varies by server. Some open directories (e.g. public file servers)
  * are extremely rate-limited (1 concurrent connection per IP). We cache
  * folder listings aggressively to minimize requests.
  *
