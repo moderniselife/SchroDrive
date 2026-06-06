@@ -1,3 +1,21 @@
+/**
+ * SchroDrive — HTTP API Server
+ *
+ * Defines the Express HTTP server with all REST API routes and SSE streaming
+ * endpoints powering the SchroDrive web GUI. Provides endpoints for:
+ *
+ * - Health checks and system status
+ * - Configuration management (read, update, restart)
+ * - Provider connectivity and torrent/download listing
+ * - SSE streaming for real-time torrent and download data
+ * - Indexer search (Jackett/Prowlarr) and magnet submission
+ * - Log viewing and streaming
+ * - Overseerr webhook integration
+ * - Mounted filesystem browsing
+ *
+ * @module server
+ */
+
 import express from "express";
 import cors from "cors";
 import fs from "fs";
@@ -11,19 +29,41 @@ import { startAutoUpdater } from "./autoUpdate";
 import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDocker, CONFIG_SCHEMA } from "./configApi";
 import { logBuffer } from "./logger";
 import { rateLimiter } from "./rateLimiter";
-import { getBlocklist, getBlocklistInfo, addBlocked, removeBlocked, checkBlocked } from "./infringementList";
-import { rateLimitStore } from "./rateLimitStore";
 
+// ===========================================================================
+// Server Initialisation
+// ===========================================================================
+
+/**
+ * Initialises and starts the Express HTTP server with all API routes,
+ * SSE streaming endpoints, and optional background services (Overseerr poller,
+ * auto-updater).
+ *
+ * The server listens on the port specified in `config.port`.
+ */
 export function startServer() {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   app.use(cors()); // Allow web GUI to connect
 
+  // ===========================================================================
+  // Health Check
+  // ===========================================================================
+
+  /** GET /health — Simple liveness probe. */
   app.get("/health", (_req, res) => {
     res.json({ ok: true });
   });
 
-  // Config API endpoints for web GUI
+  // ===========================================================================
+  // Configuration API
+  // ===========================================================================
+
+  /**
+   * GET /api/config — Returns the current configuration with metadata.
+   * Includes the env file path, Docker detection flag, and schema definition
+   * for the web GUI's settings editor.
+   */
   app.get("/api/config", (_req, res) => {
     try {
       const { config: configData, envPath } = getConfigWithSources();
@@ -39,6 +79,10 @@ export function startServer() {
     }
   });
 
+  /**
+   * POST /api/config — Persists configuration updates to the env file.
+   * Expects `{ config: { key: value, ... } }` in the request body.
+   */
   app.post("/api/config", (req, res) => {
     try {
       const updates = req.body?.config || {};
@@ -53,6 +97,7 @@ export function startServer() {
     }
   });
 
+  /** POST /api/restart — Triggers a graceful process restart. */
   app.post("/api/restart", (_req, res) => {
     try {
       const result = triggerRestart();
@@ -62,6 +107,10 @@ export function startServer() {
     }
   });
 
+  /**
+   * GET /api/status — Returns system status including active services
+   * and indexer configuration.
+   */
   app.get("/api/status", (_req, res) => {
     res.json({
       ok: true,
@@ -73,28 +122,29 @@ export function startServer() {
         deadScanner: config.runDeadScanner,
         deadScannerWatch: config.runDeadScannerWatch,
         organizerWatch: config.runOrganizerWatch,
-        watchlistPoller: config.runWatchlistPoller,
       },
       indexer: {
         configured: isIndexerConfigured(),
         provider: isIndexerConfigured() ? getProviderName() : null,
       },
-      mediaServers: {
-        plex: { configured: !!config.plexToken },
-        jellyfin: { configured: !!(config.jellyfinUrl && config.jellyfinApiKey) },
-        emby: { configured: !!(config.embyUrl && config.embyApiKey) },
-      },
-      infringementList: getBlocklistInfo(),
     });
   });
 
-  // Provider status endpoint
+  // ===========================================================================
+  // Provider Status
+  // ===========================================================================
+
+  /**
+   * GET /api/providers — Returns connectivity and configuration status
+   * for all active debrid providers (TorBox, Real-Debrid).
+   * Attempts a live torrent list fetch to verify connectivity.
+   */
   app.get("/api/providers", async (_req, res) => {
     try {
       const providers: any[] = [];
       const activeProviders = config.providers.length > 0 ? config.providers : ["torbox"];
 
-      // Check TorBox
+      // --- TorBox ---
       if (activeProviders.includes("torbox") && config.torboxApiKey) {
         try {
           const torrents = await listTorboxTorrents();
@@ -132,7 +182,7 @@ export function startServer() {
         });
       }
 
-      // Check Real-Debrid
+      // --- Real-Debrid ---
       if (activeProviders.includes("realdebrid") && isRDConfigured()) {
         try {
           const torrents = await listRDTorrents();
@@ -176,7 +226,14 @@ export function startServer() {
     }
   });
 
-  // Torrents list endpoint
+  // ===========================================================================
+  // Torrents API
+  // ===========================================================================
+
+  /**
+   * GET /api/torrents — Returns a combined, sorted list of torrents from
+   * all active providers. Each torrent is normalised to a consistent shape.
+   */
   app.get("/api/torrents", async (_req, res) => {
     try {
       const allTorrents: any[] = [];
@@ -230,7 +287,7 @@ export function startServer() {
         }
       }
 
-      // Sort by added date descending
+      // Sort by added date descending (newest first)
       allTorrents.sort((a, b) => {
         const dateA = new Date(a.addedAt || 0).getTime();
         const dateB = new Date(b.addedAt || 0).getTime();
@@ -243,7 +300,14 @@ export function startServer() {
     }
   });
 
-  // Downloads list endpoint (Real-Debrid downloads + TorBox web/usenet downloads)
+  // ===========================================================================
+  // Downloads API
+  // ===========================================================================
+
+  /**
+   * GET /api/downloads — Returns a combined, sorted list of downloads from
+   * all active providers (RD downloads, TorBox web/usenet downloads).
+   */
   app.get("/api/downloads", async (_req, res) => {
     try {
       const allDownloads: any[] = [];
@@ -317,7 +381,7 @@ export function startServer() {
         }
       }
 
-      // Sort by added date descending
+      // Sort by added date descending (newest first)
       allDownloads.sort((a, b) => {
         const dateA = new Date(a.addedAt || 0).getTime();
         const dateB = new Date(b.addedAt || 0).getTime();
@@ -330,26 +394,39 @@ export function startServer() {
     }
   });
 
-  // SSE Streaming endpoint for torrents - sends data page by page as fetched
+  // ===========================================================================
+  // SSE Streaming — Torrents
+  // ===========================================================================
+
+  /**
+   * GET /api/torrents/stream — Server-Sent Events endpoint that streams
+   * torrent data page-by-page as it's fetched from providers.
+   *
+   * Uses in-flight request locking to prevent duplicate concurrent fetches.
+   * If another request is already in-flight, returns cached data immediately
+   * or waits for the in-flight request to complete.
+   *
+   * Events emitted: `status`, `torrents`, `error`, `done`.
+   */
   app.get("/api/torrents/stream", async (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
+    /** Helper to emit a named SSE event with JSON data. */
     const send = (event: string, data: any) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    // Try to acquire lock - if another request is in-flight, check cache or wait
+    // Acquire an exclusive lock to prevent concurrent API requests
     const lockKey = "stream:torrents";
     let gotLock = await rateLimiter.acquireLock(lockKey);
     
     if (!gotLock) {
-      // Check if we have cached data
+      // Another request is already in-flight — try serving from cache
       const cachedTorrents = rateLimiter.getCache<any[]>("realdebrid_torrents");
       if (cachedTorrents && cachedTorrents.length > 0) {
-        // Return cached data immediately
         send("status", { message: "Using cached data..." });
         const mapped = cachedTorrents.map((t: any) => ({
           id: t.id,
@@ -369,7 +446,7 @@ export function startServer() {
         res.end();
         return;
       }
-      // No cache - wait for in-flight request then fetch fresh
+      // No cache available — wait for the in-flight request to finish
       send("status", { message: "Waiting for data..." });
       gotLock = await rateLimiter.acquireLock(lockKey, true); // wait for lock
     }
@@ -404,7 +481,7 @@ export function startServer() {
         }
       }
 
-      // Fetch Real-Debrid torrents - stream page by page
+      // Fetch Real-Debrid torrents — stream page by page via async generator
       if (activeProviders.includes("realdebrid") && isRDConfigured()) {
         send("status", { message: "Fetching Real-Debrid torrents..." });
         try {
@@ -442,26 +519,37 @@ export function startServer() {
     }
   });
 
-  // SSE Streaming endpoint for downloads - sends data page by page as fetched
+  // ===========================================================================
+  // SSE Streaming — Downloads
+  // ===========================================================================
+
+  /**
+   * GET /api/downloads/stream — Server-Sent Events endpoint that streams
+   * download data page-by-page as it's fetched from providers.
+   *
+   * Uses the same in-flight locking pattern as the torrents stream endpoint.
+   *
+   * Events emitted: `status`, `downloads`, `error`, `done`.
+   */
   app.get("/api/downloads/stream", async (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
+    /** Helper to emit a named SSE event with JSON data. */
     const send = (event: string, data: any) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    // Try to acquire lock - if another request is in-flight, check cache or wait
+    // Acquire an exclusive lock to prevent concurrent API requests
     const lockKey = "stream:downloads";
     let gotLock = await rateLimiter.acquireLock(lockKey);
     
     if (!gotLock) {
-      // Check if we have cached data
+      // Another request is already in-flight — try serving from cache
       const cachedDownloads = rateLimiter.getCache<any[]>("realdebrid_downloads");
       if (cachedDownloads && cachedDownloads.length > 0) {
-        // Return cached data immediately
         send("status", { message: "Using cached data..." });
         const mapped = cachedDownloads.map((d: any) => ({
           id: d.id,
@@ -480,7 +568,7 @@ export function startServer() {
         res.end();
         return;
       }
-      // No cache - wait for in-flight request then fetch fresh
+      // No cache available — wait for the in-flight request to finish
       send("status", { message: "Waiting for data..." });
       gotLock = await rateLimiter.acquireLock(lockKey, true); // wait for lock
     }
@@ -490,7 +578,7 @@ export function startServer() {
       send("status", { message: "Fetching downloads...", providers: activeProviders });
       let totalCount = 0;
 
-      // Fetch Real-Debrid downloads - stream page by page
+      // Fetch Real-Debrid downloads — stream page by page via async generator
       if (activeProviders.includes("realdebrid") && isRDConfigured()) {
         send("status", { message: "Fetching Real-Debrid downloads..." });
         try {
@@ -574,7 +662,18 @@ export function startServer() {
     }
   });
 
-  // Search endpoint
+  // ===========================================================================
+  // Search API
+  // ===========================================================================
+
+  /**
+   * GET /api/search — Searches configured indexers (Jackett/Prowlarr)
+   * for torrents matching the given query.
+   *
+   * Query params:
+   * - `q` (required) — The search query string.
+   * - `categories` (optional) — Comma-separated category IDs.
+   */
   app.get("/api/search", async (req, res) => {
     try {
       const query = String(req.query.q || "").trim();
@@ -595,7 +694,7 @@ export function startServer() {
       console.log(`[${new Date().toISOString()}][api/search] searching`, { query, categories });
       const results = await searchIndexer(query, { categories });
       
-      // Map results to a consistent format
+      // Normalise results to a consistent shape regardless of indexer response format
       const mappedResults = results.map((r: any) => ({
         title: r.title || r.Title,
         size: r.size || r.Size || 0,
@@ -620,7 +719,20 @@ export function startServer() {
     }
   });
 
-  // Add magnet endpoint
+  // ===========================================================================
+  // Add Magnet API
+  // ===========================================================================
+
+  /**
+   * POST /api/add — Adds a magnet link to the specified (or default) provider.
+   *
+   * Request body:
+   * - `magnet` (required) — The magnet URI to add.
+   * - `name` (optional) — Human-readable name for the torrent.
+   * - `provider` (optional) — Target provider ("torbox" or "realdebrid").
+   *
+   * For Real-Debrid, automatically selects all files after adding.
+   */
   app.post("/api/add", async (req, res) => {
     try {
       const { magnet, name, provider: targetProvider } = req.body || {};
@@ -645,6 +757,7 @@ export function startServer() {
         }
         console.log(`[${new Date().toISOString()}][api/add] adding to Real-Debrid`, { name });
         const result = await addMagnetToRD(magnet);
+        // Automatically select all files to begin downloading
         if (result.id) {
           await selectAllFilesRD(result.id);
         }
@@ -658,7 +771,17 @@ export function startServer() {
     }
   });
 
-  // Logs API - GET recent logs
+  // ===========================================================================
+  // Logs API
+  // ===========================================================================
+
+  /**
+   * GET /api/logs — Returns recent log entries from the in-memory log buffer.
+   *
+   * Query params:
+   * - `limit` (optional) — Number of entries to return (max 500, default 100).
+   * - `level` (optional) — Filter by log level (default "all").
+   */
   app.get("/api/logs", (req, res) => {
     try {
       const limit = Math.min(Number(req.query.limit) || 100, 500);
@@ -670,7 +793,11 @@ export function startServer() {
     }
   });
 
-  // Logs API - SSE streaming endpoint
+  /**
+   * GET /api/logs/stream — SSE endpoint for real-time log streaming.
+   * Sends initial log batch, then streams new entries as they arrive.
+   * Includes a 30-second heartbeat to keep the connection alive.
+   */
   app.get("/api/logs/stream", (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -678,28 +805,28 @@ export function startServer() {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.flushHeaders();
 
-    // Send initial logs
+    // Send initial batch of recent logs
     const initialLogs = logBuffer.getLogs(50);
     res.write(`data: ${JSON.stringify({ type: "initial", logs: initialLogs })}\n\n`);
 
-    // Subscribe to new logs
+    // Subscribe to new log entries — callback fires for each new entry
     const unsubscribe = logBuffer.subscribe((entry) => {
       res.write(`data: ${JSON.stringify({ type: "log", log: entry })}\n\n`);
     });
 
-    // Keep connection alive with heartbeat
+    // Keep connection alive with periodic heartbeat comments
     const heartbeat = setInterval(() => {
       res.write(`: heartbeat\n\n`);
     }, 30000);
 
-    // Cleanup on close
+    // Cleanup on client disconnect
     req.on("close", () => {
       clearInterval(heartbeat);
       unsubscribe();
     });
   });
 
-  // Logs API - Clear logs
+  /** DELETE /api/logs — Clears the in-memory log buffer. */
   app.delete("/api/logs", (_req, res) => {
     try {
       logBuffer.clear();
@@ -709,7 +836,22 @@ export function startServer() {
     }
   });
 
+  // ===========================================================================
+  // Overseerr Webhook
+  // ===========================================================================
+
   if (config.runWebhook) {
+    /**
+     * POST /webhook/overseerr — Receives webhook payloads from Overseerr
+     * when new media is requested.
+     *
+     * Processing flow:
+     * 1. Validates indexer and API key configuration
+     * 2. Checks optional authorisation header
+     * 3. Extracts search query from the webhook payload
+     * 4. Responds with HTTP 202 immediately (avoids Overseerr's 20s timeout)
+     * 5. Processes asynchronously: searches indexer → picks best result → adds magnet
+     */
     app.post("/webhook/overseerr", async (req, res) => {
       try {
         console.log(`[${new Date().toISOString()}][webhook] hit /webhook/overseerr`);
@@ -731,6 +873,7 @@ export function startServer() {
           });
         }
 
+        // Optional webhook authorisation check
         if (config.overseerrAuth && req.get("authorization") !== config.overseerrAuth) {
           console.warn(`[${new Date().toISOString()}][webhook] unauthorized request (bad auth header)`);
           return res.status(401).json({ ok: false, error: "Unauthorized" });
@@ -749,6 +892,7 @@ export function startServer() {
         res.status(202).json({ ok: true, accepted: true, query: built.query, categories: built.categories });
         console.log(`[${new Date().toISOString()}][webhook] responded 202, processing async...`);
 
+        // Background async processing — search, select best result, and add magnet
         (async () => {
           try {
             const provider = getProviderName();
@@ -787,17 +931,30 @@ export function startServer() {
     });
   }
 
-  // Filesystem browser endpoint - browses actual mounted files
+  // ===========================================================================
+  // Filesystem Browser
+  // ===========================================================================
+
+  /**
+   * GET /api/files — Browses the actual mounted filesystem.
+   * Returns directory listings or file metadata for the requested path.
+   *
+   * Query params:
+   * - `path` (optional) — Relative path within the mount base (default "/").
+   *
+   * Includes directory traversal protection to prevent accessing files
+   * outside the mount base.
+   */
   app.get("/api/files", async (req, res) => {
     try {
       const requestedPath = String(req.query.path || "/");
       const mountBase = config.mountBase || "/mnt/schrodrive";
       
-      // Sanitize path to prevent directory traversal
+      // Sanitise path to prevent directory traversal attacks
       const safePath = path.normalize(requestedPath).replace(/^(\.\.[\/\\])+/, "");
       const fullPath = path.join(mountBase, safePath);
       
-      // Ensure we're still within mount base
+      // Ensure the resolved path hasn't escaped the mount base
       if (!fullPath.startsWith(mountBase)) {
         return res.status(403).json({ ok: false, error: "Access denied" });
       }
@@ -810,7 +967,7 @@ export function startServer() {
       const stat = fs.statSync(fullPath);
       
       if (stat.isFile()) {
-        // Return file info
+        // Return file metadata (not the file contents)
         return res.json({
           ok: true,
           type: "file",
@@ -843,7 +1000,7 @@ export function startServer() {
         }
       });
       
-      // Sort: directories first, then by name
+      // Sort: directories first, then alphabetically by name
       items.sort((a, b) => {
         if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
         return a.name.localeCompare(b.name);
@@ -862,125 +1019,41 @@ export function startServer() {
     }
   });
 
-  // =========================================================================
-  // Infringement Blocklist API
-  // =========================================================================
-
-  /** GET /api/infringement-list — list all blocked patterns. */
-  app.get("/api/infringement-list", (_req, res) => {
-    try {
-      const entries = getBlocklist();
-      const info = getBlocklistInfo();
-      res.json({ ok: true, ...info, entries });
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
-  });
-
-  /** POST /api/infringement-list — manually add a blocklist entry. */
-  app.post("/api/infringement-list", (req, res) => {
-    try {
-      const { pattern, blockedBy, reason, matchType } = req.body || {};
-      if (!pattern) {
-        return res.status(400).json({ ok: false, error: "Missing 'pattern' in request body" });
-      }
-      const entry = addBlocked(
-        pattern,
-        blockedBy || "both",
-        reason || "Manually added",
-        matchType || "contains"
-      );
-      res.status(201).json({ ok: true, entry });
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
-  });
-
-  /** DELETE /api/infringement-list/:id — remove a blocklist entry. */
-  app.delete("/api/infringement-list/:id", (req, res) => {
-    try {
-      const removed = removeBlocked(req.params.id);
-      if (!removed) {
-        return res.status(404).json({ ok: false, error: "Entry not found" });
-      }
-      res.json({ ok: true, removed: true });
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
-  });
-
-  /** GET /api/infringement-list/check?name=... — check if a name is blocked. */
-  app.get("/api/infringement-list/check", (req, res) => {
-    try {
-      const name = String(req.query.name || "").trim();
-      const provider = req.query.provider as "realdebrid" | "torbox" | undefined;
-      if (!name) {
-        return res.status(400).json({ ok: false, error: "Missing query parameter 'name'" });
-      }
-      const blocked = checkBlocked(name, provider);
-      res.json({ ok: true, blocked: !!blocked, entry: blocked });
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
-  });
-
-  // =========================================================================
-  // Dynamic Rate Limit Learning API
-  // =========================================================================
-
-  /** GET /api/rate-limits — view all learned rate limit stats. */
-  app.get("/api/rate-limits", (_req, res) => {
-    try {
-      const stats = rateLimitStore.getAllStats();
-      const currentLimits = rateLimiter.getStatus();
-      res.json({ ok: true, learned: stats, current: currentLimits });
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
-  });
-
-  /** GET /api/rate-limits/:provider — view learned stats for one provider. */
-  app.get("/api/rate-limits/:provider", (req, res) => {
-    try {
-      const provider = req.params.provider;
-      const endpoints = rateLimitStore.getProviderStats(provider);
-      const currentDelay = rateLimitStore.getProviderDelay(provider);
-      const currentLimit = rateLimiter.getStatus()[provider];
-      res.json({ ok: true, provider, currentDelay, currentLimit, endpoints });
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
-  });
-
-  /** POST /api/rate-limits/reset — reset all learned data. */
-  app.post("/api/rate-limits/reset", (req, res) => {
-    try {
-      const provider = req.body?.provider;
-      if (provider) {
-        rateLimitStore.resetProvider(provider);
-        res.json({ ok: true, message: `Reset learned data for ${provider}` });
-      } else {
-        rateLimitStore.resetAll();
-        res.json({ ok: true, message: "Reset all learned rate limit data" });
-      }
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
-  });
+  // ===========================================================================
+  // Server Startup
+  // ===========================================================================
 
   app.listen(config.port, () => {
     console.log(`Server listening on port ${config.port}`);
   });
 
-  // Optional: start Overseerr API poller
+  // Optional: start Overseerr API poller for periodic request checking
   if (config.runPoller) {
     startOverseerrPoller();
   }
 
-  // Optional: start auto-updater
+  // Optional: start auto-updater for self-update checks
   startAutoUpdater();
 }
 
+// ===========================================================================
+// Webhook Payload Parser
+// ===========================================================================
+
+/**
+ * Extracts a search query and optional category filters from an Overseerr
+ * webhook payload.
+ *
+ * Prefers the `subject` field if present. Falls back to constructing a
+ * query from `media.title`/`media.name` with optional year and TMDB ID.
+ *
+ * Maps `media_type` to Prowlarr category IDs:
+ * - "movie" → `["5000"]`
+ * - "tv" → `["5000"]`
+ *
+ * @param payload - The raw Overseerr webhook payload.
+ * @returns An object with `query` and optional `categories`, or `undefined` if no query could be derived.
+ */
 export function buildQueryFromPayload(payload: any): { query: string; categories?: string[] } | undefined {
   const subject: string | undefined = payload?.subject;
   const media = payload?.media || {};
@@ -994,6 +1067,7 @@ export function buildQueryFromPayload(payload: any): { query: string; categories
     query = subject.trim();
   } else if (title) {
     query = year ? `${title} ${year}` : title;
+    // Append TMDB ID for more specific search results
     if (tmdbId && Number.isInteger(Number(tmdbId))) {
       query += ` TMDB${tmdbId}`;
     }
