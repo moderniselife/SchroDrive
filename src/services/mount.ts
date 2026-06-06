@@ -310,30 +310,64 @@ function canAllowOther(): boolean {
  * Tests whether an rclone remote is accessible by listing its root directory.
  * Used as a pre-flight check before attempting to mount.
  *
+ * Uses async spawn instead of spawnSync to avoid blocking the event loop —
+ * this is critical when using the WebDAV bridge, as the bridge HTTP server
+ * must be able to respond to rclone's PROPFIND requests on the same process.
+ *
  * @param remote - The rclone remote name (e.g. "rd:", "torbox:").
  * @param cfgPath - The path to the rclone configuration file.
  * @returns `true` if the remote responded successfully.
  */
-function testRemote(remote: string, cfgPath: string): boolean {
-  try {
-    const res = spawnSync(
-      config.rclonePath,
-      ["lsd", remote, "--config", cfgPath, "--log-level=DEBUG"],
-      { encoding: "utf8" }
-    );
-    if (res.status === 0) return true;
-    console.error(
-      `[${new Date().toISOString()}][mount] rclone test for ${remote} failed`,
-      { status: res.status, stderr: res.stderr }
-    );
-    return false;
-  } catch (e: any) {
-    console.error(
-      `[${new Date().toISOString()}][mount] rclone test error for ${remote}`,
-      { err: e?.message }
-    );
-    return false;
-  }
+async function testRemote(remote: string, cfgPath: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    try {
+      const child = spawn(
+        config.rclonePath,
+        ["lsd", remote, "--config", cfgPath, "--contimeout=15s", "--timeout=30s"],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] } as any
+      );
+
+      let stderr = "";
+      child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+      // Timeout: don't wait forever
+      const timer = setTimeout(() => {
+        child.kill("SIGTERM");
+        console.warn(
+          `[${new Date().toISOString()}][mount] rclone test for ${remote} timed out after 30s`
+        );
+        resolve(false);
+      }, 30000);
+
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        if (code === 0) {
+          resolve(true);
+        } else {
+          console.error(
+            `[${new Date().toISOString()}][mount] rclone test for ${remote} failed`,
+            { status: code, stderr: stderr.trim().slice(0, 500) || null }
+          );
+          resolve(false);
+        }
+      });
+
+      child.on("error", (e: any) => {
+        clearTimeout(timer);
+        console.error(
+          `[${new Date().toISOString()}][mount] rclone test error for ${remote}`,
+          { err: e?.message }
+        );
+        resolve(false);
+      });
+    } catch (e: any) {
+      console.error(
+        `[${new Date().toISOString()}][mount] rclone test spawn error for ${remote}`,
+        { err: e?.message }
+      );
+      resolve(false);
+    }
+  });
 }
 
 /**
