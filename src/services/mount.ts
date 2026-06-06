@@ -27,6 +27,13 @@ import { WebDAVBridge } from "./webdavBridge";
 import type { BridgeStatus } from "./webdavBridge";
 
 // ===========================================================================
+// Module-level State
+// ===========================================================================
+
+/** Temporary directory for rclone config and logs. Initialised by mountVirtualDrive. */
+let tmpDir = path.join(os.tmpdir(), "schrodrive");
+
+// ===========================================================================
 // Mount Utilities
 // ===========================================================================
 
@@ -447,7 +454,7 @@ export async function mountVirtualDrive(): Promise<void> {
   const base = config.mountBase;
   // Never attempt to unmount/cleanup the base — it may be a bind mount from host
   ensureDir(base, { cleanupOnStale: false });
-  const tmpDir = path.join(os.tmpdir(), "schrodrive");
+  tmpDir = path.join(os.tmpdir(), "schrodrive");
   ensureDir(tmpDir, { cleanupOnStale: false });
 
   // -----------------------------------------------------------------------
@@ -556,4 +563,223 @@ export async function mountVirtualDrive(): Promise<void> {
   }
 
   console.log(`[${new Date().toISOString()}][mount] mounts initiated at ${base}`);
+
+  // Start the mount health monitor to detect and recover from IO errors
+  startMountHealthMonitor(mounts, cfg, base);
+}
+
+// ===========================================================================
+// Mount Health Monitor
+// ===========================================================================
+
+/**
+ * Mount health monitor configuration.
+ * Periodically checks rclone log files for persistent IO errors
+ * (423 Locked, transport connection broken, etc.) and auto-remounts
+ * when the error rate exceeds a threshold.
+ *
+ * This is the primary defence against the cascade failure pattern
+ * from pd_zurg where a burst of 423 errors would permanently break
+ * the FUSE mount until manual restart.
+ */
+
+/** Number of consecutive health check failures before triggering a remount. */
+const HEALTH_CHECK_FAILURE_THRESHOLD = 5;
+
+/** Interval between health checks in milliseconds. */
+const HEALTH_CHECK_INTERVAL_MS = 60_000; // 1 minute
+
+/** Error patterns that indicate a problematic mount. */
+const MOUNT_ERROR_PATTERNS = [
+  "423 Locked",
+  "IO error",
+  "transport connection broken",
+  "connection reset by peer",
+  "502 Bad Gateway",
+  "503 Service Unavailable",
+  "vfs cache: failed to open",
+];
+
+interface MountTarget {
+  remote: string;
+  path: string;
+}
+
+/**
+ * Starts a background health monitor for all active rclone mounts.
+ * Periodically reads rclone log files and checks the FUSE mount accessibility.
+ * If persistent errors are detected, automatically remounts the affected provider.
+ */
+function startMountHealthMonitor(
+  mounts: MountTarget[],
+  rcloneConfigPath: string,
+  _base: string,
+): void {
+  const failureCounts: Record<string, number> = {};
+  const logPositions: Record<string, number> = {};
+
+  for (const m of mounts) {
+    failureCounts[m.remote] = 0;
+    logPositions[m.remote] = 0;
+  }
+
+  console.log(`[${new Date().toISOString()}][mount-health] started monitoring ${mounts.length} mount(s)`);
+
+  setInterval(async () => {
+    for (const m of mounts) {
+      const remoteName = m.remote.replace(":", "");
+      const logFile = path.join(tmpDir, `rclone-${remoteName}.log`);
+
+      let hasErrors = false;
+
+      // 1. Check rclone log for new errors since last read
+      try {
+        const stat = fs.statSync(logFile);
+        if (stat.size > logPositions[m.remote]) {
+          const fd = fs.openSync(logFile, "r");
+          const bufSize = Math.min(stat.size - logPositions[m.remote], 8192);
+          const buf = Buffer.alloc(bufSize);
+          fs.readSync(fd, buf, 0, bufSize, logPositions[m.remote]);
+          fs.closeSync(fd);
+          logPositions[m.remote] = stat.size;
+
+          const newLogs = buf.toString("utf8");
+          const errorLines = newLogs.split("\n").filter((line) =>
+            MOUNT_ERROR_PATTERNS.some((p) => line.includes(p))
+          );
+
+          if (errorLines.length > 0) {
+            hasErrors = true;
+            console.warn(
+              `[${new Date().toISOString()}][mount-health] ${m.remote} detected ${errorLines.length} error(s) in rclone log`
+            );
+          }
+        }
+      } catch {
+        // Log file might not exist yet — that's fine
+      }
+
+      // 2. Check FUSE mount accessibility (non-blocking)
+      try {
+        const items = await Promise.race([
+          fs.promises.readdir(m.path),
+          sleep(5000).then(() => { throw new Error("readdir timed out"); }),
+        ]);
+        if ((items as string[]).length === 0) {
+          hasErrors = true;
+          console.warn(`[${new Date().toISOString()}][mount-health] ${m.remote} mount at ${m.path} is empty`);
+        }
+      } catch (e: any) {
+        hasErrors = true;
+        console.warn(
+          `[${new Date().toISOString()}][mount-health] ${m.remote} mount at ${m.path} inaccessible: ${e?.message}`
+        );
+      }
+
+      // 3. Update failure counter and trigger remount if needed
+      if (hasErrors) {
+        failureCounts[m.remote]++;
+        console.warn(
+          `[${new Date().toISOString()}][mount-health] ${m.remote} failure streak: ${failureCounts[m.remote]}/${HEALTH_CHECK_FAILURE_THRESHOLD}`
+        );
+
+        if (failureCounts[m.remote] >= HEALTH_CHECK_FAILURE_THRESHOLD) {
+          console.error(
+            `[${new Date().toISOString()}][mount-health] ${m.remote} exceeded failure threshold — initiating remount`
+          );
+          await attemptRemount(m, rcloneConfigPath);
+          failureCounts[m.remote] = 0;
+          logPositions[m.remote] = 0; // Reset log position after remount
+        }
+      } else {
+        // Reset counter on successful check
+        if (failureCounts[m.remote] > 0) {
+          console.log(`[${new Date().toISOString()}][mount-health] ${m.remote} recovered — resetting failure counter`);
+        }
+        failureCounts[m.remote] = 0;
+      }
+    }
+  }, HEALTH_CHECK_INTERVAL_MS);
+}
+
+/**
+ * Attempts to remount a failed rclone FUSE mount.
+ * Cleans up the stale mount, then re-spawns rclone with the same config.
+ */
+async function attemptRemount(mount: MountTarget, rcloneConfigPath: string): Promise<void> {
+  const ts = () => new Date().toISOString();
+
+  console.log(`[${ts()}][mount-health] unmounting ${mount.remote} at ${mount.path}...`);
+
+  // Unmount the stale FUSE mount
+  cleanupMountPath(mount.path);
+
+  // Wait a moment for cleanup
+  await sleep(2000);
+
+  // Ensure mount directory exists
+  ensureDir(mount.path, { cleanupOnStale: false });
+
+  // Rebuild rclone mount args
+  const args = [
+    "mount",
+    mount.remote,
+    mount.path,
+    "--config", rcloneConfigPath,
+  ];
+
+  if (canAllowOther()) {
+    args.push("--allow-other");
+  }
+  args.push("--allow-non-empty");
+
+  // Apply configured mount options
+  if (config.mountOptions && config.mountOptions.trim()) {
+    args.push(...splitArgs(config.mountOptions));
+  } else {
+    args.push(`--poll-interval=${config.mountPollInterval}`);
+    args.push(`--dir-cache-time=${config.mountDirCacheTime}`);
+    args.push(`--vfs-cache-mode=${config.mountVfsCacheMode}`);
+    args.push(`--buffer-size=${config.mountBufferSize}`);
+    if ((config.mountVfsReadChunkSize || "").trim()) args.push(`--vfs-read-chunk-size=${config.mountVfsReadChunkSize}`);
+    if ((config.mountVfsReadChunkSizeLimit || "").trim()) args.push(`--vfs-read-chunk-size-limit=${config.mountVfsReadChunkSizeLimit}`);
+    if ((config.mountVfsCacheMaxAge || "").trim()) args.push(`--vfs-cache-max-age=${config.mountVfsCacheMaxAge}`);
+    if ((config.mountVfsCacheMaxSize || "").trim()) args.push(`--vfs-cache-max-size=${config.mountVfsCacheMaxSize}`);
+  }
+
+  if (!(config.mountDirPerms || config.mountFilePerms)) {
+    args.push("--umask", "0022");
+  }
+
+  const remoteName = mount.remote.replace(":", "");
+  const logFile = path.join(tmpDir, `rclone-${remoteName}.log`);
+  if (!hasUserLogFlags(config.mountOptions)) {
+    args.push("--log-level=INFO");
+  }
+  args.push(`--log-file=${logFile}`);
+  args.push("--daemon");
+
+  console.log(`[${ts()}][mount-health] re-mounting: rclone ${args.join(" ")}`);
+
+  const p = spawn(config.rclonePath, args, { stdio: "inherit" });
+  p.on("error", (e) => {
+    console.error(`[${ts()}][mount-health] remount failed for ${mount.remote}`, { err: (e as any)?.message });
+  });
+  p.on("close", (code) => {
+    if (code !== 0) {
+      console.error(`[${ts()}][mount-health] remount daemon exited with code ${code} for ${mount.remote}`);
+    }
+  });
+
+  // Verify post-remount
+  try {
+    await sleep(5000);
+    const items = await Promise.race([
+      fs.promises.readdir(mount.path),
+      sleep(10000).then(() => { throw new Error("readdir timed out"); }),
+    ]);
+    console.log(`[${ts()}][mount-health] remount verify ${mount.remote} → entries=${(items as string[]).length}`);
+  } catch (e: any) {
+    console.error(`[${ts()}][mount-health] remount verify failed for ${mount.remote}`, { err: e?.message });
+  }
 }
