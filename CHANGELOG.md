@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.2.1] - 2026-06-06 🚀
+*Status: AllDebrid provider support*
+
+### Added ✨
+- **AllDebrid provider** (`src/providers/alldebrid.ts`):
+  - Full `DebridProvider` interface implementation for AllDebrid v4 API
+  - Auth via `apikey` + `agent` query parameters
+  - Magnet management: list, add (upload + selectFiles), delete
+  - Status code mapping: 0–3 downloading, 4 finished, 5–7 error
+  - Embedded file info in magnet status (no separate file fetch needed)
+  - Link resolution via `/v4/link/unlock` endpoint
+  - WebDAV bridge support with inline file population
+  - Rate limiting via shared `rateLimiter` singleton
+  - IPv4-forced axios for Docker compatibility
+  - Self-registers with provider registry on module load
+- New config options (already in config.ts):
+  - `ALLDEBRID_API_KEY`, `ALLDEBRID_API_BASE`, `ALLDEBRID_AGENT`
+  - `ALLDEBRID_WEBDAV_URL`, `ALLDEBRID_WEBDAV_USERNAME`, `ALLDEBRID_WEBDAV_PASSWORD`
+  - `WEBDAV_BRIDGE_PORT_AD` (default: 9117)
+
+---
+
 ### Version [0.2.0] - 2026-06-06 🚀
 *Status: Major release — replaces PD Zurg + TorBox Media Center*
 
