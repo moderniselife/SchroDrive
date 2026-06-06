@@ -6,9 +6,13 @@ services:
     restart: unless-stopped
     network_mode: host
     dns: 1.1.1.1
+    stdin_open: true
+    tty: true
     ports:
       - "8978:8978"   # Backend API
       - "3000:3000"   # Web GUI (when RUN_WEB_GUI=true)
+      - "7000:7000"   # Stremio addon server
+    # FUSE mount — propagate to host so Plex/Jellyfin/Emby can see the files
     volumes:
       - type: bind
         source: /home/joseph/schrodrive
@@ -18,86 +22,141 @@ services:
       # Persistent data directory (SQLite DB, blacklist, rate limit store)
       - schrodrive_data:/data
     devices:
-      - /dev/fuse:/dev/fuse
+      - /dev/fuse:/dev/fuse:rwm
     cap_add:
       - SYS_ADMIN
     security_opt:
       - apparmor:unconfined
+      - no-new-privileges
     environment:
-      # ===== Web GUI =====
-      - RUN_WEB_GUI=${RUN_WEB_GUI:-true}
-      - WEB_PORT=${WEB_PORT:-3000}
-      - BACKEND_URL=${BACKEND_URL:-http://localhost:8978}
+      - TZ=Australia/Sydney
+      
+      # ===== Active Providers =====
+      - PROVIDERS=torbox,realdebrid
+      
+      # ===== TorBox Config =====
+      - TORBOX_API_KEY=${TORBOX_API_KEY}
+      - TORBOX_BASE_URL=${TORBOX_BASE_URL:-https://api.torbox.app}
+      # TorBox WebDAV (optional — only needed if using rclone WebDAV mounts directly)
+      # - TORBOX_WEBDAV_URL=${TORBOX_WEBDAV_URL:-https://webdav.torbox.app}
+      # - TORBOX_WEBDAV_USERNAME=${TORBOX_WEBDAV_USERNAME}
+      # - TORBOX_WEBDAV_PASSWORD=${TORBOX_WEBDAV_PASSWORD}
+      
+      # ===== RealDebrid Config =====
+      - RD_ACCESS_TOKEN=${RD_ACCESS_TOKEN:-${RD_API_KEY}}
+      - RD_API_BASE=${RD_API_BASE:-https://api.real-debrid.com/rest/1.0}
+      # RD WebDAV (optional — only needed if using rclone WebDAV mounts directly)
+      # - RD_WEBDAV_URL=${RD_WEBDAV_URL:-https://webdav.real-debrid.com}
+      # - RD_WEBDAV_USERNAME=${RD_WEBDAV_USERNAME}
+      # - RD_WEBDAV_PASSWORD=${RD_WEBDAV_PASSWORD}
+      
+      # ===== Download Token Rotation (Zurg-style 503/429 bypass) =====
+      - RD_DOWNLOAD_TOKENS=${RD_DOWNLOAD_TOKENS:-}
+      - TORBOX_DOWNLOAD_TOKENS=${TORBOX_DOWNLOAD_TOKENS:-}
+      - AD_DOWNLOAD_TOKENS=${AD_DOWNLOAD_TOKENS:-}
+      - PM_DOWNLOAD_TOKENS=${PM_DOWNLOAD_TOKENS:-}
+      - TOKEN_RESET_TIMEZONE=${TOKEN_RESET_TIMEZONE:-Australia/Sydney}
+      
+      # ===== FUSE Mount Settings =====
+      - RUN_MOUNT=${RUN_MOUNT:-true}
+      - MOUNT_BASE=/mnt/schrodrive
+      - RCLONE_PATH=/usr/bin/rclone
+      - MOUNT_VFS_CACHE_MODE=${MOUNT_VFS_CACHE_MODE:-minimal}
+      - MOUNT_DIR_CACHE_TIME=${MOUNT_DIR_CACHE_TIME:-10s}
+      - MOUNT_BUFFER_SIZE=${MOUNT_BUFFER_SIZE:-0}
+      - MOUNT_VFS_READ_CHUNK_SIZE=${MOUNT_VFS_READ_CHUNK_SIZE:-8M}
+      - MOUNT_VFS_READ_CHUNK_SIZE_LIMIT=${MOUNT_VFS_READ_CHUNK_SIZE_LIMIT:-64M}
+      - MOUNT_VFS_CACHE_MAX_AGE=${MOUNT_VFS_CACHE_MAX_AGE:-24h}
+      - MOUNT_VFS_CACHE_MAX_SIZE=${MOUNT_VFS_CACHE_MAX_SIZE:-256G}
+      
       # ===== Indexer: Prowlarr =====
-      - PROWLARR_URL=${PROWLARR_URL:-http://192.168.1.124:9696}
+      - PROWLARR_URL=${PROWLARR_URL}
       - PROWLARR_API_KEY=${PROWLARR_API_KEY}
       - PROWLARR_TIMEOUT_MS=120000
       - PROWLARR_SEARCH_LIMIT=100
-      # ===== TorBox =====
-      - TORBOX_API_KEY=${TORBOX_API_KEY}
-      - TORBOX_BASE_URL=${TORBOX_BASE_URL:-https://api.torbox.app}
-      - TORBOX_WEBDAV_URL=${TORBOX_WEBDAV_URL:-https://webdav.torbox.app}
-      - TORBOX_WEBDAV_USERNAME=${TORBOX_WEBDAV_USERNAME}
-      - TORBOX_WEBDAV_PASSWORD=${TORBOX_WEBDAV_PASSWORD}
-      # ===== Real-Debrid =====
-      - PROVIDERS=${PROVIDERS:-torbox,realdebrid}
-      - RD_API_BASE=${RD_API_BASE:-https://api.real-debrid.com/rest/1.0}
-      - RD_ACCESS_TOKEN=${RD_ACCESS_TOKEN}
-      - RD_WEBDAV_URL=${RD_WEBDAV_URL:-https://webdav.real-debrid.com}
-      - RD_WEBDAV_USERNAME=${RD_WEBDAV_USERNAME}
-      - RD_WEBDAV_PASSWORD=${RD_WEBDAV_PASSWORD}
-      # ===== Mount Settings =====
-      - MOUNT_BASE=${MOUNT_BASE:-/mnt/schrodrive}
-      - RCLONE_PATH=${RCLONE_PATH:-/usr/local/bin/rclone}
-      - MOUNT_VFS_CACHE_MODE=${MOUNT_VFS_CACHE_MODE:-full}
-      - MOUNT_DIR_CACHE_TIME=${MOUNT_DIR_CACHE_TIME:-12h}
-      - MOUNT_POLL_INTERVAL=${MOUNT_POLL_INTERVAL:-0}
-      - MOUNT_BUFFER_SIZE=${MOUNT_BUFFER_SIZE:-64M}
-      - MOUNT_VFS_READ_CHUNK_SIZE=${MOUNT_VFS_READ_CHUNK_SIZE:-}
-      - MOUNT_VFS_READ_CHUNK_SIZE_LIMIT=${MOUNT_VFS_READ_CHUNK_SIZE_LIMIT:-}
-      - MOUNT_VFS_CACHE_MAX_AGE=${MOUNT_VFS_CACHE_MAX_AGE:-}
-      - MOUNT_VFS_CACHE_MAX_SIZE=${MOUNT_VFS_CACHE_MAX_SIZE:-}
-      # ===== Services =====
-      - RUN_MOUNT=${RUN_MOUNT:-false}
-      - RUN_DEAD_SCANNER=${RUN_DEAD_SCANNER:-false}
-      - RUN_DEAD_SCANNER_WATCH=${RUN_DEAD_SCANNER_WATCH:-false}
-      - DEAD_SCAN_INTERVAL_S=${DEAD_SCAN_INTERVAL_S:-1800}
-      - DEAD_IDLE_MIN=${DEAD_IDLE_MIN:-30}
+      
+      # ===== Overseerr Config =====
+      - OVERSEERR_AUTH=${OVERSEERR_AUTH:-}
+      - OVERSEERR_API_KEY=${OVERSEERR_API_KEY:-}
+      - OVERSEERR_URL=${OVERSEERR_URL}
+      - POLL_INTERVAL_S=${POLL_INTERVAL_S:-30}
       - RUN_WEBHOOK=${RUN_WEBHOOK:-false}
       - RUN_POLLER=${RUN_POLLER:-true}
+      
+      # ===== Dead Torrent Scanner =====
+      - RUN_DEAD_SCANNER_WATCH=true
+      - DEAD_SCAN_INTERVAL_S=${DEAD_SCAN_INTERVAL_S:-1800}
+      
+      # ===== Media Server Integrations (Active Stream Detection Cooldowns) =====
+      # Plex
+      - PLEX_URL=${PLEX_URL:-http://192.168.1.124:32400}
+      - PLEX_TOKEN=${PLEX_TOKEN:-}
+      # Jellyfin
+      - JELLYFIN_URL=${JELLYFIN_URL:-http://192.168.1.124:8096}
+      - JELLYFIN_API_KEY=${JELLYFIN_API_KEY:-}
+      - JELLYFIN_USER_ID=${JELLYFIN_USER_ID:-}
+      # Emby (optional)
+      # - EMBY_URL=${EMBY_URL:-}
+      # - EMBY_API_KEY=${EMBY_API_KEY:-}
+      # - EMBY_USER_ID=${EMBY_USER_ID:-}
+      
+      # ===== Watchlist Poller =====
+      - RUN_WATCHLIST_POLLER=${RUN_WATCHLIST_POLLER:-true}
+      - WATCHLIST_POLL_INTERVAL_S=${WATCHLIST_POLL_INTERVAL_S:-60}
+      - REFRESH_LIBRARY_ON_ADD=${REFRESH_LIBRARY_ON_ADD:-true}
+      
+      # ===== Media Organiser (symlinked views with metadata) =====
+      - RUN_ORGANIZER_WATCH=${RUN_ORGANIZER_WATCH:-false}
+      - ORGANIZED_BASE=${ORGANIZED_BASE:-/mnt/schrodrive/organized}
+      - ORGANIZER_MODE=${ORGANIZER_MODE:-symlink}
+      - ORG_SCAN_INTERVAL_S=${ORG_SCAN_INTERVAL_S:-300}
+      # TMDB API Key (optional — required for organiser metadata sorting)
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
+      
+      # ===== Auto-Update Config =====
+      - AUTO_UPDATE_ENABLED=${AUTO_UPDATE_ENABLED:-true}
+      - AUTO_UPDATE_INTERVAL_S=${AUTO_UPDATE_INTERVAL_S:-3600}
+      - AUTO_UPDATE_STRATEGY=${AUTO_UPDATE_STRATEGY:-exit}
+      - REPO_OWNER=${REPO_OWNER:-moderniselife}
+      - REPO_NAME=${REPO_NAME:-SchroDrive}
+      
+      # ===== General App Config =====
       - PORT=8978
-      # --- Data Persistence ---
       - DATA_DIR=/data
-      # --- Stremio Addon Server ---
-      - STREMIO_ADDON_ENABLED=${STREMIO_ADDON_ENABLED:-true}
+      
+      # ===== Stremio Addon Server =====
+      - STREMIO_ADDON_ENABLED=true
       - STREMIO_ADDON_PORT=7000
-      # --- Torrent Repair ---
+      
+      # ===== Torrent Repair =====
       - ENABLE_REPAIR=true
       - REPAIR_MAX_ATTEMPTS=3
       - PREEMPTIVE_REPAIR=true
-      # ===== Overseerr =====
-      - OVERSEERR_AUTH=${OVERSEERR_AUTH:-}
-      - OVERSEERR_API_KEY=${OVERSEERR_API_KEY:-}
-      - OVERSEERR_URL=${OVERSEERR_URL:-http://192.168.1.124:5055/api/v1}
-      - POLL_INTERVAL_S=${POLL_INTERVAL_S:-30}
-      # ===== Auto-Update =====
-      - AUTO_UPDATE_ENABLED=${AUTO_UPDATE_ENABLED:-true}
-      - AUTO_UPDATE_INTERVAL_S=${AUTO_UPDATE_INTERVAL_S:-3600}
-      - AUTO_UPDATE_STRATEGY=${AUTO_UPDATE_STRATEGY:-exit} # exit | git
-      - REPO_OWNER=${REPO_OWNER:-moderniselife}
-      - REPO_NAME=${REPO_NAME:-SchroDrive}
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8978/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    ports:
-      - "7000:7000"  # Stremio addon server
-    networks:
-      - media
+      - PREEMPTIVE_REPAIR_STALL_MIN=30
+      
+      # ===== Stremio Scrapers (enable as desired) =====
+      # - SCRAPER_MODE=merge
+      # - TORRENTIO_ENABLED=true
+      # - TORRENTIO_URL=https://torrentio.strem.fun
+      # - ZILEAN_ENABLED=true
+      # - ZILEAN_URL=https://zilean.elfhosted.com
+      
+      # ===== Trakt Config =====
+      # - TRAKT_CLIENT_ID=${TRAKT_CLIENT_ID:-}
+      # - TRAKT_USERNAME=${TRAKT_USERNAME:-}
+      
+      # ===== Web GUI =====
+      - RUN_WEB_GUI=${RUN_WEB_GUI:-false}
+      - WEB_PORT=${WEB_PORT:-3000}
+      - BACKEND_URL=http://localhost:8978
     depends_on:
       - prowlarr
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8978/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:latest
@@ -106,19 +165,13 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
-      - TZ=Etc/UTC
+      - TZ=Australia/Sydney
     volumes:
       - prowlarr_config:/config
     ports:
       - "9696:9696"
-    networks:
-      - media
 
 volumes:
   prowlarr_config:
   schrodrive_data:
     name: schrodrive_data
-
-networks:
-  media:
-    driver: bridge
