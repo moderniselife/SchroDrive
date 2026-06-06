@@ -14,6 +14,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getJellyfinWatchlist = getJellyfinWatchlist;
 exports.refreshJellyfinLibrary = refreshJellyfinLibrary;
+exports.isJellyfinStreaming = isJellyfinStreaming;
 const axios_1 = __importDefault(require("axios"));
 const config_1 = require("../core/config");
 // =============================================================================
@@ -97,5 +98,33 @@ async function refreshJellyfinLibrary() {
     }
     catch (err) {
         console.error(`[${new Date().toISOString()}][jellyfin] Library refresh failed:`, err?.message || String(err));
+    }
+}
+/**
+ * Checks if there are any active playing sessions on the Jellyfin server.
+ *
+ * @returns `true` if Jellyfin has active playing sessions.
+ */
+async function isJellyfinStreaming() {
+    const baseUrl = config_1.config.jellyfinUrl;
+    const apiKey = config_1.config.jellyfinApiKey;
+    if (!baseUrl || !apiKey)
+        return false;
+    const url = `${baseUrl.replace(/\/$/, "")}/Sessions`;
+    try {
+        const res = await axios_1.default.get(url, {
+            headers: {
+                "X-Emby-Authorization": `MediaBrowser Token="${apiKey}"`,
+                Accept: "application/json",
+            },
+            timeout: 5000,
+        });
+        const sessions = Array.isArray(res.data) ? res.data : [];
+        // Check if any session is currently playing media (i.e. has NowPlayingItem)
+        return sessions.some((s) => s.NowPlayingItem);
+    }
+    catch (err) {
+        console.error(`[${new Date().toISOString()}][jellyfin] Failed to check Jellyfin streaming sessions:`, err?.message || String(err));
+        return false;
     }
 }

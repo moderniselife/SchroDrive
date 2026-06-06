@@ -3,7 +3,7 @@ import { config, requireEnv } from "../core/config";
 import { searchIndexer, pickBestResult, getMagnet, getMagnetOrResolve, testIndexerConnection, getProviderName, isIndexerConfigured } from "../indexers/index";
 import { registry } from "../providers";
 import { upsertOverseerrRequest, getAllOverseerrRequests } from "../core/db";
-import { isPlexStreaming } from "../integrations/plex";
+import { isAnyMediaServerStreaming } from "../integrations/plex";
 
 
 interface MediaLike {
@@ -143,9 +143,9 @@ export function startOverseerrPoller() {
 
   const runOnce = async () => {
     try {
-      const isStreaming = await isPlexStreaming();
+      const isStreaming = await isAnyMediaServerStreaming();
       if (isStreaming) {
-        console.log(`[${new Date().toISOString()}][poller] Active Plex stream detected. Skipping poller tick to avoid debrid rate limits.`);
+        console.log(`[${new Date().toISOString()}][poller] Active media stream detected. Skipping poller tick to avoid debrid rate limits.`);
         return;
       }
 
@@ -403,9 +403,9 @@ async function syncAllApprovedRequests(): Promise<void> {
  * no corresponding torrent on debrid providers, searches and re-adds it.
  */
 async function checkAndReaddMissingRequests(): Promise<void> {
-  const isStreaming = await isPlexStreaming();
+  const isStreaming = await isAnyMediaServerStreaming();
   if (isStreaming) {
-    console.log(`[${new Date().toISOString()}][poller-sync] Active Plex stream detected. Skipping recovery check.`);
+    console.log(`[${new Date().toISOString()}][poller-sync] Active media stream detected. Skipping recovery check.`);
     return;
   }
 

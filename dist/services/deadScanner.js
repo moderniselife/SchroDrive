@@ -6,6 +6,7 @@ const config_1 = require("../core/config");
 const index_1 = require("../indexers/index");
 const providers_1 = require("../providers");
 const mount_1 = require("./mount");
+const plex_1 = require("../integrations/plex");
 const blacklist_1 = require("../core/blacklist");
 /**
  * SchroDrive — Dead Torrent Scanner
@@ -314,6 +315,17 @@ function startDeadScanner() {
     console.log(`[${new Date().toISOString()}][dead-scan] starting`, { everySeconds: Math.round(intervalMs / 1000) });
     const run = async () => {
         try {
+            const isStreaming = await (0, plex_1.isAnyMediaServerStreaming)();
+            if (isStreaming) {
+                console.log(`[${new Date().toISOString()}][dead-scan] Active media stream detected. Skipping scan to avoid debrid rate limits.`);
+                return;
+            }
+            const configuredProviders = providers_1.registry.configured();
+            const allRateLimited = configuredProviders.every(p => p.isRateLimited());
+            if (allRateLimited && configuredProviders.length > 0) {
+                console.warn(`[${new Date().toISOString()}][dead-scan] All debrid providers are rate-limited. Skipping scan to avoid API spam.`);
+                return;
+            }
             await scanDeadOnce();
         }
         catch (e) {
