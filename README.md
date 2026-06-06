@@ -172,38 +172,64 @@ SchröDrive is designed to handle the real-world chaos of debrid services:
 
 ---
 
-## 🏆 SchröDrive vs the Competition
+## 🏆 SchröDrive vs the Alternatives
 
-### Feature Comparison
+> [!NOTE]
+> This comparison is based on each project's public documentation at time of writing (June 2026). If anything is inaccurate, please open an issue and we'll correct it immediately.
+
+### At a Glance
+
+| | SchröDrive | pd_zurg | Zurg | Riven |
+|---|:---:|:---:|:---:|:---:|
+| **Status** | ✅ Active | ⛔ Deprecated | ✅ Active (beta) | ✅ Active |
+| **Scope** | Full automation | All-in-one wrapper | WebDAV server only | Full media automation |
+| **Source** | Open (MIT) | Open (archived) | Closed (sponsors) | Open (GPLv3) |
+
+### Provider Support
+
+| Provider | SchröDrive | pd_zurg | Zurg | Riven |
+|----------|:----------:|:-------:|:----:|:-----:|
+| **RealDebrid** | ✅ | ✅ | ✅ | ✅ |
+| **TorBox** | ✅ | — | — | ✅ |
+| **AllDebrid** | ✅ ⚠️ | ✅ | — | ✅ |
+| **Premiumize** | ✅ ⚠️ | — | — | — |
+| **Provider redundancy** | ✅ All/Failover/Single | — | — | — |
+
+### Integrations
 
 | Feature | SchröDrive | pd_zurg | Zurg | Riven |
 |---------|:----------:|:-------:|:----:|:-----:|
-| **Multi-provider support** | ✅ 4 providers | ❌ RD only | ❌ RD only | ✅ 2 providers |
-| **Provider redundancy** | ✅ All/Failover/Single | ❌ | ❌ | ❌ |
-| **WebDAV Bridge** (no creds needed) | ✅ | ❌ | ❌ | ❌ |
-| **Auto dead torrent replacement** | ✅ Delete + blacklist + re-search | ❌ | ❌ | ❌ |
-| **423 Locked resilience** | ✅ Stale cache + retry + remount | ❌ Crashes | ❌ Crashes | ❌ |
-| **Mount health monitoring** | ✅ Auto-remount | ❌ | ❌ | ❌ |
-| **Persistent blacklist** | ✅ | ❌ | ❌ | ❌ |
-| **Media server watchlists** | ✅ Plex/Jellyfin/Emby | ❌ | ❌ | ✅ |
-| **Overseerr integration** | ✅ Webhook + Poller | ❌ | ❌ | ✅ |
-| **Dual indexer support** | ✅ Prowlarr + Jackett | ❌ | ❌ | ✅ Prowlarr |
-| **Media organiser** | ✅ TMDB/TVMaze metadata | ❌ | ❌ | ✅ |
-| **Single container** | ✅ One image does it all | ❌ Multiple | ❌ Multiple | ❌ Multiple |
-| **Runtime** | Bun (fast startup) | Python | Rust | Python |
-| **Config complexity** | Low (env vars only) | High | High | High |
+| **Overseerr** | ✅ Webhook + Poller | ✅ via plex_debrid | — | ✅ |
+| **Prowlarr** | ✅ | ✅ via plex_debrid | — | ✅ |
+| **Jackett** | ✅ | ✅ via plex_debrid | — | ✅ |
+| **Plex** | ✅ Watchlist + Refresh | ✅ Watchlist | ✅ | ✅ Watchlist + Refresh |
+| **Jellyfin** | ✅ Watchlist + Refresh | — | ✅ | ✅ Watchlist + Refresh |
+| **Emby** | ✅ Watchlist + Refresh | — | — | ✅ Watchlist + Refresh |
+| **Trakt/Mdblist/Listrr** | — | — | — | ✅ |
+| **Additional scrapers** | — | — | — | ✅ Torrentio, Comet, Zilean, etc. |
 
-### Why SchröDrive?
+### Architecture & Resilience
 
-**If you've used pd_zurg**, you know the pain of `423 Locked` errors that cascade into complete mount failures requiring manual restarts. SchröDrive was built specifically to solve this:
+| Feature | SchröDrive | pd_zurg | Zurg | Riven |
+|---------|:----------:|:-------:|:----:|:-----:|
+| **Container model** | Single | Single | Single (+rclone) | Multi-service (App + DB + Redis) |
+| **Runtime** | Bun/TypeScript | Python + Go | Go | TypeScript/Node.js |
+| **Config style** | Env vars only | Env vars + config files | Single YAML | Settings UI + compose |
+| **WebDAV Bridge** (no creds) | ✅ Built-in | — | — (is the WebDAV server) | — (built-in VFS) |
+| **Dead torrent handling** | ✅ Delete + blacklist + re-search | ✅ via Zurg | ✅ Repair feature | Not documented |
+| **Torrent repair** | — | ✅ via Zurg | ✅ `enable_repair` | Not documented |
+| **423 Locked resilience** | ✅ Stale cache + retry + 503 Retry-After | Not documented | Rate-limit config (mitigation) | Not documented |
+| **Mount health monitoring** | ✅ Auto-remount | Not documented | Not applicable (WebDAV server) | Not applicable (built-in VFS) |
+| **Persistent blacklist** | ✅ | — | — | — |
+| **Media organiser** | ✅ TMDB/TVMaze symlinks | — | — | ✅ Built-in VFS |
+| **Rate limit learning** | ✅ Per-endpoint adaptive | — | Configurable per-minute limits | Not documented |
 
-1. **The 423 Locked problem is solved.** Stale CDN URLs are cached and served when fresh resolution fails. The mount health monitor detects IO error patterns and auto-remounts before they cascade.
+### What Each Project Does Best
 
-2. **Dead torrents don't stay dead.** When a torrent can't be downloaded after 10 consecutive failures, SchröDrive automatically deletes it from the provider, blacklists the name, and searches the indexer for a replacement — all without human intervention.
-
-3. **One container, all services.** No need for separate zurg + rclone + plex_debrid + autoscan containers. SchröDrive combines debrid management, mounting, media organisation, and media server integration into a single Docker image.
-
-4. **Multi-provider by default.** Run TorBox and RealDebrid simultaneously. Content is added to all providers for redundancy, with automatic failover if one goes down.
+- **SchröDrive** — All-in-one with 4-provider redundancy, aggressive self-healing, and the simplest deployment (single container, env vars only).
+- **pd_zurg** — *Deprecated (Jan 2026).* Was the original all-in-one Docker solution. Successor is [DUMB](https://github.com/I-am-PUID-0/DUMB).
+- **Zurg** — Purpose-built, high-performance WebDAV server for RealDebrid. Excellent at what it does (serving files), but needs additional tools for automation.
+- **Riven** — The most feature-rich alternative with 7+ scrapers, Trakt/Mdblist integration, built-in VFS, and a settings UI. Best for users who want the widest integration ecosystem.
 
 ---
 
@@ -426,7 +452,7 @@ All configuration is done via environment variables. Below is the complete refer
 | `WEBDAV_BRIDGE_PORT_AD` | `9117` | AllDebrid bridge port |
 | `WEBDAV_BRIDGE_PORT_PM` | `9118` | Premiumize bridge port |
 | `WEBDAV_CACHE_TTL_S` | `30` | Directory listing cache TTL |
-| `WEBDAV_DOWNLOAD_CACHE_TTL_S` | `300` | Download URL cache TTL |
+| `WEBDAV_DOWNLOAD_CACHE_TTL_S` | `1800` | Download URL cache TTL (30min — CDN URLs live hours) |
 
 ### 🔄 Service Toggles
 
