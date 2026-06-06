@@ -23,6 +23,8 @@
 import express, { type Request, type Response, type NextFunction } from "express";
 import http from "http";
 import https from "https";
+import fs from "fs";
+import nodePath from "path";
 import axios from "axios";
 import { config } from "../core/config";
 import { rateLimiter } from "../core/rateLimiter";
@@ -1448,13 +1450,22 @@ export class WebDAVBridge {
     const downloadUrl = await this.resolveDownloadUrl(dir, file);
 
     if (!downloadUrl) {
-      // Return 503 with Retry-After header instead of 502.
-      // This tells rclone the file is temporarily unavailable and to retry,
-      // rather than treating it as a permanent failure that breaks the mount.
-      // This is the key fix for the "423 Locked" cascade that plagued pd_zurg.
-      logWarn(this.provider, `Temporarily unavailable: ${dir.name}/${file.name} — returning 503 Retry-After`);
-      res.setHeader("Retry-After", "5");
-      res.status(503).send("File temporarily unavailable — provider returned an error. Retry shortly.");
+      // Serve error video fallback instead of a bare 503 text response.
+      // Media players (Plex/Jellyfin/Emby) handle a video response gracefully
+      // (they'll show "Media not found" to the user) rather than hanging or
+      // crashing on a 503 text body.
+      logWarn(this.provider, `Temporarily unavailable: ${dir.name}/${file.name} — serving error video`);
+      const errorVideoPath = nodePath.resolve(__dirname, '../../assets/not_found.mp4');
+      if (fs.existsSync(errorVideoPath)) {
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Retry-After', '5');
+        fs.createReadStream(errorVideoPath).pipe(res);
+      } else {
+        // Fallback to 503 text if error video file is missing
+        res.setHeader("Retry-After", "5");
+        res.status(503).send("File temporarily unavailable — provider returned an error. Retry shortly.");
+      }
       return;
     }
 
