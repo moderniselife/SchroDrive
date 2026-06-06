@@ -256,8 +256,8 @@ function parseSize(sizeStr: string): number {
 // Adapter
 // ===========================================================================
 
-/** Milliseconds to wait between crawl requests to avoid hammering servers. */
-const CRAWL_DELAY_MS = 500;
+/** Default milliseconds to wait between crawl requests. */
+const DEFAULT_CRAWL_DELAY_MS = 500;
 
 /** Maximum directory depth to crawl (prevents infinite recursion). */
 const CRAWL_MAX_DEPTH = 10;
@@ -273,6 +273,8 @@ export class HttpAdapter implements CloudLinkAdapter {
   private crawling = false;
   /** Number of directories fetched during the current crawl. */
   private crawlFetched = 0;
+  /** Milliseconds to wait between crawl/fetch requests (rate limiting). */
+  private crawlDelayMs: number;
 
   /** In-memory cache of folder contents: url → entries. */
   private folderCache = new Map<string, { files: CloudFile[]; fetchedAt: number }>();
@@ -304,12 +306,18 @@ export class HttpAdapter implements CloudLinkAdapter {
    * @param url - Base URL of the HTTP directory listing.
    * @param name - Display name for the mount directory.
    * @param headers - Optional custom HTTP headers (e.g. auth).
+   * @param rateLimitMs - Optional delay between requests in ms (default: 500).
    */
-  constructor(url: string, name: string, headers?: Record<string, string>) {
+  constructor(url: string, name: string, headers?: Record<string, string>, rateLimitMs?: number) {
     this.name = name;
     // Ensure trailing slash
     this.baseUrl = url.endsWith('/') ? url : url + '/';
     this.headers = headers || {};
+    this.crawlDelayMs = rateLimitMs ?? DEFAULT_CRAWL_DELAY_MS;
+
+    if (rateLimitMs) {
+      console.log(`[cloud-links][http] "${name}" rate limit: ${rateLimitMs}ms between requests`);
+    }
 
     // Set up persistent disk cache path
     const dataDir = process.env.DATA_DIR || './data';
@@ -459,7 +467,7 @@ export class HttpAdapter implements CloudLinkAdapter {
       files = cached.files;
     } else {
       // Need to fetch
-      await sleep(CRAWL_DELAY_MS);
+      await sleep(this.crawlDelayMs);
       const fetched = await this.fetchRemoteListing(url);
       if (!fetched) return; // Failed — skip this branch
 

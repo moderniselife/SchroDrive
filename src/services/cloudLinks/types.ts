@@ -35,6 +35,12 @@ export interface CloudLinkConfig {
   name: string;
   /** Optional custom HTTP headers (e.g. auth). Only used by 'http' type. */
   headers?: Record<string, string>;
+  /**
+   * Rate limit in milliseconds between requests. Only used by 'http' type.
+   * Controls crawl speed and background refresh rate.
+   * Default: 500ms. For rate-limited servers, set higher (e.g. 3500 for 3 req/10s).
+   */
+  rateLimitMs?: number;
 }
 
 // ===========================================================================

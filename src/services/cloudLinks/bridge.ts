@@ -136,7 +136,7 @@ function createAdapter(link: CloudLinkConfig): CloudLinkAdapter | null {
       return new DropboxAdapter(link.url, link.name, config.dropboxToken);
 
     case 'http':
-      return new HttpAdapter(link.url, link.name, link.headers);
+      return new HttpAdapter(link.url, link.name, link.headers, link.rateLimitMs);
 
     default:
       console.warn(`${LOG_PREFIX} Unknown cloud link type: ${link.type}`);
