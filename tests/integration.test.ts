@@ -229,11 +229,18 @@ const tests: Array<{ name: string; fn: () => Promise<string | void> }> = [
 
   // 6. Downloads
   {
-    name: "Downloads endpoint",
+    name: 'Downloads endpoint',
     fn: async () => {
-      const { body } = await fetchJson("/api/downloads");
-      assert(body.ok === true, "Expected ok: true");
-      assertType(body.downloads, "array", "downloads");
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+      try {
+        const res = await fetch(`${BASE_URL}/api/downloads`, { signal: controller.signal });
+        const body = await res.json() as Record<string, unknown>;
+        assert(body.ok === true, 'Expected ok: true');
+        assertType(body.downloads, 'array', 'downloads');
+      } finally {
+        clearTimeout(timeout);
+      }
     },
   },
 

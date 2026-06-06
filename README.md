@@ -147,6 +147,26 @@ Set via `ADD_STRATEGY` environment variable.
 | **Auto-Update** | Checks GitHub releases and self-restarts | `AUTO_UPDATE_ENABLED=true` |
 | **FUSE Mount** | Mounts debrid content as local drives | `RUN_MOUNT=true` |
 
+### 🖥️ Web GUI (Dashboard)
+
+SchröDrive includes a full **Next.js dashboard** accessible on port 3000 when `RUN_WEB_GUI=true`:
+
+| Page | Description |
+|------|-------------|
+| **Dashboard** | System overview — provider status, active torrents, mount health, service states |
+| **Torrents** | Browse, search, and manage torrents across all configured providers |
+| **Files** | Virtual file explorer for mounted debrid content |
+| **Search** | Search Prowlarr/Jackett + Stremio scrapers, add torrents directly |
+| **Add** | Manually add magnets or torrent hashes to any provider |
+| **Mounts** | rclone mount status and health monitoring |
+| **Activity** | Real-time feed of system events |
+| **Logs** | Live log viewer with SSE streaming |
+| **Services** | Toggle and monitor all automation services |
+| **Settings** | Runtime configuration editor |
+
+> [!TIP]
+> Enable with `RUN_WEB_GUI=true` and `WEB_PORT=3000`. The GUI communicates with the backend API on port 8978 — both run inside the same container.
+
 ### 📡 Media Server Integration
 
 | Server | Watchlist | Library Refresh | Status |
@@ -208,6 +228,7 @@ SchröDrive is designed to handle the real-world chaos of debrid services:
 | **Trakt/Mdblist/Listrr** | ✅ All three (OAuth2 + API key) | — | — | ✅ |
 | **Additional scrapers** | ✅ Torrentio, Comet, Zilean, Mediafusion | — | — | ✅ Torrentio, Comet, Zilean, etc. |
 | **Stremio addon server** | ✅ Expose as addon | — | — | — |
+| **Web GUI** | ✅ Next.js dashboard (port 3000) | — | — | ✅ Settings UI |
 
 ### Architecture & Resilience
 
@@ -215,7 +236,7 @@ SchröDrive is designed to handle the real-world chaos of debrid services:
 |---------|:----------:|:-------:|:----:|:-----:|
 | **Container model** | Single | Single | Single (+rclone) | Multi-service (App + DB + Redis) |
 | **Runtime** | Bun/TypeScript | Python + Go | Go | TypeScript/Node.js |
-| **Config style** | Env vars only | Env vars + config files | Single YAML | Settings UI + compose |
+| **Config style** | Env vars + Web GUI | Env vars + config files | Single YAML | Settings UI + compose |
 | **WebDAV Bridge** (no creds) | ✅ Built-in | — | — (is the WebDAV server) | — (built-in VFS) |
 | **Dead torrent handling** | ✅ 3-phase: repair → cross-provider → replace | ✅ via Zurg | ✅ Repair feature | Not documented |
 | **Torrent repair** | ✅ Same-provider + cross-provider + pre-emptive | ✅ via Zurg | ✅ `enable_repair` | Not documented |
@@ -228,7 +249,7 @@ SchröDrive is designed to handle the real-world chaos of debrid services:
 
 ### What Each Project Does Best
 
-- **SchröDrive** — All-in-one with 4-provider redundancy, 3-phase torrent repair (same-provider → cross-provider → replacement), 4 Stremio scrapers, 6 watchlist sources, and the simplest deployment (single container, env vars only). Also exposes itself as a Stremio addon.
+- **SchröDrive** — All-in-one with 4-provider redundancy, 3-phase torrent repair, 4 Stremio scrapers, 6 watchlist sources, embedded SQLite persistence, a full Next.js management dashboard, and the simplest deployment (single container). Also exposes itself as a Stremio addon.
 - **pd_zurg** — *Deprecated (Jan 2026).* Was the original all-in-one Docker solution. Successor is [DUMB](https://github.com/I-am-PUID-0/DUMB).
 - **Zurg** — Purpose-built, high-performance WebDAV server for RealDebrid. Excellent at what it does (serving files), but needs additional tools for automation.
 - **Riven** — Feature-rich with 7+ scrapers, Trakt/Mdblist integration, built-in VFS, and a settings UI. However, requires multi-container deployment (App + PostgreSQL + Redis).

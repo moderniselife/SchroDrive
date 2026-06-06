@@ -328,15 +328,17 @@ export default function SettingsPage() {
       </Card>
 
       <Tabs defaultValue="general" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4 lg:grid-cols-9">
+        <TabsList className="grid w-full grid-cols-4 lg:grid-cols-11">
           <TabsTrigger value="general" className="gap-2"><Settings className="h-4 w-4 hidden sm:block" />General</TabsTrigger>
           <TabsTrigger value="indexers" className="gap-2"><Search className="h-4 w-4 hidden sm:block" />Indexers</TabsTrigger>
           <TabsTrigger value="torbox" className="gap-2"><Database className="h-4 w-4 hidden sm:block" />TorBox</TabsTrigger>
           <TabsTrigger value="realdebrid" className="gap-2"><Database className="h-4 w-4 hidden sm:block" />Real-Debrid</TabsTrigger>
+          <TabsTrigger value="alldebrid" className="gap-2"><Database className="h-4 w-4 hidden sm:block" />AllDebrid</TabsTrigger>
+          <TabsTrigger value="premiumize" className="gap-2"><Database className="h-4 w-4 hidden sm:block" />Premiumize</TabsTrigger>
           <TabsTrigger value="overseerr" className="gap-2"><Tv className="h-4 w-4 hidden sm:block" />Overseerr</TabsTrigger>
           <TabsTrigger value="mounts" className="gap-2"><HardDrive className="h-4 w-4 hidden sm:block" />Mounts</TabsTrigger>
           <TabsTrigger value="services" className="gap-2"><Server className="h-4 w-4 hidden sm:block" />Services</TabsTrigger>
-          <TabsTrigger value="organizer" className="gap-2"><FolderSync className="h-4 w-4 hidden sm:block" />Organizer</TabsTrigger>
+          <TabsTrigger value="organizer" className="gap-2"><FolderSync className="h-4 w-4 hidden sm:block" />Organiser</TabsTrigger>
           <TabsTrigger value="updates" className="gap-2"><RefreshCw className="h-4 w-4 hidden sm:block" />Updates</TabsTrigger>
         </TabsList>
 
@@ -350,7 +352,7 @@ export default function SettingsPage() {
             <CardContent className="space-y-6">
               <div className="grid gap-6 md:grid-cols-2">
                 <ConfigField label="Server Port" envVar="PORT" description="Port for the webhook server" value={getValue("PORT")} source={getSource("PORT")} onChange={(v) => updateValue("PORT", v)} type="number" />
-                <ConfigField label="Active Providers" envVar="PROVIDERS" description="Comma-separated: torbox,realdebrid" value={getValue("PROVIDERS")} source={getSource("PROVIDERS")} onChange={(v) => updateValue("PROVIDERS", v)} />
+                <ConfigField label="Active Providers" envVar="PROVIDERS" description="Comma-separated: torbox, realdebrid, alldebrid, premiumize" value={getValue("PROVIDERS")} source={getSource("PROVIDERS")} onChange={(v) => updateValue("PROVIDERS", v)} />
               </div>
             </CardContent>
           </Card>
@@ -461,6 +463,60 @@ export default function SettingsPage() {
                 <ConfigField label="WebDAV URL" envVar="RD_WEBDAV_URL" value={getValue("RD_WEBDAV_URL")} source={getSource("RD_WEBDAV_URL")} onChange={(v) => updateValue("RD_WEBDAV_URL", v)} />
                 <ConfigField label="Username" envVar="RD_WEBDAV_USERNAME" value={getValue("RD_WEBDAV_USERNAME")} source={getSource("RD_WEBDAV_USERNAME")} onChange={(v) => updateValue("RD_WEBDAV_USERNAME", v)} />
                 <ConfigField label="Password" envVar="RD_WEBDAV_PASSWORD" type="password" value={getValue("RD_WEBDAV_PASSWORD")} source={getSource("RD_WEBDAV_PASSWORD")} onChange={(v) => updateValue("RD_WEBDAV_PASSWORD", v)} />
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* AllDebrid Tab */}
+        <TabsContent value="alldebrid" className="space-y-6">
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>AllDebrid API</CardTitle>
+                <CardDescription>AllDebrid debrid service configuration</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <ConfigField label="API Key" envVar="AD_API_KEY" description="Your AllDebrid API key" type="password" value={getValue("AD_API_KEY")} source={getSource("AD_API_KEY")} onChange={(v) => updateValue("AD_API_KEY", v)} />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>AllDebrid WebDAV</CardTitle>
+                <CardDescription>WebDAV mount credentials for AllDebrid</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <ConfigField label="WebDAV URL" envVar="AD_WEBDAV_URL" value={getValue("AD_WEBDAV_URL")} source={getSource("AD_WEBDAV_URL")} onChange={(v) => updateValue("AD_WEBDAV_URL", v)} />
+                <ConfigField label="Username" envVar="AD_WEBDAV_USERNAME" value={getValue("AD_WEBDAV_USERNAME")} source={getSource("AD_WEBDAV_USERNAME")} onChange={(v) => updateValue("AD_WEBDAV_USERNAME", v)} />
+                <ConfigField label="Password" envVar="AD_WEBDAV_PASSWORD" type="password" value={getValue("AD_WEBDAV_PASSWORD")} source={getSource("AD_WEBDAV_PASSWORD")} onChange={(v) => updateValue("AD_WEBDAV_PASSWORD", v)} />
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* Premiumize Tab */}
+        <TabsContent value="premiumize" className="space-y-6">
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Premiumize API</CardTitle>
+                <CardDescription>Premiumize debrid service configuration</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <ConfigField label="API Key" envVar="PM_API_KEY" description="Your Premiumize API key" type="password" value={getValue("PM_API_KEY")} source={getSource("PM_API_KEY")} onChange={(v) => updateValue("PM_API_KEY", v)} />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Premiumize WebDAV</CardTitle>
+                <CardDescription>WebDAV mount credentials for Premiumize</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <ConfigField label="WebDAV URL" envVar="PM_WEBDAV_URL" value={getValue("PM_WEBDAV_URL")} source={getSource("PM_WEBDAV_URL")} onChange={(v) => updateValue("PM_WEBDAV_URL", v)} />
+                <ConfigField label="Username" envVar="PM_WEBDAV_USERNAME" value={getValue("PM_WEBDAV_USERNAME")} source={getSource("PM_WEBDAV_USERNAME")} onChange={(v) => updateValue("PM_WEBDAV_USERNAME", v)} />
+                <ConfigField label="Password" envVar="PM_WEBDAV_PASSWORD" type="password" value={getValue("PM_WEBDAV_PASSWORD")} source={getSource("PM_WEBDAV_PASSWORD")} onChange={(v) => updateValue("PM_WEBDAV_PASSWORD", v)} />
               </CardContent>
             </Card>
           </div>

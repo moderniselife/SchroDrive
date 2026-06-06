@@ -7,6 +7,15 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { HardDrive, RefreshCw, Loader2, AlertCircle, CheckCircle2 } from "lucide-react"
 
+/** Provider-specific colour classes for consistent styling across all debrid providers. */
+const PROVIDER_COLOURS: Record<string, string> = {
+  torbox: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+  realdebrid: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
+  alldebrid: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
+  premiumize: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
+}
+const getProviderColour = (id: string) => PROVIDER_COLOURS[id] || 'bg-slate-500/10 text-slate-500 border-slate-500/20'
+
 interface Provider {
   name: string
   id: string
@@ -94,7 +103,7 @@ export default function MountsPage() {
             <HardDrive className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
             <h3 className="text-lg font-medium mb-2">No Providers Configured</h3>
             <p className="text-muted-foreground mb-4">
-              Configure TorBox or Real-Debrid in settings to enable WebDAV mounts.
+              Configure a debrid provider in settings to enable WebDAV mounts.
             </p>
             <Button variant="outline" asChild>
               <a href="/settings">Go to Settings</a>
@@ -108,12 +117,8 @@ export default function MountsPage() {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${
-                      provider.id === "torbox" ? "bg-blue-500/10" : "bg-purple-500/10"
-                    }`}>
-                      <HardDrive className={`h-5 w-5 ${
-                        provider.id === "torbox" ? "text-blue-500" : "text-purple-500"
-                      }`} />
+                    <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${getProviderColour(provider.id).split(' ')[0]}`}>
+                      <HardDrive className={`h-5 w-5 ${getProviderColour(provider.id).split(' ')[1]}`} />
                     </div>
                     <div>
                       <CardTitle className="text-lg">{provider.name}</CardTitle>

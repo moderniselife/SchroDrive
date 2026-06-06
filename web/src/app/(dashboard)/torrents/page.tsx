@@ -166,9 +166,11 @@ export default function TorrentsPage() {
   const totalDownSpeed = torrents.reduce((acc, t) => acc + (t.downloadSpeed || 0), 0)
   const totalUpSpeed = torrents.reduce((acc, t) => acc + (t.uploadSpeed || 0), 0)
 
-  // Count by provider
-  const torboxCount = torrents.filter((t) => t.provider === "torbox").length
-  const rdCount = torrents.filter((t) => t.provider === "realdebrid").length
+  // Count by provider — dynamically groups all providers
+  const providerCounts = torrents.reduce((acc, t) => {
+    acc[t.provider] = (acc[t.provider] || 0) + 1
+    return acc
+  }, {} as Record<string, number>)
 
   if (loading) {
     return (
@@ -193,7 +195,7 @@ export default function TorrentsPage() {
         <div>
           <h1 className="text-2xl font-bold">Torrents</h1>
           <p className="text-muted-foreground">
-            {status || "Real-Debrid & TorBox torrent activity"}
+            {status || "Torrent activity across all providers"}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -262,12 +264,9 @@ export default function TorrentsPage() {
           <div className="flex items-center justify-between">
             <CardTitle>All Torrents</CardTitle>
             <div className="flex gap-2">
-              {torboxCount > 0 && (
-                <Badge variant="outline">TorBox: {torboxCount}</Badge>
-              )}
-              {rdCount > 0 && (
-                <Badge variant="outline">Real-Debrid: {rdCount}</Badge>
-              )}
+              {Object.entries(providerCounts).map(([id, count]) => (
+                <Badge key={id} variant="outline" className="capitalize">{id}: {count}</Badge>
+              ))}
             </div>
           </div>
         </CardHeader>
@@ -278,7 +277,7 @@ export default function TorrentsPage() {
                 <Magnet className="h-12 w-12 text-muted-foreground/50" />
                 <p className="mt-4 text-lg font-medium">No torrents</p>
                 <p className="text-sm text-muted-foreground">
-                  Torrents from Real-Debrid and TorBox will appear here
+                  Torrents from your configured providers will appear here
                 </p>
               </div>
             ) : (
