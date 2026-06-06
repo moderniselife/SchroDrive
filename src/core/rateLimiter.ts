@@ -367,40 +367,51 @@ class RateLimiter {
   }
 
   /**
-   * Records a rate limit error and calculates the exponential backoff duration.
+   * Records a rate limit error and calculates the backoff duration.
    *
-   * Backoff formula: `min(baseBackoff * 2^(consecutiveErrors - 1), maxBackoff)`
+   * If `backoffOverrideMs` is provided (e.g. parsed from a provider's
+   * "60 per hour" response), that value is used directly. Otherwise,
+   * exponential backoff is applied:
+   * `min(baseBackoff * 2^(consecutiveErrors - 1), maxBackoff)`
    * This produces: 60s → 120s → 240s → 480s → 900s (capped at 15min).
    *
    * @param provider - The provider identifier that was rate-limited.
    * @param errorMessage - The error message for diagnostic logging.
+   * @param backoffOverrideMs - Optional explicit backoff duration in milliseconds.
    */
-  recordRateLimit(provider: string, errorMessage: string): void {
+  recordRateLimit(provider: string, errorMessage: string, backoffOverrideMs?: number): void {
     const state = this.getState(provider);
     state.consecutiveErrors++;
     state.lastError = errorMessage;
     state.isLimited = true;
     
-    // Calculate backoff with exponential increase
-    const backoff = Math.min(
-      this.baseBackoffMs * Math.pow(2, state.consecutiveErrors - 1),
-      this.maxBackoffMs
-    );
+    // Use provider-specified backoff if available, otherwise exponential
+    const backoff = backoffOverrideMs
+      ? Math.min(backoffOverrideMs, this.maxBackoffMs)
+      : Math.min(
+          this.baseBackoffMs * Math.pow(2, state.consecutiveErrors - 1),
+          this.maxBackoffMs
+        );
     
     state.limitedUntil = Date.now() + backoff;
     
     const waitSeconds = Math.ceil(backoff / 1000);
+    const source = backoffOverrideMs ? 'provider-specified' : 'exponential';
     console.warn(
       `[${new Date().toISOString()}][rate-limiter] ${provider} rate limited, ` +
-      `backing off for ${waitSeconds}s (attempt ${state.consecutiveErrors})`
+      `backing off for ${waitSeconds}s [${source}] (attempt ${state.consecutiveErrors})`
     );
 
     this.persistState(provider);
   }
 
   /**
-   * Records a successful request, resetting the consecutive error count
-   * and clearing any active rate-limit state.
+   * Records a successful request.
+   *
+   * Resets the consecutive error counter but does NOT clear an active
+   * rate-limit backoff period — the backoff must expire naturally. This
+   * prevents a single lucky request from resetting the limiter and
+   * immediately triggering another burst of 429s.
    *
    * @param provider - The provider identifier that completed successfully.
    */
@@ -411,7 +422,14 @@ class RateLimiter {
     }
     state.consecutiveErrors = 0;
     state.lastError = null;
-    state.isLimited = false;
+
+    // Only clear rate limit if the backoff period has already expired.
+    // Don't prematurely clear — one success during backoff doesn't mean
+    // the provider's rate limit window has reset.
+    if (state.isLimited && Date.now() >= state.limitedUntil) {
+      state.isLimited = false;
+      console.log(`[${new Date().toISOString()}][rate-limiter] ${provider} backoff expired + success — fully cleared`);
+    }
 
     this.persistState(provider);
   }

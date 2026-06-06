@@ -66,7 +66,13 @@ export const config = {
   // Premiumize WebDAV
   premiumizeWebdavUrl: process.env.PREMIUMIZE_WEBDAV_URL || "https://webdav.premiumize.me",
   premiumizeWebdavUsername: process.env.PREMIUMIZE_WEBDAV_USERNAME || "",
-  premiumizeWebdavPassword: process.env.PREMIUMIZE_WEBDAV_PASSWORD || "",
+  premiumizeWebdavPassword: process.env.PREMIUMIZE_WEBDAV_PASSWORD || '',
+  // --- Download Token Rotation (Zurg-style 503 bypass) ---
+  rdDownloadTokens: (process.env.RD_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  torboxDownloadTokens: (process.env.TORBOX_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  alldebridDownloadTokens: (process.env.AD_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  premiumizeDownloadTokens: (process.env.PM_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  tokenResetTimezone: process.env.TOKEN_RESET_TIMEZONE || 'Australia/Sydney',
   // Mount settings
   mountBase: defaultMountBase,
   rclonePath: process.env.RCLONE_PATH || "rclone",

@@ -18,6 +18,7 @@ import https from 'https';
 import http from 'http';
 import { config } from '../core/config';
 import { rateLimiter } from '../core/rateLimiter';
+import { tokenRotator } from '../core/tokenRotator';
 import type {
   DebridProvider,
   TorrentInfo,
@@ -52,8 +53,8 @@ const DOWNLOADS_CACHE_KEY = 'realdebrid_downloads';
  *
  * @returns A headers object containing the Bearer token.
  */
-function rdHeaders(): Record<string, string> {
-  return { Authorization: `Bearer ${config.rdAccessToken}` };
+function rdHeaders(overrideToken?: string): Record<string, string> {
+  return { Authorization: `Bearer ${overrideToken || config.rdAccessToken}` };
 }
 
 /**
@@ -236,10 +237,7 @@ export class RealDebridProvider implements DebridProvider {
         await rateLimiter.throttle(PROVIDER_NAME);
       }
     } catch (err: any) {
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, err?.message);
-      }
-      console.error(`[${new Date().toISOString()}][rd] list torrents stream failed`, err?.message);
+      this.handleError(err, 'list torrents stream');
     }
   }
 
@@ -321,16 +319,7 @@ export class RealDebridProvider implements DebridProvider {
       });
       rateLimiter.recordSuccess(PROVIDER_NAME);
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.warn(`[${new Date().toISOString()}][rd] select all files failed`, {
-        id,
-        error: errorMsg,
-        status: err?.response?.status,
-        rateLimited: rateLimiter.isRateLimited(PROVIDER_NAME),
-      });
+      this.handleError(err, `select all files for torrent ${id}`);
     }
   }
 
@@ -374,6 +363,16 @@ export class RealDebridProvider implements DebridProvider {
     const s = String(torrent?.status || '').toLowerCase();
     // Completed torrents are never dead, regardless of status string
     if (typeof torrent?.progress === 'number' && torrent.progress >= 100) return false;
+
+    // RealDebrid dead/failed statuses:
+    // - magnet_error: invalid or broken magnet link
+    // - error: generic torrent error
+    // - virus: file flagged as containing a virus
+    // - dead: no seeders / torrent is fully dead
+    // - compressing_error: RD-side compression failure
+    const deadStatuses = ['magnet_error', 'error', 'virus', 'dead', 'compressing_error'];
+    if (deadStatuses.includes(s)) return true;
+    // Fallback: catch any status containing 'error' or 'dead'
     if (s.includes('error') || s.includes('dead')) return true;
     return false;
   }
@@ -482,7 +481,13 @@ export class RealDebridProvider implements DebridProvider {
         return true;
       }
     } catch (err: any) {
-      console.warn(`[${new Date().toISOString()}][rd] repair re-add failed`, { hash: infoHash, err: err?.message });
+      const status = err?.response?.status || err?.status;
+      if (status === 451) {
+        console.warn(`[${new Date().toISOString()}][rd] ⚖️ repair blocked — 451 Unavailable For Legal Reasons`, { hash: infoHash });
+        // Don't blacklist here — the dead scanner will handle it in Phase C
+      } else {
+        console.warn(`[${new Date().toISOString()}][rd] repair re-add failed`, { hash: infoHash, err: err?.message });
+      }
     }
 
     return false;
@@ -589,10 +594,7 @@ export class RealDebridProvider implements DebridProvider {
         await rateLimiter.throttle(PROVIDER_NAME);
       }
     } catch (err: any) {
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, err?.message);
-      }
-      console.error(`[${new Date().toISOString()}][rd] list downloads stream failed`, err?.message);
+      this.handleError(err, 'list downloads stream');
     }
   }
 
@@ -651,11 +653,7 @@ export class RealDebridProvider implements DebridProvider {
         files: [], // Files are fetched lazily via fetchTorrentFiles()
       }));
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.error(`[${new Date().toISOString()}][rd] failed to fetch directories`, { error: errorMsg });
+      this.handleError(err, 'fetch directories');
       return [];
     }
   }
@@ -705,11 +703,7 @@ export class RealDebridProvider implements DebridProvider {
         return vf;
       });
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.error(`[${new Date().toISOString()}][rd] failed to fetch files for torrent ${torrentId}`, { error: errorMsg });
+      this.handleError(err, `fetch files for torrent ${torrentId}`);
       return [];
     }
   }
@@ -734,6 +728,8 @@ export class RealDebridProvider implements DebridProvider {
       return null;
     }
 
+    const downloadToken = tokenRotator.getDownloadToken(PROVIDER_NAME) || config.rdAccessToken;
+
     await rateLimiter.throttle(PROVIDER_NAME);
 
     const base = getBaseUrl();
@@ -741,7 +737,7 @@ export class RealDebridProvider implements DebridProvider {
     try {
       // First, get the torrent info to retrieve the link
       const infoUrl = `${base}/torrents/info/${encodeURIComponent(torrentId)}`;
-      const infoRes = await axiosIPv4.get(infoUrl, { headers: rdHeaders(), timeout: 30000 });
+      const infoRes = await axiosIPv4.get(infoUrl, { headers: rdHeaders(downloadToken), timeout: 30000 });
       rateLimiter.recordSuccess(PROVIDER_NAME);
 
       const links: string[] = Array.isArray(infoRes?.data?.links) ? infoRes.data.links : [];
@@ -759,7 +755,7 @@ export class RealDebridProvider implements DebridProvider {
       params.set('link', link);
 
       const unrestrictRes = await axiosIPv4.post(unrestrictUrl, params, {
-        headers: { ...rdHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { ...rdHeaders(downloadToken), 'Content-Type': 'application/x-www-form-urlencoded' },
         timeout: 20000,
       });
       rateLimiter.recordSuccess(PROVIDER_NAME);
@@ -772,11 +768,12 @@ export class RealDebridProvider implements DebridProvider {
 
       return downloadUrl;
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+      this.handleError(err, `resolve download URL for torrent ${torrentId}, link ${linkIndex}`, downloadToken);
+      const status = err?.response?.status;
+      if ((status === 503 || status === 429) && downloadToken !== config.rdAccessToken) {
+        const duration = status === 429 ? 60 * 60 * 1000 : undefined; // 1 hour for 429
+        tokenRotator.markTokenLimited(PROVIDER_NAME, downloadToken, `${status} ${err?.response?.statusText || 'limit'}`, duration);
       }
-      console.error(`[${new Date().toISOString()}][rd] failed to resolve download URL for torrent ${torrentId}`, { error: errorMsg });
       return null;
     }
   }
@@ -884,8 +881,9 @@ export class RealDebridProvider implements DebridProvider {
    * @param err - The error object.
    * @param operation - A human-readable description of the failed operation.
    */
-  private handleError(err: any, operation: string): void {
+  private handleError(err: any, operation: string, overrideToken?: string): void {
     const errorMsg = err?.message || String(err);
+    const responseHeaders = err?.response?.headers;
     const isNetworkError =
       err?.code === 'ECONNREFUSED' ||
       err?.code === 'ENOTFOUND' ||
@@ -895,7 +893,26 @@ export class RealDebridProvider implements DebridProvider {
       errorMsg.includes('network');
 
     if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-      rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+      // If we used a rotated download token, do NOT globally rate-limit the provider
+      const primaryToken = config.rdAccessToken;
+      if (overrideToken && overrideToken !== primaryToken) {
+        console.warn(
+          `[${new Date().toISOString()}][rd] Rotated download token hit 429/rate-limit. Bypassing global rate limit.`
+        );
+      } else {
+        // Try to extract Retry-After header from RD's response
+        let backoffMs: number | undefined;
+        if (responseHeaders) {
+          const retryAfter = responseHeaders['retry-after'] || responseHeaders['Retry-After'];
+          if (retryAfter) {
+            const seconds = parseInt(String(retryAfter), 10);
+            if (Number.isFinite(seconds) && seconds > 0) {
+              backoffMs = seconds * 1000;
+            }
+          }
+        }
+        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg, backoffMs);
+      }
     }
 
     console.error(`[${new Date().toISOString()}][rd] ${operation} failed`, {
@@ -915,3 +932,4 @@ export class RealDebridProvider implements DebridProvider {
 
 import { registry } from './index';
 registry.register(new RealDebridProvider());
+tokenRotator.registerProvider(PROVIDER_NAME, config.rdAccessToken, config.rdDownloadTokens);
