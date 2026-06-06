@@ -175,7 +175,7 @@ export default function AddContentPage() {
                 <div>
                   <p className="font-medium">No providers connected</p>
                   <p className="text-sm text-muted-foreground">
-                    Configure TorBox or Real-Debrid in settings to add content.
+                    Configure a debrid provider in settings to add content.
                   </p>
                 </div>
               </div>
