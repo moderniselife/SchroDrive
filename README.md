@@ -182,6 +182,7 @@ SchröDrive is designed to handle the real-world chaos of debrid services:
 - **Retry-with-backoff** — transient provider errors (423 Locked, 429 Rate Limited, network blips) are retried with exponential backoff before failing
 - **Stale-while-locked cache** — expired CDN URLs are kept in a stale cache; when fresh resolution fails, the stale URL is served as a fallback (CDN URLs typically live 6-12 hours past expiry)
 - **Mount health monitor** — background process watches rclone log patterns for IO errors and auto-remounts when consecutive failures exceed threshold
+- **Stale/Broken FUSE Mount Auto-Recovery** — Automatically detects and recovers from `"Transport endpoint is not connected"` or busy FUSE mounts on startup (often caused by previous container crashes). Unlike legacy systems (like pd_zurg) which permanently lock up the host mount points requiring manual SSH unmounts, SchröDrive forcefully unmounts the broken references and remounts them automatically.
 - **Dead torrent auto-lifecycle** — persistent download failures (10+ consecutive) trigger automatic deletion from provider → blacklisting → replacement search via indexer
 - **Persistent blacklist** — dead torrent names are stored on disk and checked before re-adding, preventing re-download of known broken content
 - **Adaptive rate limiting** with exponential backoff and per-provider tracking
