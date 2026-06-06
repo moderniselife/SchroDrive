@@ -189,14 +189,60 @@ interface Parsed {
  * @param fullPath - The absolute path to the file.
  * @returns A partial Parsed object with any discovered show/year hints.
  */
-function parseFromParentDirs(fullPath: string): Partial<Parsed> {
-  // Look at parent directory for hints like "South Park (1997)" or "Show Name (Year)"
-  const parent = path.basename(path.dirname(fullPath));
-  const m = parent.match(/^(.*?)(?:\s*\((\d{4})\))?$/);
-  if (m) {
-    const show = sanitize(m[1] || "");
-    const year = m[2] ? Number(m[2]) : undefined;
-    if (show) return { show, year };
+/**
+ * Cleans a TV show name by removing season/episode codes, quality/release tags,
+ * and trailing hyphens/spaces.
+ *
+ * @param name - The raw name to clean.
+ * @returns The cleaned TV show name.
+ */
+function cleanShowName(name: string): string {
+  let s = name;
+  s = s.replace(/\bS\d{1,2}E\d{1,3}(?:-?[eE]?\d{1,3})*\b.*/i, "");
+  s = s.replace(/\b\d{1,2}x\d{1,3}(?:-?\d{1,3})*\b.*/i, "");
+  s = s.replace(/\bSeason\s*\d+\b.*/i, "");
+  s = s.replace(/\bS\d{1,2}\b.*/i, "");
+  s = s.replace(/\b(480p|720p|1080p|2160p|4k|x264|x265|hevc|av1|hdr|dv|dolby|vision|webrip|web\-dl|bluray|bdrip|remux|hdtv|dvdrip|proper|repack|extended|remastered|dual|multi|ddp?\d(?:\.\d)?|dts(?:-hd)?|atmos)\b.*/gi, " ");
+  s = sanitize(s);
+  // Strip trailing hyphens and spaces
+  s = s.replace(/\s*[-—–]\s*$/, "").trim();
+  return s;
+}
+
+/**
+ * Walks up parent directories to find a clean show name and optional year,
+ * skipping generic folders like "Season XX".
+ *
+ * @param fullPath - The absolute file path.
+ * @returns An object with the parsed show name and premiere year.
+ */
+function findShowHintFromPath(fullPath: string): { show?: string; year?: number } {
+  let cur = path.dirname(fullPath);
+  for (let i = 0; i < 4; i++) {
+    const name = path.basename(cur);
+    if (!name || name === "/" || name === "." || name.toLowerCase() === "realdebrid" || name.toLowerCase() === "torbox" || name.toLowerCase() === "links") break;
+
+    // Skip generic season folders
+    if (/^\bseason\s*\d+\b$/i.test(name) || /^\bs\d{1,2}$/i.test(name)) {
+      cur = path.dirname(cur);
+      continue;
+    }
+
+    const m = name.match(/^(.*?)(?:\s*\((\d{4})\))?$/);
+    if (m) {
+      let show = cleanShowName(m[1] || "");
+      let year = m[2] ? Number(m[2]) : undefined;
+      // Extract year from show name if it ends with one
+      const yearMatch = show.match(/^(.*?)\s+\b(19\d{2}|20\d{2}|21\d{2})\b$/);
+      if (yearMatch) {
+        show = cleanShowName(yearMatch[1]);
+        year = Number(yearMatch[2]);
+      }
+      if (show && show.length > 2) {
+        return { show, year };
+      }
+    }
+    cur = path.dirname(cur);
   }
   return {};
 }
@@ -224,12 +270,13 @@ function guessTitleFromFilename(baseNoExt: string): string {
   return s;
 }
 
+
 /**
  * Parses a media filename to extract type, title/show, season, episode,
  * year, and other metadata. Tries multiple regex patterns in priority order:
  *
  * 1. `Title (Year)` — movie with explicit year in parentheses
- * 2. `S01E02` — standard TV season/episode notation
+ * 2. Episode-first/Standard TV season/episode notation (including startsWithEpisode check)
  * 3. `1x02` — alternative TV notation
  * 4. `Show - 637` — anime absolute episode numbering
  * 5. `Title.2024.` — movie with year separated by dots/spaces
@@ -245,76 +292,99 @@ function parseFilename(fileName: string, fullPath: string): Parsed {
   const baseNoExt = fileName.slice(0, -ext.length);
   const cleaned = sanitize(baseNoExt);
 
-  const parentHints = parseFromParentDirs(fullPath);
+  const pathHints = findShowHintFromPath(fullPath);
 
   // Pattern 1: "Title (Year)" — explicit movie with year in parentheses
   let m = baseNoExt.match(/^(.*)\s*\((\d{4})\)\s*$/);
   if (m) {
-    const title = sanitize(m[1]);
+    const title = cleanShowName(m[1]);
     const year = Number(m[2]);
     return { type: "movie", title, year, ext };
   }
 
-  // Pattern 2: TV S01E02 notation (e.g. "Show Name S01E02" or "Show.S01E02")
-  m = cleaned.match(/(.+?)\s*[\- ]?\bS(\d{1,2})E(\d{1,3})\b/i);
+  // Pattern 2: TV S01E02 notation (e.g. "Show Name S01E02" or starts with "S01E02")
+  // First, check if the filename starts with the episode code (meaning show name is not in the filename)
+  const startsWithEpisode = /^\bS(\d{1,2})E(\d{1,3})(?:-?[eE]?\d{1,3})*\b/i.test(cleaned) || /^\b(\d{1,2})x(\d{1,3})(?:-?\d{1,3})*\b/i.test(cleaned);
+  if (startsWithEpisode) {
+    const epMatch = cleaned.match(/^\bS(\d{1,2})E(\d{1,3})(?:-?[eE]?\d{1,3})*\b/i) || cleaned.match(/^\b(\d{1,2})x(\d{1,3})(?:-?\d{1,3})*\b/i);
+    if (epMatch) {
+      const season = Number(epMatch[1]);
+      const episode = Number(epMatch[2]);
+      return { type: "tv", show: pathHints.show, season, episode, year: pathHints.year, ext };
+    }
+  }
+
+  m = cleaned.match(/(.+?)\s*[\- ]?\bS(\d{1,2})E(\d{1,3})(?:-?[eE]?\d{1,3})*\b/i);
   if (m) {
-    const show = sanitize(m[1]);
+    let show = cleanShowName(m[1]);
+    let year = pathHints.year;
+    // Extract year from show name if it ends with one
+    const yearMatch = show.match(/^(.*?)\s+\b(19\d{2}|20\d{2}|21\d{2})\b$/);
+    if (yearMatch) {
+      show = cleanShowName(yearMatch[1]);
+      year = Number(yearMatch[2]);
+    }
     const season = Number(m[2]);
     const episode = Number(m[3]);
-    return { type: "tv", show: show || parentHints.show, season, episode, year: parentHints.year, ext };
+    return { type: "tv", show: show || pathHints.show, season, episode, year, ext };
   }
 
   // Pattern 3: Alternative TV notation "1x02" (e.g. "Show Name 1x02")
-  m = cleaned.match(/(.+?)\s*[\- ]?\b(\d{1,2})x(\d{1,3})\b/i);
+  m = cleaned.match(/(.+?)\s*[\- ]?\b(\d{1,2})x(\d{1,3})(?:-?\d{1,3})*\b/i);
   if (m) {
-    const show = sanitize(m[1]);
+    let show = cleanShowName(m[1]);
+    let year = pathHints.year;
+    // Extract year from show name if it ends with one
+    const yearMatch = show.match(/^(.*?)\s+\b(19\d{2}|20\d{2}|21\d{2})\b$/);
+    if (yearMatch) {
+      show = cleanShowName(yearMatch[1]);
+      year = Number(yearMatch[2]);
+    }
     const season = Number(m[2]);
     const episode = Number(m[3]);
-    return { type: "tv", show: show || parentHints.show, season, episode, year: parentHints.year, ext };
+    return { type: "tv", show: show || pathHints.show, season, episode, year, ext };
   }
 
-  // Pattern 4: Anime absolute numbering "Show Name - 637" or "Show Name 637"
+  // Pattern 4: Anime absolute numbering "Show Name - 637" or starts with "637"
+  const startsWithAbs = /^\b(\d{1,4})\b/.test(cleaned);
+  if (startsWithAbs) {
+    const absMatch = cleaned.match(/^\b(\d{1,4})\b/);
+    if (absMatch) {
+      const absolute = Number(absMatch[1]);
+      return { type: "tv", show: pathHints.show, absolute, year: pathHints.year, ext };
+    }
+  }
+
   m = cleaned.match(/(.+?)\s*[\- ]\s*(\d{1,4})(?:\b|\s)/);
   if (m) {
-    const show = sanitize(m[1]);
+    let show = cleanShowName(m[1]);
+    let year = pathHints.year;
+    // Extract year from show name if it ends with one
+    const yearMatch = show.match(/^(.*?)\s+\b(19\d{2}|20\d{2}|21\d{2})\b$/);
+    if (yearMatch) {
+      show = cleanShowName(yearMatch[1]);
+      year = Number(yearMatch[2]);
+    }
     const absolute = Number(m[2]);
-    return { type: "tv", show: show || parentHints.show, absolute, year: parentHints.year, ext };
+    return { type: "tv", show: show || pathHints.show, absolute, year, ext };
   }
 
   // Pattern 5: Movie with year in title "Title.2024." or "Title 2024"
   m = cleaned.match(/^(.*?)[\s.\-]\b(19\d{2}|20\d{2}|21\d{2})\b/);
   if (m) {
-    const title = sanitize(m[1]);
+    const title = cleanShowName(m[1]);
     const year = Number(m[2]);
     return { type: "movie", title, year, ext };
   }
 
-  // Pattern 6: Check parent directories for year hints (up to 3 levels up)
-  {
-    let pdir = path.dirname(fullPath);
-    for (let i = 0; i < 3; i++) {
-      const dn = path.basename(pdir);
-      let mm = dn.match(/^(.*)\s*\((\d{4})\)$/);
-      if (mm) {
-        const title = sanitize(mm[1]);
-        const year = Number(mm[2]);
-        return { type: "movie", title, year, ext };
-      }
-      mm = dn.match(/^(.*?)[\s.\-]\b(19\d{2}|20\d{2}|21\d{2})\b/);
-      if (mm) {
-        const title = sanitize(mm[1]);
-        const year = Number(mm[2]);
-        return { type: "movie", title, year, ext };
-      }
-      const next = path.dirname(pdir);
-      if (next === pdir) break;
-      pdir = next;
-    }
+  // Pattern 6: Check parent directories for year hints (fallback for movies)
+  if (pathHints.show && pathHints.year && !isLikelyTvContext(fullPath)) {
+    return { type: "movie", title: pathHints.show, year: pathHints.year, ext };
   }
 
   // Fallback: only treat as TV if surrounding folders strongly suggest TV context
-  if (parentHints.show && isLikelyTvContext(fullPath)) {
-    return { type: "tv", show: parentHints.show, year: parentHints.year, ext };
+  if (pathHints.show && isLikelyTvContext(fullPath)) {
+    return { type: "tv", show: pathHints.show, year: pathHints.year, ext };
   }
 
   return { type: "unknown", ext };
@@ -708,13 +778,13 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
       const meta = config.tmdbApiKey
         ? await tmdbSearch(parsed.title, "movie", parsed.year)
         : await itunesMovieSearch(parsed.title, parsed.year);
-      if (meta.canonicalTitle) parsed.title = meta.canonicalTitle;
+      if (meta.canonicalTitle) parsed.title = cleanShowName(meta.canonicalTitle);
       if (meta.canonicalYear) parsed.year = meta.canonicalYear;
     } else if (parsed.type === "tv" && parsed.show) {
       const meta = config.tmdbApiKey
         ? await tmdbSearch(parsed.show, "tv", parsed.year)
         : await tvmazeSearch(parsed.show, parsed.year);
-      if (meta.canonicalTitle) parsed.show = meta.canonicalTitle;
+      if (meta.canonicalTitle) parsed.show = cleanShowName(meta.canonicalTitle);
       if (meta.canonicalYear) parsed.year = meta.canonicalYear;
     } else if (parsed.type === "unknown") {
       // Multi-stage fallback: try filename guess, parent dir guess, then release folder guess
@@ -740,7 +810,7 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
         meta = await tryGuess(dirGuess);
       }
       if (meta?.confirmedType === "movie" || meta?.canonicalTitle) {
-        parsed = { type: "movie", title: meta.canonicalTitle || dirGuess || guess2 || guess1, year: meta.canonicalYear, ext: path.extname(base) } as Parsed;
+        parsed = { type: "movie", title: cleanShowName(meta.canonicalTitle || dirGuess || guess2 || guess1), year: meta.canonicalYear, ext: path.extname(base) } as Parsed;
       } else {
         // Size-based fallback: large standalone video without TV context → treat as movie
         try {
@@ -751,7 +821,7 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
           if (isVideoFile && notTv && large) {
             const title = dirGuess || guess2 || guess1;
             if (title) {
-              parsed = { type: "movie", title, ext: path.extname(base) } as Parsed;
+              parsed = { type: "movie", title: cleanShowName(title), ext: path.extname(base) } as Parsed;
             }
           }
         } catch {}

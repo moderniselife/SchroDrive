@@ -8,6 +8,8 @@ const axios_1 = __importDefault(require("axios"));
 const config_1 = require("../core/config");
 const index_1 = require("../indexers/index");
 const providers_1 = require("../providers");
+const db_1 = require("../core/db");
+const plex_1 = require("../integrations/plex");
 function defaultCategoriesFor(mediaType) {
     const map = {
         movie: ["5000"],
@@ -120,13 +122,49 @@ function startOverseerrPoller() {
     });
     const runOnce = async () => {
         try {
+            const isStreaming = await (0, plex_1.isPlexStreaming)();
+            if (isStreaming) {
+                console.log(`[${new Date().toISOString()}][poller] Active Plex stream detected. Skipping poller tick to avoid debrid rate limits.`);
+                return;
+            }
+            const configuredProviders = providers_1.registry.configured();
+            const allRateLimited = configuredProviders.every(p => p.isRateLimited());
+            if (allRateLimited && configuredProviders.length > 0) {
+                const minWait = Math.min(...configuredProviders.map(p => p.getWaitTime()));
+                console.warn(`[${new Date().toISOString()}][poller] All debrid providers are rate-limited. Skipping tick to avoid API spam. Resuming in ${minWait}s.`);
+                return;
+            }
             console.log(`[${new Date().toISOString()}][poller] tick`);
             const items = await fetchApprovedRequests();
             console.log(`[${new Date().toISOString()}][poller] approved requests fetched`, { count: items.length });
             for (const r of items) {
+                const currentProviders = providers_1.registry.configured();
+                if (currentProviders.every(p => p.isRateLimited()) && currentProviders.length > 0) {
+                    console.warn(`[${new Date().toISOString()}][poller] All debrid providers became rate-limited. Aborting tick.`);
+                    break;
+                }
                 const id = String(r?.id ?? `${r?.mediaId ?? ""}:${r?.is4k ? "4k" : "hd"}`);
                 if (!id)
                     continue;
+                // Persist to local database for historical request tracking
+                const media = r?.media || {};
+                const title = media.title || media.name;
+                const mediaType = media?.mediaType ?? media?.type;
+                const tmdbId = media?.tmdbId ?? r?.mediaId;
+                if (title && mediaType) {
+                    try {
+                        (0, db_1.upsertOverseerrRequest)({
+                            requestId: id,
+                            title,
+                            mediaType,
+                            tmdbId: tmdbId ? Number(tmdbId) : undefined,
+                            status: r.status || "approved",
+                        });
+                    }
+                    catch (dbErr) {
+                        console.error(`[${new Date().toISOString()}][poller] failed to persist request ${id} to database`, dbErr?.message);
+                    }
+                }
                 if (processed.has(id)) {
                     console.log(`[${new Date().toISOString()}][poller] skip already processed`, { id });
                     continue;
@@ -135,9 +173,6 @@ function startOverseerrPoller() {
                 if (!built) {
                     console.warn(`[${new Date().toISOString()}][poller] could not build query from request`, { id, media: r?.media });
                     // Try to enrich from Overseerr details
-                    const media = r?.media || {};
-                    const tmdbId = media?.tmdbId ?? r?.mediaId;
-                    const mediaType = media?.mediaType ?? media?.type;
                     if (tmdbId) {
                         try {
                             const enriched = await fetchTitleYearFromOverseerr(String(mediaType || ''), Number(tmdbId));
@@ -157,9 +192,6 @@ function startOverseerrPoller() {
                 }
                 // If query is TMDB-only, attempt to enrich with title/year for better search
                 try {
-                    const media = r?.media || {};
-                    const tmdbId = media?.tmdbId ?? r?.mediaId;
-                    const mediaType = media?.mediaType ?? media?.type;
                     if (tmdbId && built.query.trim() === `TMDB${tmdbId}`) {
                         const enriched = await fetchTitleYearFromOverseerr(String(mediaType || ''), Number(tmdbId));
                         if (enriched?.title) {
@@ -219,7 +251,6 @@ function startOverseerrPoller() {
                     // -----------------------------------------------------------------
                     // Add magnet to providers using configured strategy
                     // -----------------------------------------------------------------
-                    const teaser = magnet.slice(0, 80) + '...';
                     const addStrategy = config_1.config.addStrategy || 'all';
                     const { results: addResults } = await providers_1.registry.addMagnetWithStrategy(magnet, torrentTitle, addStrategy);
                     const anySuccess = addResults.some(r => r.success);
@@ -245,8 +276,197 @@ function startOverseerrPoller() {
             console.error(`[${new Date().toISOString()}][poller] fetch error`, e?.message || String(e));
         }
     };
-    // Start immediately and then on interval
+    // Start poller tick immediately and then on interval
     runOnce();
     setInterval(runOnce, intervalMs);
     console.log(`[${new Date().toISOString()}][poller] started`, { everySeconds: Math.round(intervalMs / 1000) });
+    // Start background Overseerr requests sync and missing requests recovery scanner
+    const runBackgroundSyncAndRecovery = async () => {
+        try {
+            await syncAllApprovedRequests();
+            await checkAndReaddMissingRequests();
+        }
+        catch (e) {
+            console.error(`[${new Date().toISOString()}][poller-sync] Background sync/recovery error`, e?.message || String(e));
+        }
+    };
+    // Run on startup
+    runBackgroundSyncAndRecovery();
+    // Schedule background historical sync (every 6 hours) and missing requests scanner (every 1 hour)
+    setInterval(async () => {
+        try {
+            await syncAllApprovedRequests();
+        }
+        catch (e) {
+            console.error(`[${new Date().toISOString()}][poller-sync] Periodic sync error`, e?.message || String(e));
+        }
+    }, 6 * 60 * 60 * 1000);
+    setInterval(async () => {
+        try {
+            await checkAndReaddMissingRequests();
+        }
+        catch (e) {
+            console.error(`[${new Date().toISOString()}][poller-sync] Periodic recovery check error`, e?.message || String(e));
+        }
+    }, 60 * 60 * 1000);
+}
+/**
+ * Pages through all approved requests from Overseerr and syncs them to SQLite database.
+ */
+async function syncAllApprovedRequests() {
+    if (!config_1.config.overseerrUrl || (!config_1.config.overseerrApiKey && !config_1.config.overseerrAuth))
+        return;
+    const base = config_1.config.overseerrUrl.replace(/\/$/, "");
+    const url = `${base}/request`;
+    const headers = {};
+    if (config_1.config.overseerrApiKey)
+        headers["X-Api-Key"] = config_1.config.overseerrApiKey;
+    if (config_1.config.overseerrAuth)
+        headers["Authorization"] = config_1.config.overseerrAuth.startsWith("Bearer ") ? config_1.config.overseerrAuth : `Bearer ${config_1.config.overseerrAuth}`;
+    let skip = 0;
+    const take = 100;
+    let total = 0;
+    console.log(`[${new Date().toISOString()}][overseerr-sync] Starting historical requests sync...`);
+    while (true) {
+        try {
+            const res = await axios_1.default.get(url, {
+                params: { filter: "approved", sort: "modified", take, skip },
+                headers,
+                timeout: 30000,
+            });
+            const results = res?.data?.results || [];
+            if (results.length === 0)
+                break;
+            for (const r of results) {
+                const requestId = String(r?.id ?? `${r?.mediaId ?? ""}:${r?.is4k ? "4k" : "hd"}`);
+                const media = r?.media || {};
+                const title = media.title || media.name;
+                const tmdbId = media?.tmdbId ?? r?.mediaId;
+                const mediaType = media?.mediaType ?? media?.type;
+                if (requestId && title && mediaType) {
+                    (0, db_1.upsertOverseerrRequest)({
+                        requestId,
+                        title,
+                        mediaType,
+                        tmdbId: tmdbId ? Number(tmdbId) : undefined,
+                        status: r.status || "approved",
+                    });
+                }
+            }
+            total += results.length;
+            if (results.length < take)
+                break;
+            skip += take;
+            // Sleep slightly to avoid spamming Overseerr API
+            await new Promise(resolve => setTimeout(resolve, 200));
+        }
+        catch (err) {
+            console.error(`[${new Date().toISOString()}][overseerr-sync] Historical sync failed at skip=${skip}: ${err?.message}`);
+            break;
+        }
+    }
+    console.log(`[${new Date().toISOString()}][overseerr-sync] Synced ${total} approved requests to local database.`);
+}
+/**
+ * Checks all synced requests against active provider torrents. If a request has
+ * no corresponding torrent on debrid providers, searches and re-adds it.
+ */
+async function checkAndReaddMissingRequests() {
+    const isStreaming = await (0, plex_1.isPlexStreaming)();
+    if (isStreaming) {
+        console.log(`[${new Date().toISOString()}][poller-sync] Active Plex stream detected. Skipping recovery check.`);
+        return;
+    }
+    const configuredProviders = providers_1.registry.configured();
+    const allRateLimited = configuredProviders.every(p => p.isRateLimited());
+    if (allRateLimited && configuredProviders.length > 0) {
+        console.warn(`[${new Date().toISOString()}][poller-sync] All providers are rate-limited. Skipping recovery check.`);
+        return;
+    }
+    console.log(`[${new Date().toISOString()}][poller-sync] Checking for requests removed from debrid providers...`);
+    const requests = (0, db_1.getAllOverseerrRequests)();
+    const providers = providers_1.registry.configured();
+    if (providers.length === 0) {
+        console.warn(`[${new Date().toISOString()}][poller-sync] No configured debrid providers, skipping missing requests check`);
+        return;
+    }
+    let readdedCount = 0;
+    for (const req of requests) {
+        const currentProviders = providers_1.registry.configured();
+        if (currentProviders.every(p => p.isRateLimited()) && currentProviders.length > 0) {
+            console.warn(`[${new Date().toISOString()}][poller-sync] All providers became rate-limited. Aborting recovery check.`);
+            break;
+        }
+        try {
+            // Check if a torrent for this request already exists on any provider
+            const { exists } = await providers_1.registry.checkExistingAcrossAll(req.title);
+            if (exists) {
+                // Already present, skip
+                continue;
+            }
+            // Not present! Check search cooldown to avoid spamming indexers
+            const now = Date.now();
+            const lastSearch = req.lastSearchAt || 0;
+            const cooldownMs = 6 * 60 * 60 * 1000; // 6 hours cooldown
+            if (now - lastSearch < cooldownMs) {
+                // Skipped due to cooldown
+                continue;
+            }
+            // Update lastSearchAt immediately to prevent concurrent duplicate searches
+            (0, db_1.upsertOverseerrRequest)({
+                ...req,
+                lastSearchAt: now,
+            });
+            // Build search query
+            let query = req.title;
+            if (req.tmdbId) {
+                query += ` TMDB${req.tmdbId}`;
+            }
+            console.log(`[${new Date().toISOString()}][poller-sync] Request "${req.title}" is missing from providers. Re-searching...`);
+            const categories = defaultCategoriesFor(req.mediaType);
+            const results = await (0, index_1.searchIndexer)(query, { categories });
+            if (results.length === 0) {
+                console.log(`[${new Date().toISOString()}][poller-sync] No results found for missing request "${req.title}"`);
+                continue;
+            }
+            const best = (0, index_1.pickBestResult)(results);
+            let magnet = undefined;
+            let chosenUsed = best;
+            const sorted = results
+                .slice()
+                .sort((a, b) => (Number(b.seeders) || 0) - (Number(a.seeders) || 0) || (Number(b.size) || 0) - (Number(a.size) || 0));
+            for (const cand of [best, ...sorted.filter((x) => x !== best)]) {
+                magnet = (0, index_1.getMagnet)(cand);
+                if (!magnet) {
+                    try {
+                        magnet = await (0, index_1.getMagnetOrResolve)(cand);
+                    }
+                    catch { }
+                }
+                if (magnet) {
+                    chosenUsed = cand;
+                    break;
+                }
+            }
+            if (!magnet) {
+                console.log(`[${new Date().toISOString()}][poller-sync] No magnet found for missing request "${req.title}"`);
+                continue;
+            }
+            const torrentTitle = chosenUsed?.title || query;
+            const addStrategy = config_1.config.addStrategy || 'all';
+            const { results: addResults } = await providers_1.registry.addMagnetWithStrategy(magnet, torrentTitle, addStrategy);
+            const anySuccess = addResults.some(r => r.success);
+            if (anySuccess) {
+                console.log(`[${new Date().toISOString()}][poller-sync] ✅ Successfully re-added missing request: "${req.title}"`);
+                readdedCount++;
+            }
+            else {
+                console.error(`[${new Date().toISOString()}][poller-sync] ❌ Failed to add re-added request to any provider: "${req.title}"`);
+            }
+        }
+        catch (err) {
+            console.error(`[${new Date().toISOString()}][poller-sync] Error processing missing request "${req.title}": ${err?.message}`);
+        }
+    }
+    console.log(`[${new Date().toISOString()}][poller-sync] Finished checking missing requests. Re-added ${readdedCount} shows/movies.`);
 }

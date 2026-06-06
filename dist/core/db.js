@@ -41,6 +41,9 @@ exports.recoverBlacklistFromDb = recoverBlacklistFromDb;
 exports.setCacheEntry = setCacheEntry;
 exports.getCacheEntry = getCacheEntry;
 exports.pruneExpiredCache = pruneExpiredCache;
+exports.getOverseerrRequest = getOverseerrRequest;
+exports.upsertOverseerrRequest = upsertOverseerrRequest;
+exports.getAllOverseerrRequests = getAllOverseerrRequests;
 const bun_sqlite_1 = require("bun:sqlite");
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
@@ -145,6 +148,15 @@ function runMigrations(database) {
       cache_key TEXT PRIMARY KEY,
       data TEXT NOT NULL,
       expires_at INTEGER NOT NULL
+    )`,
+        `CREATE TABLE IF NOT EXISTS overseerr_requests (
+      request_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      media_type TEXT NOT NULL,
+      tmdb_id INTEGER,
+      last_search_at INTEGER,
+      status TEXT,
+      created_at INTEGER NOT NULL
     )`,
     ];
     for (const sql of migrations) {
@@ -542,5 +554,70 @@ function pruneExpiredCache() {
     }
     catch (err) {
         console.error(`[${new Date().toISOString()}][db] pruneExpiredCache error: ${err?.message}`);
+    }
+}
+/**
+ * Retrieves an Overseerr request record by its ID.
+ */
+function getOverseerrRequest(requestId) {
+    try {
+        const database = getDb();
+        const row = database.prepare('SELECT request_id, title, media_type, tmdb_id, last_search_at, status FROM overseerr_requests WHERE request_id = ?').get(requestId);
+        if (!row)
+            return null;
+        return {
+            requestId: row.request_id,
+            title: row.title,
+            mediaType: row.media_type,
+            tmdbId: row.tmdb_id ?? undefined,
+            lastSearchAt: row.last_search_at ?? undefined,
+            status: row.status ?? undefined,
+        };
+    }
+    catch (err) {
+        console.error(`[${new Date().toISOString()}][db] getOverseerrRequest error: ${err?.message}`);
+        return null;
+    }
+}
+/**
+ * Inserts or updates an Overseerr request record.
+ */
+function upsertOverseerrRequest(record) {
+    try {
+        const database = getDb();
+        database.prepare(`
+      INSERT INTO overseerr_requests (request_id, title, media_type, tmdb_id, last_search_at, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(request_id) DO UPDATE SET
+        title = excluded.title,
+        media_type = excluded.media_type,
+        tmdb_id = excluded.tmdb_id,
+        last_search_at = COALESCE(excluded.last_search_at, overseerr_requests.last_search_at),
+        status = excluded.status
+    `).run(record.requestId, record.title, record.mediaType, record.tmdbId ?? null, record.lastSearchAt ?? null, record.status ?? null, Date.now());
+    }
+    catch (err) {
+        console.error(`[${new Date().toISOString()}][db] upsertOverseerrRequest error: ${err?.message}`);
+    }
+}
+/**
+ * Retrieves all Overseerr request records from the database.
+ */
+function getAllOverseerrRequests() {
+    try {
+        const database = getDb();
+        const rows = database.prepare('SELECT request_id, title, media_type, tmdb_id, last_search_at, status FROM overseerr_requests').all();
+        return rows.map(row => ({
+            requestId: row.request_id,
+            title: row.title,
+            mediaType: row.media_type,
+            tmdbId: row.tmdb_id ?? undefined,
+            lastSearchAt: row.last_search_at ?? undefined,
+            status: row.status ?? undefined,
+        }));
+    }
+    catch (err) {
+        console.error(`[${new Date().toISOString()}][db] getAllOverseerrRequests error: ${err?.message}`);
+        return [];
     }
 }

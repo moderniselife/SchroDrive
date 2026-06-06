@@ -27,6 +27,7 @@ const http_1 = __importDefault(require("http"));
 const config_1 = require("../core/config");
 const rateLimiter_1 = require("../core/rateLimiter");
 const tokenRotator_1 = require("../core/tokenRotator");
+const errors_1 = require("../core/errors");
 // ===========================================================================
 // Constants & HTTP Configuration
 // ===========================================================================
@@ -533,11 +534,12 @@ class AllDebridProvider {
      * @returns The direct download URL, or `null` on failure.
      */
     async resolveDownloadUrl(torrentId, fileId, _linkIndex) {
-        if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
+        const downloadToken = tokenRotator_1.tokenRotator.getDownloadToken(PROVIDER_NAME) || config_1.config.alldebridApiKey;
+        const isRotated = downloadToken !== config_1.config.alldebridApiKey;
+        if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME) && !isRotated) {
             console.warn(`[${new Date().toISOString()}][ad] rate limited, cannot resolve download URL for magnet ${torrentId}`);
             return null;
         }
-        const downloadToken = tokenRotator_1.tokenRotator.getDownloadToken(PROVIDER_NAME) || config_1.config.alldebridApiKey;
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             // Fetch the magnet info to retrieve the file link
@@ -550,8 +552,7 @@ class AllDebridProvider {
             const rawLinks = Array.isArray(magnet?.links) ? magnet.links : [];
             const fileIndex = parseInt(fileId, 10);
             if (isNaN(fileIndex) || fileIndex < 0 || fileIndex >= rawLinks.length) {
-                console.error(`[${new Date().toISOString()}][ad] file index ${fileId} out of range (${rawLinks.length} links) for magnet ${torrentId}`);
-                return null;
+                throw new errors_1.UnplayableTorrentError(`File index ${fileId} out of range (${rawLinks.length} links) for magnet ${torrentId}`);
             }
             const fileLink = rawLinks[fileIndex]?.link || rawLinks[fileIndex]?.l;
             if (!fileLink) {
@@ -719,6 +720,6 @@ exports.AllDebridProvider = AllDebridProvider;
 // ===========================================================================
 // Self-Registration
 // ===========================================================================
-const index_1 = require("./index");
-index_1.registry.register(new AllDebridProvider());
+const registry_1 = require("./registry");
+registry_1.registry.register(new AllDebridProvider());
 tokenRotator_1.tokenRotator.registerProvider(PROVIDER_NAME, config_1.config.alldebridApiKey, config_1.config.alldebridDownloadTokens);

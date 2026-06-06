@@ -17,6 +17,7 @@ exports.getPlexLibrarySections = getPlexLibrarySections;
 exports.refreshPlexLibrary = refreshPlexLibrary;
 exports.extractTmdbId = extractTmdbId;
 exports.extractTvdbId = extractTvdbId;
+exports.isPlexStreaming = isPlexStreaming;
 const axios_1 = __importDefault(require("axios"));
 const config_1 = require("../core/config");
 // =============================================================================
@@ -167,4 +168,31 @@ function extractTvdbId(item) {
             return Number(match[1]);
     }
     return undefined;
+}
+/**
+ * Checks if there are any active streaming sessions on the Plex server.
+ *
+ * @returns `true` if Plex has active streaming sessions.
+ */
+async function isPlexStreaming() {
+    const plexUrl = config_1.config.plexUrl;
+    const token = config_1.config.plexToken;
+    if (!plexUrl || !token)
+        return false;
+    const url = `${plexUrl.replace(/\/$/, '')}/status/sessions`;
+    try {
+        const res = await axios_1.default.get(url, {
+            headers: {
+                "X-Plex-Token": token,
+                Accept: "application/json",
+            },
+            timeout: 5000,
+        });
+        const size = Number(res.data?.MediaContainer?.size ?? 0);
+        return size > 0;
+    }
+    catch (err) {
+        console.error(`[${new Date().toISOString()}][plex] Failed to check Plex streaming sessions:`, err?.message || String(err));
+        return false;
+    }
 }

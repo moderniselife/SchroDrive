@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.5.1] - 2026-06-06 🍿
+*Status: Streaming freeze fixes, Plex stream detection, and organiser robustness*
+
+### Added ✨
+- **Plex Stream Detection** (`src/integrations/plex.ts` & `src/services/overseerr.ts`):
+  - Added `isPlexStreaming()` to query active Plex sessions on `/status/sessions`
+  - Poller ticks and missing requests recovery checks are paused while anyone is actively watching Plex to avoid background API traffic and rate-limits
+- **Stale cache fallback for directory listings** (`src/services/webdavBridge.ts`):
+  - Serve cached/stale directory structure and file listings if a debrid provider is rate-limited or errors, preventing empty mount points on host and preventing Plex freezes
+
+### Fixed 🐛
+- **Rotated token rate-limit bypass**: WebDAV bridge link resolution now bypasses the global rate-limit check for rotated tokens, allowing successful stream resolution even if the primary API token is rate-limited
+- **TV Organiser duplication**: Fixed an issue in TV media folder organisation to prevent duplicate directories and correctly handle filename patterns
+- **TypeScript compilation**: Fixed missing `guessTitleFromFilename` helper in `organizer.ts` to ensure clean builds
+
 ### Version [0.5.0] - 2026-06-06 🔑
 *Status: Multi-token download bypass + rate limiter hardening*
 
