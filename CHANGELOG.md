@@ -9,9 +9,10 @@ and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.
 *Status: Streaming freeze fixes, Plex stream detection, and organiser robustness*
 
 ### Added ✨
-- **Plex Stream Detection** (`src/integrations/plex.ts` & `src/services/overseerr.ts`):
-  - Added `isPlexStreaming()` to query active Plex sessions on `/status/sessions`
-  - Poller ticks and missing requests recovery checks are paused while anyone is actively watching Plex to avoid background API traffic and rate-limits
+- **Unified Media Server Stream Detection** (`src/integrations/plex.ts`, `jellyfin.ts`, `emby.ts` & `src/services/`):
+  - Added `isJellyfinStreaming()` and `isEmbyStreaming()` to fetch active sessions from Jellyfin and Emby (`/Sessions`) concurrently.
+  - Implemented `isAnyMediaServerStreaming()` which queries Plex, Jellyfin, and Emby in parallel.
+  - Ticks for Overseerr poller, recovery checks, watchlist polls, and dead scanner scans are now fully paused while anyone is actively watching media on any of the three servers to eliminate background API traffic.
 - **Stale cache fallback for directory listings** (`src/services/webdavBridge.ts`):
   - Serve cached/stale directory structure and file listings if a debrid provider is rate-limited or errors, preventing empty mount points on host and preventing Plex freezes
 

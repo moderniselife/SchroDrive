@@ -245,6 +245,7 @@ SchröDrive implements **provider-specific rate limiting** that goes beyond simp
 SchröDrive proactively detects and recovers from dead torrents through a **3-phase recovery** process:
 
 **Explicit status detection** — the dead scanner checks for provider-specific failure states:
+
 - RealDebrid: `magnet_error`, `error`, `virus`, `dead`, `compressing_error`
 - Other providers: equivalent error/failure statuses
 
@@ -344,12 +345,12 @@ SchröDrive uses **embedded SQLite** with WAL (Write-Ahead Logging) instead:
 SchröDrive's SQLite database is a **bonus persistence layer** — the app degrades gracefully if the database is missing or corrupted. Every DB write is wrapped in try/catch. The in-memory state remains the primary source of truth; SQLite just ensures it survives restarts.
 
 What SchröDrive persists in SQLite:
+
 - **Processed watchlist items** — prevents re-processing on restart
 - **Dead torrent flags + failure counters** — detection survives restarts
 - **Rate limit backoff state** — doesn't re-hammer rate-limited APIs
 - **API response cache** — avoids cold-start request bursts
 - **Blacklist backup** — auto-recovers if the JSON file is deleted
-
 
 ---
 
@@ -599,7 +600,7 @@ All configuration is done via environment variables. Below is the complete refer
 | `WEBDAV_BRIDGE_PORT_AD` | `9117` | AllDebrid bridge port |
 | `WEBDAV_BRIDGE_PORT_PM` | `9118` | Premiumize bridge port |
 | `WEBDAV_CACHE_TTL_S` | `30` | Directory listing cache TTL |
-| `WEBDAV_DOWNLOAD_CACHE_TTL_S` | `1800` | Download URL cache TTL (30min — CDN URLs live hours) |
+| `WEBDAV_DOWNLOAD_CACHE_TTL_S` | `14400` | Download URL cache TTL (4 hours — CDN URLs live hours) |
 
 ### 🔄 Service Toggles
 
@@ -888,7 +889,7 @@ registry.register(new YourProvider());
 }
 ```
 
-5. Enable **Request Approved** events (or as desired)
+1. Enable **Request Approved** events (or as desired)
 
 ---
 
@@ -898,6 +899,7 @@ registry.register(new YourProvider());
 <summary><strong>Webhook returns 503 "Service not configured"</strong></summary>
 
 Required environment variables are missing. Ensure:
+
 - **Indexer configured:** `PROWLARR_URL` + `PROWLARR_API_KEY` OR `JACKETT_URL` + `JACKETT_API_KEY`
 - **Provider configured:** `TORBOX_API_KEY` and/or `RD_ACCESS_TOKEN`
 
@@ -907,6 +909,7 @@ Required environment variables are missing. Ensure:
 <summary><strong>Webhook returns 504 "Request timed out while searching indexer"</strong></summary>
 
 The search exceeded the timeout. Try:
+
 1. Test your indexer directly: `curl http://localhost:9696/api/v1/search?query=test&apikey=YOUR_KEY`
 2. Reduce categories or indexer count
 3. Increase timeout: `PROWLARR_TIMEOUT_MS=180000`
@@ -918,6 +921,7 @@ The search exceeded the timeout. Try:
 <summary><strong>Rate limit errors from debrid providers</strong></summary>
 
 SchröDrive has built-in adaptive rate limiting. If you see rate limit warnings:
+
 - They're handled automatically — requests are queued and retried
 - Cached data is served during backoff periods
 - Check `GET /api/providers` for current rate limit status
@@ -928,6 +932,7 @@ SchröDrive has built-in adaptive rate limiting. If you see rate limit warnings:
 <summary><strong>FUSE mount fails inside Docker</strong></summary>
 
 Mounting requires privileged access. Add to your compose service:
+
 ```yaml
 devices:
   - "/dev/fuse:/dev/fuse"
@@ -947,6 +952,7 @@ Alternatively, run the mount on the host and only use the container for automati
 <summary><strong>423 Locked / IO errors on mount</strong></summary>
 
 This is the classic pd_zurg problem. SchröDrive handles it automatically:
+
 1. **Retry with backoff** — transient 423s are retried (3 attempts: 1s, 2s, 4s delays)
 2. **Stale cache fallback** — if fresh resolution fails, the last known CDN URL is served
 3. **503 Retry-After** — rclone receives retriable 503 responses instead of fatal errors
@@ -961,6 +967,7 @@ If errors persist, check `GET /api/bridges` for bridge health status.
 <summary><strong>Health check shows wrong port</strong></summary>
 
 The default port is `8978`. Verify with:
+
 ```bash
 curl http://localhost:8978/health
 ```
@@ -978,6 +985,7 @@ curl http://localhost:8978/health
 | **Develop** | `ghcr.io/moderniselife/schrodrive:develop` | Auto-built from `develop` branch |
 
 Two CI workflows:
+
 - **build-push.yml** — Builds and pushes to GHCR for `linux/amd64`
 - **build-push-multi.yml** — Multi-platform build for `linux/amd64` and `linux/arm64`
 
