@@ -16,6 +16,7 @@
  * - `response_cache` — key/value cache with TTL for API responses
  * - `processed_overseerr` — persists which Overseerr requests have been processed (survives restarts)
  * - `known_magnets` — infohash-based deduplication to prevent re-adding the same torrent
+ * - `strm_codes` — STRM short-codes that 302 redirect to ephemeral download URLs
  *
  * @module db
  */
@@ -158,6 +159,20 @@ function runMigrations(database: Database): void {
       provider TEXT,
       added_at INTEGER NOT NULL
     )`,
+    `CREATE TABLE IF NOT EXISTS strm_codes (
+      code TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      torrent_id TEXT NOT NULL,
+      file_id TEXT NOT NULL,
+      download_url TEXT,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      last_accessed_at INTEGER
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_strm_content
+      ON strm_codes (provider, torrent_id, file_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_strm_expires
+      ON strm_codes (expires_at)`,
   ];
 
   for (const sql of migrations) {
@@ -876,5 +891,143 @@ export function pruneOldMagnets(): void {
     ).run(ninetyDaysAgo);
   } catch (err: any) {
     console.error(`[${new Date().toISOString()}][db] pruneOldMagnets error: ${err?.message}`);
+  }
+}
+
+// ===========================================================================
+// STRM Short-Codes
+// ===========================================================================
+
+/** Shape of a STRM code record from the database. */
+export interface StrmCodeRecord {
+  code: string;
+  provider: string;
+  torrentId: string;
+  fileId: string;
+  downloadUrl: string | null;
+  createdAt: number;
+  expiresAt: number;
+  lastAccessedAt: number | null;
+}
+
+/**
+ * Retrieves a STRM code record by its code.
+ * Also updates `last_accessed_at` on each access for usage tracking.
+ */
+export function getStrmCode(code: string): StrmCodeRecord | null {
+  try {
+    const database = getDb();
+    const row = database.prepare(
+      'SELECT code, provider, torrent_id, file_id, download_url, created_at, expires_at, last_accessed_at FROM strm_codes WHERE code = ?'
+    ).get(code) as any;
+
+    if (!row) return null;
+
+    // Update last accessed timestamp
+    database.prepare(
+      'UPDATE strm_codes SET last_accessed_at = ? WHERE code = ?'
+    ).run(Date.now(), code);
+
+    return {
+      code: row.code,
+      provider: row.provider,
+      torrentId: row.torrent_id,
+      fileId: row.file_id,
+      downloadUrl: row.download_url,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      lastAccessedAt: row.last_accessed_at,
+    };
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][db] getStrmCode error: ${err?.message}`);
+    return null;
+  }
+}
+
+/**
+ * Inserts or updates a STRM code record.
+ * Used to create new codes and to refresh download URLs.
+ */
+export function upsertStrmCode(
+  code: string,
+  provider: string,
+  torrentId: string,
+  fileId: string,
+  downloadUrl: string | null,
+  expiresAt: number,
+): void {
+  try {
+    const database = getDb();
+    database.prepare(`
+      INSERT INTO strm_codes (code, provider, torrent_id, file_id, download_url, created_at, expires_at, last_accessed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(code) DO UPDATE SET
+        download_url = excluded.download_url,
+        expires_at = excluded.expires_at,
+        last_accessed_at = ?
+    `).run(
+      code,
+      provider,
+      torrentId,
+      fileId,
+      downloadUrl,
+      Date.now(),
+      expiresAt,
+      null,
+      Date.now(),
+    );
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][db] upsertStrmCode error: ${err?.message}`);
+  }
+}
+
+/**
+ * Finds an existing STRM code for a specific provider/torrent/file combination.
+ * Returns the code if found (even if expired), or null if no code exists.
+ */
+export function findStrmByContent(
+  provider: string,
+  torrentId: string,
+  fileId: string,
+): StrmCodeRecord | null {
+  try {
+    const database = getDb();
+    const row = database.prepare(
+      'SELECT code, provider, torrent_id, file_id, download_url, created_at, expires_at, last_accessed_at FROM strm_codes WHERE provider = ? AND torrent_id = ? AND file_id = ?'
+    ).get(provider, torrentId, fileId) as any;
+
+    if (!row) return null;
+
+    return {
+      code: row.code,
+      provider: row.provider,
+      torrentId: row.torrent_id,
+      fileId: row.file_id,
+      downloadUrl: row.download_url,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      lastAccessedAt: row.last_accessed_at,
+    };
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][db] findStrmByContent error: ${err?.message}`);
+    return null;
+  }
+}
+
+/**
+ * Removes expired STRM codes from the database.
+ * Called periodically as part of the pruning cycle.
+ */
+export function pruneExpiredStrmCodes(): void {
+  try {
+    const database = getDb();
+    const result = database.prepare(
+      'DELETE FROM strm_codes WHERE expires_at < ?'
+    ).run(Date.now());
+    if ((result as any)?.changes > 0) {
+      console.log(`[${new Date().toISOString()}][db] Pruned ${(result as any).changes} expired STRM code(s)`);
+    }
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][db] pruneExpiredStrmCodes error: ${err?.message}`);
   }
 }
