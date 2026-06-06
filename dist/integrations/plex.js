@@ -18,6 +18,7 @@ exports.refreshPlexLibrary = refreshPlexLibrary;
 exports.extractTmdbId = extractTmdbId;
 exports.extractTvdbId = extractTvdbId;
 exports.isPlexStreaming = isPlexStreaming;
+exports.isAnyMediaServerStreaming = isAnyMediaServerStreaming;
 const axios_1 = __importDefault(require("axios"));
 const config_1 = require("../core/config");
 // =============================================================================
@@ -193,6 +194,28 @@ async function isPlexStreaming() {
     }
     catch (err) {
         console.error(`[${new Date().toISOString()}][plex] Failed to check Plex streaming sessions:`, err?.message || String(err));
+        return false;
+    }
+}
+/**
+ * Concurrent check across all configured media servers (Plex, Jellyfin, Emby)
+ * to determine if any active streaming sessions are running.
+ *
+ * @returns `true` if any media server has active playback.
+ */
+async function isAnyMediaServerStreaming() {
+    // Use require inline to prevent import-time side effects
+    const { isJellyfinStreaming } = require("./jellyfin");
+    const { isEmbyStreaming } = require("./emby");
+    try {
+        const results = await Promise.all([
+            isPlexStreaming().catch(() => false),
+            isJellyfinStreaming().catch(() => false),
+            isEmbyStreaming().catch(() => false),
+        ]);
+        return results.some(Boolean);
+    }
+    catch (err) {
         return false;
     }
 }

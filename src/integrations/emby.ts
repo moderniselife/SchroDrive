@@ -122,3 +122,33 @@ export async function refreshEmbyLibrary(): Promise<void> {
     console.error(`[${new Date().toISOString()}][emby] Library refresh failed:`, err?.message || String(err));
   }
 }
+
+/**
+ * Checks if there are any active playing sessions on the Emby server.
+ *
+ * @returns `true` if Emby has active playing sessions.
+ */
+export async function isEmbyStreaming(): Promise<boolean> {
+  const baseUrl = config.embyUrl;
+  const apiKey = config.embyApiKey;
+  if (!baseUrl || !apiKey) return false;
+
+  const url = `${baseUrl.replace(/\/$/, "")}/Sessions`;
+  try {
+    const res = await axios.get(url, {
+      headers: {
+        "X-Emby-Token": apiKey,
+        Accept: "application/json",
+      },
+      timeout: 5000,
+    });
+
+    const sessions = Array.isArray(res.data) ? res.data : [];
+    // Check if any session is currently playing media (i.e. has NowPlayingItem)
+    return sessions.some((s: any) => s.NowPlayingItem);
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][emby] Failed to check Emby streaming sessions:`, err?.message || String(err));
+    return false;
+  }
+}
+
