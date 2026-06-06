@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.5.2] - 2026-06-06 🔧
+*Status: RealDebrid 404 repair retries, organiser dynamic provider scanning, and directory walk error logging*
+
+### Fixed 🐛
+- **RealDebrid select files retry on 404**: Added an automatic retry loop in `selectAllFiles` (up to 3 attempts with a 1-second delay) to handle transient database propagation lag when selecting files for newly added magnets.
+- **Dynamic organiser scanning**: Updated the media organiser (`organizeOnce`) to dynamically scan all enabled debrid providers configured in `config.providers` rather than hardcoding only `realdebrid` and `torbox`.
+- **Organiser directory walk robustness**: Added try/catch error logging to the organiser's recursive directory walk (`walkDir`) to surface FUSE mount read issues, and replaced `lstat` with `stat` for resolving symbolic link targets in debrid mounts.
+
 ### Version [0.5.1] - 2026-06-06 🍿
 *Status: Streaming freeze fixes, Plex stream detection, and organiser robustness*
 
