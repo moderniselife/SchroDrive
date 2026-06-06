@@ -11,6 +11,7 @@ import { config } from "./core/config";
 import { getDb, closeDb, pruneOldEntries, pruneExpiredStrmCodes } from "./core/db";
 import { startStrmServer, stopStrmServer } from "./services/strmService";
 import { startCloudLinksBridge, stopCloudLinksBridge } from "./services/cloudLinks/bridge";
+import { startArrBridge, stopArrBridge } from "./services/arrBridge";
 
 const program = new Command();
 program
@@ -41,6 +42,7 @@ program
       console.log(`[${new Date().toISOString()}][serve] Waiting 3 seconds for FUSE mounts to clear...`);
       stopStrmServer().catch(() => {});
       stopCloudLinksBridge().catch(() => {});
+      stopArrBridge().catch(() => {});
       setTimeout(() => {
         console.log(`[${new Date().toISOString()}][serve] Closing database and exiting...`);
         closeDb();
@@ -106,6 +108,14 @@ program
     startStrmServer().catch((err: any) => {
       console.error(`[serve] Failed to start STRM service (non-fatal): ${err?.message}`);
     });
+
+    // Start *arr bridge (fake qBittorrent API for Radarr/Sonarr)
+    if (config.arrBridgeEnabled) {
+      console.log("[serve] Starting *arr bridge (ARR_BRIDGE_ENABLED=true)");
+      startArrBridge().catch((err: any) => {
+        console.error(`[serve] Failed to start *arr bridge (non-fatal): ${err?.message}`);
+      });
+    }
     
     // If additional services are running, handle their errors
     if (promises.length > 0) {

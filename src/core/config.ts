@@ -167,6 +167,9 @@ export const config = {
   mediafusionUrl: process.env.MEDIAFUSION_URL || "https://mediafusion.elfhosted.com",
   mediafusionConfig: process.env.MEDIAFUSION_CONFIG || "",
   mediafusionEnabled: String(process.env.MEDIAFUSION_ENABLED ?? "false").toLowerCase() === "true",
+  // --- *arr Bridge (fake qBittorrent API for Radarr/Sonarr) ---
+  arrBridgeEnabled: String(process.env.ARR_BRIDGE_ENABLED ?? "false").toLowerCase() === "true",
+  arrBridgePort: Number(process.env.ARR_BRIDGE_PORT || 8282),
   // --- Stremio Addon Server (expose SchröDrive as an addon) ---
   stremioAddonEnabled: String(process.env.STREMIO_ADDON_ENABLED ?? "false").toLowerCase() === "true",
   stremioAddonPort: Number(process.env.STREMIO_ADDON_PORT || 7000),
