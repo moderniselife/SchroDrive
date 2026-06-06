@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.2.0] - 2026-06-06 🚀
+*Status: Major release — replaces PD Zurg + TorBox Media Center*
+
+### Added ✨
+- **Plex watchlist integration** (`src/plex.ts`):
+  - Polls Plex watchlist via metadata.provider.plex.tv
+  - Library section listing and refresh
+  - TMDB/TVDB GUID extraction from Plex metadata
+- **Jellyfin watchlist integration** (`src/jellyfin.ts`):
+  - Polls user favourites as watchlist
+  - Library refresh trigger
+  - Provider ID extraction (TMDB, TVDB, IMDB)
+- **Emby watchlist integration** (`src/emby.ts`):
+  - Polls user favourites as watchlist
+  - Library refresh trigger
+  - Compatible auth headers (`X-Emby-Token`)
+- **Unified watchlist poller** (`src/mediaServerWatchlist.ts`):
+  - Normalises items from Plex, Jellyfin, and Emby
+  - Deduplicates across media servers
+  - Searches via Prowlarr/Jackett, adds best torrent to configured debrid provider
+  - Auto-refreshes source library after successful add
+  - Enable with `RUN_WATCHLIST_POLLER=true`
+- **Dynamic rate limit learning** (`src/rateLimitStore.ts`):
+  - Per-endpoint tracking of response times and error rates
+  - Adaptive delay: decreases 5% on success, doubles on rate limit
+  - Retry-After header parsing (numeric + HTTP-date formats)
+  - Persists to `/config/rate-limit-store.json`
+  - API: `GET /api/rate-limits`, `GET /api/rate-limits/:provider`, `POST /api/rate-limits/reset`
+- **Infringing content blocklist** (`src/infringementList.ts`):
+  - JSON-backed blocklist for DMCA/infringing patterns
+  - Three match types: contains, exact, regex
+  - Per-provider attribution (realdebrid, torbox, both)
+  - Auto-detection of infringement error responses
+  - API: `GET/POST/DELETE /api/infringement-list`, `GET /api/infringement-list/check`
+- **Code documentation overhaul**:
+  - JSDoc for all 6 core files (realdebrid, torbox, mount, rateLimiter, organiser, server)
+  - Module headers, function docs, section dividers, Australian English
+- New config options:
+  - `PLEX_URL`, `PLEX_TOKEN`, `PLEX_MOUNT_DIR`
+  - `JELLYFIN_URL`, `JELLYFIN_API_KEY`, `JELLYFIN_USER_ID`
+  - `EMBY_URL`, `EMBY_API_KEY`, `EMBY_USER_ID`
+  - `RUN_WATCHLIST_POLLER`, `WATCHLIST_POLL_INTERVAL_S`
+  - `REFRESH_LIBRARY_ON_ADD`
+
+### Changed 🔄
+- **Runtime migrated from Node.js to Bun** (latest):
+  - Dockerfile: `node:20-alpine` → `oven/bun:latest`
+  - All scripts use `bun` instead of `node`
+  - `bun.lock` replaces `package-lock.json`
+  - `@types/bun` replaces `ts-node`
+- Version bumped from 0.1.26 to 0.2.0
+- `/api/status` now includes media server configuration and blocklist info
+- Description updated to reflect full feature set
+
+---
+
 ### Version [0.1.25] - 2025-11-10 🚀
 *Status: Ready for release*
 

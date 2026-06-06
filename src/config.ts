@@ -80,12 +80,30 @@ export const config = {
   runMount: String(process.env.RUN_MOUNT ?? "false").toLowerCase() === "true",
   runDeadScanner: String(process.env.RUN_DEAD_SCANNER ?? "false").toLowerCase() === "true",
   runDeadScannerWatch: String(process.env.RUN_DEAD_SCANNER_WATCH ?? "false").toLowerCase() === "true",
-  // Organizer (symlinked view)
+  // Organiser (symlinked view)
   tmdbApiKey: process.env.TMDB_API_KEY || "",
   organizedBase: process.env.ORGANIZED_BASE || `${defaultMountBase}/organized`,
   organizerMode: (process.env.ORGANIZER_MODE || "symlink") as "symlink" | "copy" | "move",
   runOrganizerWatch: String(process.env.RUN_ORGANIZER_WATCH ?? "false").toLowerCase() === "true",
   orgScanIntervalSeconds: Number(process.env.ORG_SCAN_INTERVAL_S || 300),
+  // --- Media Server Integration ---
+  // Plex
+  plexUrl: process.env.PLEX_URL || process.env.PLEX_ADDRESS || "",
+  plexToken: process.env.PLEX_TOKEN || "",
+  plexMountDir: process.env.PLEX_MOUNT_DIR || "",
+  // Jellyfin
+  jellyfinUrl: process.env.JELLYFIN_URL || process.env.JF_ADDRESS || "",
+  jellyfinApiKey: process.env.JELLYFIN_API_KEY || process.env.JF_API_KEY || "",
+  jellyfinUserId: process.env.JELLYFIN_USER_ID || "",
+  // Emby
+  embyUrl: process.env.EMBY_URL || "",
+  embyApiKey: process.env.EMBY_API_KEY || "",
+  embyUserId: process.env.EMBY_USER_ID || "",
+  // Watchlist poller
+  runWatchlistPoller: String(process.env.RUN_WATCHLIST_POLLER ?? "false").toLowerCase() === "true",
+  watchlistPollIntervalSeconds: Number(process.env.WATCHLIST_POLL_INTERVAL_S || 60),
+  // Refresh library after adding content
+  refreshLibraryOnAdd: String(process.env.REFRESH_LIBRARY_ON_ADD ?? "true").toLowerCase() !== "false",
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {
