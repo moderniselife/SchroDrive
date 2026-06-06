@@ -22,6 +22,7 @@ import http from 'http';
 import { config } from '../core/config';
 import { rateLimiter } from '../core/rateLimiter';
 import { tokenRotator } from '../core/tokenRotator';
+import { UnplayableTorrentError } from '../core/errors';
 import type {
   DebridProvider,
   TorrentInfo,
@@ -585,12 +586,13 @@ export class AllDebridProvider implements DebridProvider {
    * @returns The direct download URL, or `null` on failure.
    */
   async resolveDownloadUrl(torrentId: string, fileId: string, _linkIndex?: number): Promise<string | null> {
-    if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+    const downloadToken = tokenRotator.getDownloadToken(PROVIDER_NAME) || config.alldebridApiKey;
+    const isRotated = downloadToken !== config.alldebridApiKey;
+
+    if (rateLimiter.isRateLimited(PROVIDER_NAME) && !isRotated) {
       console.warn(`[${new Date().toISOString()}][ad] rate limited, cannot resolve download URL for magnet ${torrentId}`);
       return null;
     }
-
-    const downloadToken = tokenRotator.getDownloadToken(PROVIDER_NAME) || config.alldebridApiKey;
 
     await rateLimiter.throttle(PROVIDER_NAME);
 
@@ -607,8 +609,7 @@ export class AllDebridProvider implements DebridProvider {
 
       const fileIndex = parseInt(fileId, 10);
       if (isNaN(fileIndex) || fileIndex < 0 || fileIndex >= rawLinks.length) {
-        console.error(`[${new Date().toISOString()}][ad] file index ${fileId} out of range (${rawLinks.length} links) for magnet ${torrentId}`);
-        return null;
+        throw new UnplayableTorrentError(`File index ${fileId} out of range (${rawLinks.length} links) for magnet ${torrentId}`);
       }
 
       const fileLink = rawLinks[fileIndex]?.link || rawLinks[fileIndex]?.l;
@@ -794,6 +795,6 @@ export class AllDebridProvider implements DebridProvider {
 // Self-Registration
 // ===========================================================================
 
-import { registry } from './index';
+import { registry } from './registry';
 registry.register(new AllDebridProvider());
 tokenRotator.registerProvider(PROVIDER_NAME, config.alldebridApiKey, config.alldebridDownloadTokens);

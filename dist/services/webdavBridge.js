@@ -34,6 +34,7 @@ const rateLimiter_1 = require("../core/rateLimiter");
 const tokenRotator_1 = require("../core/tokenRotator");
 const providers_1 = require("../providers");
 const db_1 = require("../core/db");
+const errors_1 = require("../core/errors");
 // ===========================================================================
 // HTTP Client (IPv4 forced — matches realdebrid.ts pattern)
 // ===========================================================================
@@ -149,6 +150,9 @@ async function retryWithBackoff(fn, maxRetries, baseDelayMs, label) {
         }
         catch (err) {
             lastError = err?.message || String(err);
+            if (err instanceof errors_1.UnplayableTorrentError || err?.name === "UnplayableTorrentError") {
+                throw err;
+            }
         }
         if (attempt < maxRetries) {
             const delay = baseDelayMs * Math.pow(2, attempt);
@@ -247,8 +251,12 @@ class BridgeCache {
     constructor(listTtlS, urlTtlS) {
         /** Cached virtual directory listing (all torrents). */
         this.torrentListCache = null;
+        /** Stale virtual directory listing fallback. */
+        this.staleTorrentList = null;
         /** Per-torrent file details, keyed by torrent ID. */
         this.torrentInfoCache = new Map();
+        /** Stale per-torrent file details fallback. */
+        this.staleTorrentInfo = new Map();
         /** Resolved download URLs, keyed by `{torrentId}:{fileId}`. */
         this.downloadUrlCache = new Map();
         /**
@@ -275,10 +283,15 @@ class BridgeCache {
         if (!this.torrentListCache)
             return null;
         if (Date.now() >= this.torrentListCache.expiresAt) {
-            this.torrentListCache = null;
             return null;
         }
         return this.torrentListCache.data;
+    }
+    /**
+     * Returns the stale torrent list if available.
+     */
+    getStaleTorrentList() {
+        return this.staleTorrentList;
     }
     /**
      * Stores a torrent list in the cache.
@@ -286,6 +299,9 @@ class BridgeCache {
      * @param dirs - The virtual directory listing to cache.
      */
     setTorrentList(dirs) {
+        if (dirs && dirs.length > 0) {
+            this.staleTorrentList = dirs;
+        }
         this.torrentListCache = {
             data: dirs,
             expiresAt: Date.now() + this.listTtlMs,
@@ -305,10 +321,15 @@ class BridgeCache {
         if (!entry)
             return null;
         if (Date.now() >= entry.expiresAt) {
-            this.torrentInfoCache.delete(torrentId);
             return null;
         }
         return entry.data;
+    }
+    /**
+     * Returns stale file details for a specific torrent.
+     */
+    getStaleTorrentInfo(torrentId) {
+        return this.staleTorrentInfo.get(torrentId) || null;
     }
     /**
      * Stores file details for a specific torrent.
@@ -317,6 +338,9 @@ class BridgeCache {
      * @param files - The virtual file listing to cache.
      */
     setTorrentInfo(torrentId, files) {
+        if (files && files.length > 0) {
+            this.staleTorrentInfo.set(torrentId, files);
+        }
         this.torrentInfoCache.set(torrentId, {
             data: files,
             expiresAt: Date.now() + this.listTtlMs,
@@ -527,11 +551,12 @@ async function fetchRDTorrentFiles(torrentId) {
  */
 async function resolveRDDownloadUrl(torrentId, linkIndex) {
     const providerName = "realdebrid";
-    if (rateLimiter_1.rateLimiter.isRateLimited(providerName)) {
+    const downloadToken = tokenRotator_1.tokenRotator.getDownloadToken(providerName) || config_1.config.rdAccessToken;
+    const isRotated = downloadToken !== config_1.config.rdAccessToken;
+    if (rateLimiter_1.rateLimiter.isRateLimited(providerName) && !isRotated) {
         logWarn(providerName, `Rate limited, cannot resolve download URL for torrent ${torrentId}`);
         return null;
     }
-    const downloadToken = tokenRotator_1.tokenRotator.getDownloadToken(providerName) || config_1.config.rdAccessToken;
     await rateLimiter_1.rateLimiter.throttle(providerName);
     const base = (config_1.config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
     try {
@@ -541,8 +566,7 @@ async function resolveRDDownloadUrl(torrentId, linkIndex) {
         rateLimiter_1.rateLimiter.recordSuccess(providerName);
         const links = Array.isArray(infoRes?.data?.links) ? infoRes.data.links : [];
         if (linkIndex < 0 || linkIndex >= links.length) {
-            logError(providerName, `Link index ${linkIndex} out of range (${links.length} links) for torrent ${torrentId}`);
-            return null;
+            throw new errors_1.UnplayableTorrentError(`Link index ${linkIndex} out of range (${links.length} links) for torrent ${torrentId}`);
         }
         const link = links[linkIndex];
         // Unrestrict the link to get the direct download URL
@@ -648,11 +672,12 @@ async function fetchTBDirectories() {
  */
 async function resolveTBDownloadUrl(torrentId, fileId) {
     const providerName = "torbox";
-    if (rateLimiter_1.rateLimiter.isRateLimited(providerName)) {
+    const downloadToken = tokenRotator_1.tokenRotator.getDownloadToken(providerName) || config_1.config.torboxApiKey;
+    const isRotated = downloadToken !== config_1.config.torboxApiKey;
+    if (rateLimiter_1.rateLimiter.isRateLimited(providerName) && !isRotated) {
         logWarn(providerName, `Rate limited, cannot resolve download URL for torrent ${torrentId}`);
         return null;
     }
-    const downloadToken = tokenRotator_1.tokenRotator.getDownloadToken(providerName) || config_1.config.torboxApiKey;
     await rateLimiter_1.rateLimiter.throttle(providerName);
     const base = (config_1.config.torboxBaseUrl || "https://api.torbox.app").replace(/\/$/, "");
     try {
@@ -1058,18 +1083,30 @@ class WebDAVBridge {
         const cached = this.cache.getTorrentList();
         if (cached)
             return cached;
-        let dirs;
-        // Use the provider registry to fetch directories — provider-agnostic
-        const providerImpl = providers_1.registry.get(this.provider);
-        if (providerImpl) {
-            dirs = await providerImpl.fetchDirectories();
+        let dirs = [];
+        try {
+            // Use the provider registry to fetch directories — provider-agnostic
+            const providerImpl = providers_1.registry.get(this.provider);
+            if (providerImpl) {
+                dirs = await providerImpl.fetchDirectories();
+            }
+            else if (this.provider === "realdebrid") {
+                // Fallback to inline helpers for backwards compatibility
+                dirs = await fetchRDDirectories();
+            }
+            else {
+                dirs = await fetchTBDirectories();
+            }
         }
-        else if (this.provider === "realdebrid") {
-            // Fallback to inline helpers for backwards compatibility
-            dirs = await fetchRDDirectories();
+        catch (err) {
+            logError(this.provider, `Failed to fetch directories: ${err?.message || String(err)}`);
         }
-        else {
-            dirs = await fetchTBDirectories();
+        if (!dirs || dirs.length === 0) {
+            const stale = this.cache.getStaleTorrentList();
+            if (stale && stale.length > 0) {
+                logWarn(this.provider, `Provider returned empty directory list (rate-limited or error). Serving ${stale.length} stale/cached directories to prevent empty FUSE mount.`);
+                return stale;
+            }
         }
         this.cache.setTorrentList(dirs);
         this.lastRefresh = new Date().toISOString();
@@ -1093,18 +1130,28 @@ class WebDAVBridge {
         const cached = this.cache.getTorrentInfo(dir.id);
         if (cached)
             return cached;
-        // Use provider registry if available
-        const providerImpl = providers_1.registry.get(this.provider);
-        let files;
-        if (providerImpl?.fetchTorrentFiles) {
-            files = await providerImpl.fetchTorrentFiles(dir.id);
+        let files = [];
+        try {
+            // Use provider registry if available
+            const providerImpl = providers_1.registry.get(this.provider);
+            if (providerImpl?.fetchTorrentFiles) {
+                files = await providerImpl.fetchTorrentFiles(dir.id);
+            }
+            else {
+                files = await fetchRDTorrentFiles(dir.id);
+            }
         }
-        else {
-            files = await fetchRDTorrentFiles(dir.id);
+        catch (err) {
+            logError(this.provider, `Failed to fetch files for torrent ${dir.name} (${dir.id}): ${err?.message || String(err)}`);
         }
-        if (files.length > 0) {
-            this.cache.setTorrentInfo(dir.id, files);
+        if (!files || files.length === 0) {
+            const stale = this.cache.getStaleTorrentInfo(dir.id);
+            if (stale && stale.length > 0) {
+                logWarn(this.provider, `Provider returned empty file list for torrent ${dir.name} (${dir.id}). Serving ${stale.length} stale/cached files.`);
+                return stale;
+            }
         }
+        this.cache.setTorrentInfo(dir.id, files);
         return files;
     }
     /**
@@ -1127,7 +1174,34 @@ class WebDAVBridge {
      * @param file - The virtual file to resolve.
      * @returns The download URL, or null on failure.
      */
+    /**
+     * Helper method to flag a torrent as dead in memory and SQLite.
+     */
+    flagTorrentAsDead(dir, reason) {
+        const currentFailures = (this.torrentFailures.get(dir.id) ?? 0) + 1;
+        this.torrentFailures.set(dir.id, currentFailures);
+        const flaggedAt = new Date().toISOString();
+        logError(this.provider, `Torrent ${dir.name} (${dir.id}) flagged as dead: ${reason} (failures: ${currentFailures})`);
+        this.deadTorrents.set(dir.id, {
+            id: dir.id,
+            name: dir.originalName || dir.name,
+            provider: this.provider,
+            failureCount: currentFailures,
+            flaggedAt,
+        });
+        try {
+            (0, db_1.upsertDeadTorrent)(dir.id, this.provider, dir.id, dir.originalName || dir.name, currentFailures, Date.now(), reason);
+        }
+        catch (dbErr) {
+            // Non-critical
+        }
+    }
     async resolveDownloadUrl(dir, file) {
+        // Check if the torrent is already flagged as dead
+        if (this.deadTorrents.has(dir.id)) {
+            logWarn(this.provider, `Skipping download resolution for dead torrent ${dir.name} (${dir.id})`);
+            return null;
+        }
         const cacheKey = `${dir.id}:${file.id}`;
         const cached = this.cache.getDownloadUrl(cacheKey);
         if (cached) {
@@ -1136,32 +1210,40 @@ class WebDAVBridge {
             return cached;
         }
         const label = `${this.provider}:${dir.name}/${file.name}`;
-        const url = await retryWithBackoff(async () => {
-            // Use provider registry for provider-agnostic resolution
-            const providerImpl = providers_1.registry.get(this.provider);
-            if (providerImpl && this.provider !== "realdebrid" && this.provider !== "torbox") {
-                // New providers (AllDebrid, Premiumize, etc.) use the interface
-                return providerImpl.resolveDownloadUrl(dir.id, file.id, file.linkIndex);
-            }
-            // Legacy inline helpers for RD/TB (proven, battle-tested)
-            if (this.provider === "realdebrid") {
-                if (typeof file.linkIndex !== "number") {
-                    logError(this.provider, `No link index for file ${file.name} in torrent ${dir.name}`);
-                    return null;
+        try {
+            const url = await retryWithBackoff(async () => {
+                // Use provider registry for provider-agnostic resolution
+                const providerImpl = providers_1.registry.get(this.provider);
+                if (providerImpl && this.provider !== "realdebrid" && this.provider !== "torbox") {
+                    // New providers (AllDebrid, Premiumize, etc.) use the interface
+                    return providerImpl.resolveDownloadUrl(dir.id, file.id, file.linkIndex);
                 }
-                return resolveRDDownloadUrl(dir.id, file.linkIndex);
+                // Legacy inline helpers for RD/TB (proven, battle-tested)
+                if (this.provider === "realdebrid") {
+                    if (typeof file.linkIndex !== "number") {
+                        throw new errors_1.UnplayableTorrentError(`No link index for file ${file.name} in torrent ${dir.name}`);
+                    }
+                    return resolveRDDownloadUrl(dir.id, file.linkIndex);
+                }
+                else {
+                    return resolveTBDownloadUrl(dir.id, file.id);
+                }
+            }, 2, // 3 total attempts (initial + 2 retries)
+            1000, // 1s → 2s → 4s backoff
+            label);
+            if (url) {
+                this.cache.setDownloadUrl(cacheKey, url);
+                // Successful resolution — reset failure counter
+                this.torrentFailures.delete(dir.id);
+                return url;
             }
-            else {
-                return resolveTBDownloadUrl(dir.id, file.id);
+        }
+        catch (err) {
+            if (err instanceof errors_1.UnplayableTorrentError || err?.name === "UnplayableTorrentError") {
+                this.flagTorrentAsDead(dir, err.message || "Unplayable torrent");
+                return null;
             }
-        }, 2, // 3 total attempts (initial + 2 retries)
-        1000, // 1s → 2s → 4s backoff
-        label);
-        if (url) {
-            this.cache.setDownloadUrl(cacheKey, url);
-            // Successful resolution — reset failure counter
-            this.torrentFailures.delete(dir.id);
-            return url;
+            logError(this.provider, `Unexpected error during download URL resolution: ${err?.message || String(err)}`);
         }
         // Fresh resolution failed — try stale cache ("serve stale while locked")
         const staleUrl = this.cache.getStaleDownloadUrl(cacheKey);
@@ -1181,22 +1263,7 @@ class WebDAVBridge {
             // Non-critical — in-memory tracking still works
         }
         if (currentFailures >= DEAD_TORRENT_THRESHOLD) {
-            logError(this.provider, `Torrent ${dir.name} (${dir.id}) reached ${currentFailures} consecutive failures — flagging as dead`);
-            const flaggedAt = new Date().toISOString();
-            this.deadTorrents.set(dir.id, {
-                id: dir.id,
-                name: dir.originalName || dir.name,
-                provider: this.provider,
-                failureCount: currentFailures,
-                flaggedAt,
-            });
-            // Persist the dead flag to database
-            try {
-                (0, db_1.upsertDeadTorrent)(dir.id, this.provider, dir.id, dir.originalName || dir.name, currentFailures, Date.now(), `Flagged as dead after ${currentFailures} consecutive failures`);
-            }
-            catch (dbErr) {
-                // Non-critical
-            }
+            this.flagTorrentAsDead(dir, `Flagged as dead after ${currentFailures} consecutive failures`);
         }
         return null;
     }

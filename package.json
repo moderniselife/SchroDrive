@@ -1,6 +1,6 @@
 {
   "name": "schrodrive",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "Unified cloud debrid mount manager — integrates Overseerr, Prowlarr/Jackett, RealDebrid, TorBox, Plex, Jellyfin, and Emby",
   "main": "dist/index.js",
