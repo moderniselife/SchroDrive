@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.8.0] - 2026-06-07 🎬
+*Status: Native Radarr/Sonarr integration via fake qBittorrent API bridge*
+
+### Added ✨
+- **Native *arr bridge** (`src/services/arrBridge.ts`):
+  - Built-in fake qBittorrent Web API v2 server — Radarr/Sonarr connect as a download client
+  - **Zero external containers** — replaces Decypharr, RDT-Client, and other bridge tools
+  - Full torrent lifecycle: receives magnet → submits to debrid → polls status → detects on mount → creates symlinks → reports completion
+  - Background debrid status polling (15s interval) maps provider states to qBit states
+  - Mount file scanner (10s interval) detects completed files on rclone FUSE mount
+  - Automatic symlink creation in staging directory (`/mnt/schrodrive/downloads/`)
+  - Category support (radarr/sonarr) for separate movie/TV library paths
+  - Uses existing `addMagnetWithStrategy()` — honours `ADD_STRATEGY` setting
+  - Health endpoint at `/health` with tracked torrent counts
+  - Configurable via `ARR_BRIDGE_ENABLED` and `ARR_BRIDGE_PORT` env vars
+- **Implemented qBittorrent API endpoints:**
+  - Auth: `login`, `logout`
+  - App: `version` (4.6.7), `webapiVersion` (2.9.3), `preferences`, `buildInfo`
+  - Torrents: `add`, `info`, `properties`, `files`, `delete`, `pause`, `resume`, `setCategory`, `categories`, `createCategory`, `editCategory`
+  - Transfer: `info`
+  - Sync: `maindata`
+- **Docker Compose**: Added Radarr and Sonarr service definitions with uniform path mapping and health checks
+- **Dual pipeline support**: Overseerr → SchroDrive (direct) AND Overseerr → Radarr/Sonarr → SchroDrive (bridge) work simultaneously
+- New config: `ARR_BRIDGE_ENABLED` (default: false), `ARR_BRIDGE_PORT` (default: 8282)
+
+### Changed 🔄
+- **README**: Added comprehensive *arr bridge documentation — feature description, setup guide, architecture diagrams, comparison table, and API reference
+- **Data flow diagram**: Updated to show Radarr/Sonarr → SchroDrive → organised library path
+
 ### Version [0.7.0] - 2026-06-06 🚀
 *Status: .torrent file support, cloud storage mounts, STRM short-codes, error video fallback, organiser improvements*
 

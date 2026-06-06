@@ -190,6 +190,7 @@ The organiser now outputs anime to a separate `Anime/` directory (alongside `Mov
 | **Watchlist Poller** | Monitors Plex/Jellyfin/Emby watchlists | `RUN_WATCHLIST_POLLER=true` |
 | **Dead Scanner** | Detects stalled/failed torrents, deletes, blacklists, and auto-replaces | `RUN_DEAD_SCANNER_WATCH=true` |
 | **Organiser** | Creates symlinked views with TMDB/TVMaze metadata | `RUN_ORGANIZER_WATCH=true` |
+| ***arr Bridge** | Fake qBittorrent API — Radarr/Sonarr use SchroDrive as a download client | `ARR_BRIDGE_ENABLED=true` |
 | **Auto-Update** | Checks GitHub releases and self-restarts | `AUTO_UPDATE_ENABLED=true` |
 | **FUSE Mount** | Mounts debrid content as local drives | `RUN_MOUNT=true` |
 | **STRM Redirector** | Stable URLs for media bookmarks (port 9120) | Always on |
@@ -213,6 +214,58 @@ SchröDrive includes a full **Next.js dashboard** accessible on port 3000 when `
 
 > [!TIP]
 > Enable with `RUN_WEB_GUI=true` and `WEB_PORT=3000`. The GUI communicates with the backend API on port 8978 — both run inside the same container.
+
+### 🎬 *arr Bridge (Native Radarr/Sonarr Integration)
+
+SchroDrive includes a **built-in fake qBittorrent Web API v2 server** that lets Radarr and Sonarr use it as a download client — **no external bridge containers needed** (no Decypharr, no RDT-Client).
+
+**How it works:**
+
+```
+Overseerr → Radarr/Sonarr → SchroDrive (fake qBit, port 8282) → Debrid Providers
+                                          ↓
+                              Files appear on rclone mount
+                                          ↓
+                              Symlinks created in staging dir
+                                          ↓
+                              *arr imports + renames perfectly
+                                          ↓
+                              Jellyfin/Plex reads organised library
+```
+
+**What the bridge does:**
+
+1. **Receives magnets** from Radarr/Sonarr via the qBittorrent API (`POST /api/v2/torrents/add`)
+2. **Submits to debrid** using your configured provider strategy (`all`, `failover`, `single`)
+3. **Polls debrid status** — background check every 15s maps debrid states to qBit states
+4. **Scans the FUSE mount** — detects files on rclone mount every 10s once debrid reports completion
+5. **Creates symlinks** — from mount path to a staging directory (`/mnt/schrodrive/downloads/`)
+6. **Reports completion** — Radarr/Sonarr see "download complete", import the symlink, and rename to their perfect folder structure
+
+**Supported *arr operations:**
+
+| qBittorrent API Endpoint | Function |
+|--------------------------|----------|
+| `POST /api/v2/auth/login` | Authentication (always accepts) |
+| `GET /api/v2/app/version` | Reports as qBittorrent 4.6.7 |
+| `POST /api/v2/torrents/add` | Add magnet → submit to debrid |
+| `GET /api/v2/torrents/info` | List torrents with status/progress |
+| `POST /api/v2/torrents/delete` | Remove tracking (+ clean symlinks) |
+| `GET /api/v2/torrents/files` | List files in a torrent |
+| `GET /api/v2/sync/maindata` | Sync endpoint for *arr polling |
+
+**Two pipeline modes** — both work simultaneously:
+
+| Mode | Flow | Best For |
+|------|------|----------|
+| **Direct** | Overseerr → SchroDrive → Debrid | Simple setup, no Radarr/Sonarr needed |
+| ***arr** | Overseerr → Radarr/Sonarr → SchroDrive (qBit) → Debrid | Perfect naming, quality upgrades, episode tracking |
+
+> [!TIP]
+> Enable with `ARR_BRIDGE_ENABLED=true`. Add SchroDrive as a **qBittorrent** download client in Radarr/Sonarr: `Settings > Download Clients > qBittorrent`, host: `localhost`, port: `8282`, no username/password.
+
+> [!NOTE]
+> The *arr bridge and direct Overseerr pipeline can run **side-by-side**. Users who want Radarr/Sonarr's superior naming use the bridge; users who prefer simplicity keep the direct pipeline.
 
 ### 📡 Media Server Integration
 
@@ -337,6 +390,7 @@ SchröDrive proactively detects and recovers from dead torrents through a **3-ph
 | Feature | SchröDrive | pd_zurg | Zurg | Riven |
 |---------|:----------:|:-------:|:----:|:-----:|
 | **Overseerr** | ✅ Webhook + Poller | ✅ via plex_debrid | — | ✅ |
+| **Radarr/Sonarr** | ✅ Native bridge (fake qBit) | — (need Decypharr/RDT-Client) | — (need Decypharr/RDT-Client) | — (built-in VFS) |
 | **Prowlarr** | ✅ | ✅ via plex_debrid | — | ✅ |
 | **Jackett** | ✅ | ✅ via plex_debrid | — | ✅ |
 | **Plex** | ✅ Watchlist + Refresh | ✅ Watchlist | ✅ | ✅ Watchlist + Refresh |
@@ -366,7 +420,7 @@ SchröDrive proactively detects and recovers from dead torrents through a **3-ph
 
 ### What Each Project Does Best
 
-- **SchröDrive** — All-in-one with 4-provider redundancy, 3-phase torrent repair, 4 Stremio scrapers, 6 watchlist sources, embedded SQLite persistence, a full Next.js management dashboard, and the simplest deployment (single container). Also exposes itself as a Stremio addon.
+- **SchröDrive** — All-in-one with 4-provider redundancy, 3-phase torrent repair, 4 Stremio scrapers, 6 watchlist sources, native Radarr/Sonarr bridge (no external containers), embedded SQLite persistence, a full Next.js management dashboard, and the simplest deployment (single container). Also exposes itself as a Stremio addon.
 - **pd_zurg** — *Deprecated (Jan 2026).* Was the original all-in-one Docker solution. Successor is [DUMB](https://github.com/I-am-PUID-0/DUMB).
 - **Zurg** — Purpose-built, high-performance WebDAV server for RealDebrid. Excellent at what it does (serving files), but needs additional tools for automation.
 - **Riven** — Feature-rich with 7+ scrapers, Trakt/Mdblist integration, built-in VFS, and a settings UI. However, requires multi-container deployment (App + PostgreSQL + Redis).
@@ -430,6 +484,7 @@ src/
 │   ├── deadScanner.ts        #   Dead torrent detection + replacement + blacklisting
 │   ├── mount.ts              #   rclone FUSE mount management
 │   ├── webdavBridge.ts       #   API-to-WebDAV translation layer (provider-agnostic)
+│   ├── arrBridge.ts          #   Fake qBittorrent API for Radarr/Sonarr integration
 │   ├── organizer.ts          #   Media organiser (symlinks + metadata)
 │   ├── mediaServerWatchlist.ts#  Plex/Jellyfin/Emby watchlist polling
 │   ├── stremioAddon.ts       #   Stremio addon server (port 7000)
@@ -468,6 +523,8 @@ src/
 ```mermaid
 graph LR
     A[Overseerr] -->|Webhook / Poll| B[SchröDrive]
+    A -->|Requests| R[Radarr / Sonarr]
+    R -->|Fake qBit API| B
     C[Plex/Jellyfin/Emby] -->|Watchlist| B
     C2[Trakt/Mdblist/Listrr] -->|Watchlist| B
     B -->|Search| D[Prowlarr / Jackett]
@@ -482,7 +539,9 @@ graph LR
     F -->|WebDAV / Bridge| G
     G2 -->|WebDAV / Bridge| G
     G3 -->|WebDAV / Bridge| G
-    G -->|Local Files| C
+    G -->|Symlinks| S[Organised Library]
+    S -->|Media Files| C
+    R -->|Imports + Renames| S
 ```
 
 ### Dead Torrent Lifecycle
@@ -703,7 +762,15 @@ All configuration is done via environment variables. Below is the complete refer
 | `RUN_ORGANIZER_WATCH` | `false` | Enable media organiser |
 | `RUN_WATCHLIST_POLLER` | `false` | Enable watchlist polling |
 | `REFRESH_LIBRARY_ON_ADD` | `true` | Refresh media server library after adding content |
+| `ARR_BRIDGE_ENABLED` | `false` | Enable fake qBittorrent API for Radarr/Sonarr |
 | `PORT` | `8978` | HTTP server port |
+
+### 🎬 *arr Bridge (Radarr/Sonarr)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ARR_BRIDGE_ENABLED` | `false` | Enable the fake qBittorrent API server |
+| `ARR_BRIDGE_PORT` | `8282` | Port for the *arr bridge (add as qBittorrent in Radarr/Sonarr) |
 
 ### 📁 Organiser
 
@@ -777,6 +844,83 @@ All configuration is done via environment variables. Below is the complete refer
 |----------|---------|-------------|
 | `STREMIO_ADDON_ENABLED` | `false` | Expose SchröDrive as a Stremio addon |
 | `STREMIO_ADDON_PORT` | `7000` | Stremio addon server port |
+
+---
+
+## 🎬 *arr Bridge Setup (Radarr/Sonarr)
+
+SchröDrive's built-in *arr bridge replaces external tools like Decypharr or RDT-Client. It exposes a fake qBittorrent API that Radarr and Sonarr connect to as a "download client".
+
+### Quick Setup
+
+1. **Enable the bridge** in your `.env`:
+   ```env
+   ARR_BRIDGE_ENABLED=true
+   ARR_BRIDGE_PORT=8282
+   ```
+
+2. **Add Radarr and Sonarr** to your Docker Compose:
+   ```yaml
+   radarr:
+     image: lscr.io/linuxserver/radarr:latest
+     container_name: radarr
+     restart: unless-stopped
+     environment:
+       - PUID=1000
+       - PGID=1000
+       - TZ=Australia/Sydney
+     volumes:
+       - radarr_config:/config
+       - /home/user/schrodrive:/schrodrive:rshared
+     network_mode: host
+     depends_on:
+       schrodrive:
+         condition: service_healthy
+
+   sonarr:
+     image: lscr.io/linuxserver/sonarr:latest
+     container_name: sonarr
+     restart: unless-stopped
+     environment:
+       - PUID=1000
+       - PGID=1000
+       - TZ=Australia/Sydney
+     volumes:
+       - sonarr_config:/config
+       - /home/user/schrodrive:/schrodrive:rshared
+     network_mode: host
+     depends_on:
+       schrodrive:
+         condition: service_healthy
+   ```
+
+3. **Configure Radarr** (`http://localhost:7878`):
+   - `Settings > Download Clients > Add > qBittorrent`
+   - **Host:** `localhost`
+   - **Port:** `8282`
+   - **Username/Password:** leave empty
+   - **Category:** `radarr`
+   - Set root folder: `/schrodrive/organized/Movies`
+
+4. **Configure Sonarr** (`http://localhost:8989`):
+   - Same download client config as Radarr
+   - **Category:** `sonarr`
+   - Set root folder: `/schrodrive/organized/TV`
+
+5. **Connect Prowlarr** to both:
+   - In Radarr/Sonarr: `Settings > Indexers > Add > Prowlarr`
+   - **URL:** `http://localhost:9696`
+
+6. **Configure Overseerr** (optional — for the *arr pipeline):
+   - Add Radarr as movie server: `http://localhost:7878`
+   - Add Sonarr as TV server: `http://localhost:8989`
+   - Requests will flow through the *arr apps for superior naming and tracking
+
+> [!IMPORTANT]
+> **Path consistency is critical.** Radarr, Sonarr, Plex, and Jellyfin must all see the mount at the **same path** (e.g. `/schrodrive/`). If one container sees `/data/` and another sees `/schrodrive/`, symlinks will break.
+
+> [!NOTE]
+> **Both pipelines work simultaneously.** The direct Overseerr → SchroDrive pipeline continues to work for users who prefer simplicity. The *arr bridge is an additional option for those who want Radarr/Sonarr's naming, quality profiles, and episode tracking.
 
 ---
 
@@ -1052,6 +1196,8 @@ registry.register(new YourProvider());
 
 ## 📡 API Endpoints
 
+### SchroDrive API (port 8978)
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
@@ -1068,6 +1214,22 @@ registry.register(new YourProvider());
 | `GET` | `/api/bridges` | WebDAV bridge status |
 | `POST` | `/api/bridges/refresh` | Refresh bridge caches |
 | `GET` | `/api/tokens` | Download token status (active, exhausted, cooldown) |
+
+### *arr Bridge API (port 8282 — qBittorrent-compatible)
+
+These endpoints are consumed by Radarr/Sonarr and are not intended for direct use:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v2/auth/login` | Authenticate (always succeeds) |
+| `GET` | `/api/v2/app/version` | qBittorrent version (4.6.7) |
+| `GET` | `/api/v2/app/preferences` | Client preferences (save path, etc.) |
+| `POST` | `/api/v2/torrents/add` | Add magnet → submit to debrid |
+| `GET` | `/api/v2/torrents/info` | List torrents with qBit-compatible status |
+| `GET` | `/api/v2/torrents/files` | Files within a torrent |
+| `POST` | `/api/v2/torrents/delete` | Remove tracked torrent |
+| `GET` | `/api/v2/sync/maindata` | Full sync (used by *arr polling) |
+| `GET` | `/health` | Bridge health + tracked torrent counts |
 
 ---
 
