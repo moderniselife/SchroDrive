@@ -1,5 +1,12 @@
 import { config } from '../core/config';
 import type { DebridProvider, AddStrategy, AddMagnetResult } from './index';
+import { isKnownMagnet, addKnownMagnet } from '../core/db';
+
+/** Extracts the infohash from a magnet URI. */
+function extractInfoHash(magnet: string): string | null {
+  const match = magnet.match(/urn:btih:([a-fA-F0-9]+)/i);
+  return match ? match[1].toUpperCase() : null;
+}
 
 /**
  * Manages the lifecycle and lookup of registered debrid providers.
@@ -94,12 +101,20 @@ class ProviderRegistry {
     const results: Array<{ provider: string; success: boolean; result?: AddMagnetResult; error?: string }> = [];
     let legallyBlocked = false;
 
+    // Infohash-level deduplication — skip if we've already added this exact torrent
+    const infoHash = extractInfoHash(magnet);
+    if (infoHash && isKnownMagnet(infoHash)) {
+      console.log(`[${new Date().toISOString()}][registry] Skipping known magnet ${infoHash.slice(0, 8)}... — already added previously`);
+      return { results };
+    }
+
     for (const p of providers) {
       try {
         console.log(`[${new Date().toISOString()}][providers] adding magnet to ${p.id}`, { name });
         const result = await p.addMagnet(magnet, name);
         console.log(`[${new Date().toISOString()}][providers] ✅ added to ${p.id}`, { id: result.id });
         results.push({ provider: p.id, success: true, result });
+        if (infoHash) addKnownMagnet(infoHash, name, p.id);
 
         if (strategy === 'failover' || strategy === 'single') {
           break; // Success — don't try more providers
