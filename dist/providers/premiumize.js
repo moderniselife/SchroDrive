@@ -23,6 +23,7 @@ const https_1 = __importDefault(require("https"));
 const config_1 = require("../core/config");
 const rateLimiter_1 = require("../core/rateLimiter");
 const tokenRotator_1 = require("../core/tokenRotator");
+const errors_1 = require("../core/errors");
 // ===========================================================================
 // Constants & HTTP Configuration
 // ===========================================================================
@@ -499,11 +500,12 @@ class PremiumizeProvider {
      * @returns The direct download URL, or `null` on failure.
      */
     async resolveDownloadUrl(torrentId, fileId, _linkIndex) {
-        if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
+        const downloadToken = tokenRotator_1.tokenRotator.getDownloadToken(PROVIDER_NAME) || config_1.config.premiumizeApiKey;
+        const isRotated = downloadToken !== config_1.config.premiumizeApiKey;
+        if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME) && !isRotated) {
             console.warn(`[${new Date().toISOString()}][premiumize] rate limited, cannot resolve download URL for transfer ${torrentId}`);
             return null;
         }
-        const downloadToken = tokenRotator_1.tokenRotator.getDownloadToken(PROVIDER_NAME) || config_1.config.premiumizeApiKey;
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         const base = getBaseUrl();
         try {
@@ -528,17 +530,20 @@ class PremiumizeProvider {
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             const content = Array.isArray(folderRes?.data?.content) ? folderRes.data.content : [];
             const file = content.find((f) => String(f.id) === fileId);
-            if (file?.link) {
-                return file.link;
+            if (file) {
+                if (file.link)
+                    return file.link;
+                throw new errors_1.UnplayableTorrentError(`File found but contains no streamable link for transfer ${torrentId}, file ${fileId}`);
             }
             // If file not found by ID, try matching by name in nested folders
             const allFiles = this.flattenFolderContent(content);
             const matchedFile = allFiles.find((f) => String(f.id) === fileId);
-            if (matchedFile?.link) {
-                return matchedFile.link;
+            if (matchedFile) {
+                if (matchedFile.link)
+                    return matchedFile.link;
+                throw new errors_1.UnplayableTorrentError(`File found in subfolder but contains no streamable link for transfer ${torrentId}, file ${fileId}`);
             }
-            console.error(`[${new Date().toISOString()}][premiumize] no download link found for transfer ${torrentId}, file ${fileId}`);
-            return null;
+            throw new errors_1.UnplayableTorrentError(`File ${fileId} not found in transfer ${torrentId}`);
         }
         catch (err) {
             this.handleError(err, `resolve download URL for transfer ${torrentId}, file ${fileId}`, downloadToken);
@@ -707,6 +712,6 @@ exports.PremiumizeProvider = PremiumizeProvider;
 // ===========================================================================
 // Self-Registration
 // ===========================================================================
-const index_1 = require("./index");
-index_1.registry.register(new PremiumizeProvider());
+const registry_1 = require("./registry");
+registry_1.registry.register(new PremiumizeProvider());
 tokenRotator_1.tokenRotator.registerProvider(PROVIDER_NAME, config_1.config.premiumizeApiKey, config_1.config.premiumizeDownloadTokens);

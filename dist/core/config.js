@@ -142,7 +142,7 @@ exports.config = {
     webdavBridgePortAD: Number(process.env.WEBDAV_BRIDGE_PORT_AD || 9117),
     webdavBridgePortPM: Number(process.env.WEBDAV_BRIDGE_PORT_PM || 9118),
     webdavCacheTtlS: Number(process.env.WEBDAV_CACHE_TTL_S || 30),
-    webdavDownloadCacheTtlS: Number(process.env.WEBDAV_DOWNLOAD_CACHE_TTL_S || 1800),
+    webdavDownloadCacheTtlS: Number(process.env.WEBDAV_DOWNLOAD_CACHE_TTL_S || 14400),
     // --- Trakt Integration ---
     traktClientId: process.env.TRAKT_CLIENT_ID || "",
     traktClientSecret: process.env.TRAKT_CLIENT_SECRET || "",

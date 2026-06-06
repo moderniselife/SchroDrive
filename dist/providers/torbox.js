@@ -553,12 +553,34 @@ class TorBoxProvider {
      *
      * @returns Array of virtual directories representing completed TorBox torrents.
      */
+    rawTorrentsToDirs(torrents) {
+        const completed = torrents.filter((t) => t.download_finished === true);
+        return completed.map((t) => {
+            const files = Array.isArray(t.files) ? t.files : [];
+            return {
+                id: String(t.id),
+                name: sanitiseName(t.name || String(t.id)),
+                originalName: t.name || String(t.id),
+                files: files.map((f) => ({
+                    id: String(f.id),
+                    name: sanitiseName(f.short_name || f.name || `file_${f.id}`),
+                    size: typeof f.size === 'number' ? f.size : 0,
+                })),
+            };
+        });
+    }
     async fetchDirectories() {
         if (!this.isConfigured())
             return [];
         if (apiDisabled)
             return [];
         if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
+            const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+            const cached = rateLimiter_1.rateLimiter.getCache(TORRENT_LIST_CACHE_KEY);
+            if (cached && cached.length > 0) {
+                console.warn(`[${new Date().toISOString()}][torbox] rate limited, returning cached directories (${cached.length} items, wait ${waitTime}s)`);
+                return this.rawTorrentsToDirs(cached);
+            }
             console.warn(`[${new Date().toISOString()}][torbox] rate limited, skipping directory fetch`);
             return [];
         }
@@ -573,25 +595,18 @@ class TorBoxProvider {
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             // TorBox wraps data in { data: [...] }
             const rawList = Array.isArray(res?.data?.data) ? res.data.data : [];
-            // Only include torrents that have finished downloading
+            rateLimiter_1.rateLimiter.setCache(TORRENT_LIST_CACHE_KEY, rawList);
             const completed = rawList.filter((t) => t.download_finished === true);
             console.log(`[${new Date().toISOString()}][torbox] fetched ${completed.length} completed torrents out of ${rawList.length} total`);
-            return completed.map((t) => {
-                const files = Array.isArray(t.files) ? t.files : [];
-                return {
-                    id: String(t.id),
-                    name: sanitiseName(t.name || String(t.id)),
-                    originalName: t.name || String(t.id),
-                    files: files.map((f) => ({
-                        id: String(f.id),
-                        name: sanitiseName(f.short_name || f.name || `file_${f.id}`),
-                        size: typeof f.size === 'number' ? f.size : 0,
-                    })),
-                };
-            });
+            return this.rawTorrentsToDirs(rawList);
         }
         catch (err) {
             this.handleError(err, 'fetch directories');
+            const cached = rateLimiter_1.rateLimiter.getCache(TORRENT_LIST_CACHE_KEY);
+            if (cached && cached.length > 0) {
+                console.log(`[${new Date().toISOString()}][torbox] returning cached directories on error (${cached.length} items)`);
+                return this.rawTorrentsToDirs(cached);
+            }
             return [];
         }
     }
@@ -604,11 +619,12 @@ class TorBoxProvider {
      * @returns The direct download URL, or `null` on failure.
      */
     async resolveDownloadUrl(torrentId, fileId, _linkIndex) {
-        if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
+        const downloadToken = tokenRotator_1.tokenRotator.getDownloadToken(PROVIDER_NAME) || config_1.config.torboxApiKey;
+        const isRotated = downloadToken !== config_1.config.torboxApiKey;
+        if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME) && !isRotated) {
             console.warn(`[${new Date().toISOString()}][torbox] rate limited, cannot resolve download URL for torrent ${torrentId}`);
             return null;
         }
-        const downloadToken = tokenRotator_1.tokenRotator.getDownloadToken(PROVIDER_NAME) || config_1.config.torboxApiKey;
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         const base = getBaseUrl();
         try {
@@ -816,6 +832,6 @@ exports.TorBoxProvider = TorBoxProvider;
 // ===========================================================================
 // Self-Registration
 // ===========================================================================
-const index_1 = require("./index");
-index_1.registry.register(new TorBoxProvider());
+const registry_1 = require("./registry");
+registry_1.registry.register(new TorBoxProvider());
 tokenRotator_1.tokenRotator.registerProvider(PROVIDER_NAME, config_1.config.torboxApiKey, config_1.config.torboxDownloadTokens);

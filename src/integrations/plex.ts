@@ -202,3 +202,31 @@ export function extractTvdbId(item: PlexWatchlistItem): number | undefined {
 
   return undefined;
 }
+
+/**
+ * Checks if there are any active streaming sessions on the Plex server.
+ *
+ * @returns `true` if Plex has active streaming sessions.
+ */
+export async function isPlexStreaming(): Promise<boolean> {
+  const plexUrl = config.plexUrl;
+  const token = config.plexToken;
+  if (!plexUrl || !token) return false;
+
+  const url = `${plexUrl.replace(/\/$/, '')}/status/sessions`;
+  try {
+    const res = await axios.get(url, {
+      headers: {
+        "X-Plex-Token": token,
+        Accept: "application/json",
+      },
+      timeout: 5000,
+    });
+
+    const size = Number(res.data?.MediaContainer?.size ?? 0);
+    return size > 0;
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][plex] Failed to check Plex streaming sessions:`, err?.message || String(err));
+    return false;
+  }
+}
