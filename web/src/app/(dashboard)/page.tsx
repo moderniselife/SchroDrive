@@ -18,6 +18,15 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
+/** Provider-specific colour classes for consistent styling across all debrid providers. */
+const PROVIDER_COLOURS: Record<string, string> = {
+  torbox: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+  realdebrid: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
+  alldebrid: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
+  premiumize: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
+}
+const getProviderColour = (id: string) => PROVIDER_COLOURS[id] || 'bg-slate-500/10 text-slate-500 border-slate-500/20'
+
 interface Provider {
   name: string
   id: string
@@ -499,19 +508,15 @@ export default function DashboardPage() {
             <div className="text-center py-8 text-muted-foreground">
               <HardDrive className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p>No providers configured</p>
-              <p className="text-sm">Configure TorBox or Real-Debrid in settings</p>
+              <p className="text-sm">Configure a debrid provider in settings</p>
             </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2">
               {providers.map((provider) => (
                 <div key={provider.id} className="flex items-center justify-between rounded-lg border p-4">
                   <div className="flex items-center gap-3">
-                    <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${
-                      provider.id === "torbox" ? "bg-blue-500/10" : "bg-purple-500/10"
-                    }`}>
-                      <HardDrive className={`h-5 w-5 ${
-                        provider.id === "torbox" ? "text-blue-500" : "text-purple-500"
-                      }`} />
+                    <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${getProviderColour(provider.id).split(' ')[0]}`}>
+                      <HardDrive className={`h-5 w-5 ${getProviderColour(provider.id).split(' ')[1]}`} />
                     </div>
                     <div>
                       <p className="font-medium">{provider.name}</p>

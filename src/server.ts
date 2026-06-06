@@ -800,11 +800,11 @@ export function startServer() {
             documentation: "See README.md for configuration instructions.",
           });
         }
-        if (!config.torboxApiKey) {
-          console.warn(`[${new Date().toISOString()}][webhook] missing TORBOX_API_KEY`);
+        if (registry.configured().length === 0) {
+          console.warn(`[${new Date().toISOString()}][webhook] no debrid providers configured`);
           return res.status(503).json({
             ok: false,
-            error: "TORBOX_API_KEY not configured.",
+            error: "No debrid providers configured.",
             documentation: "See README.md for configuration instructions.",
           });
         }
