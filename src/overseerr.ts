@@ -1,7 +1,8 @@
 import axios from "axios";
-import { config, requireEnv } from "./config";
+import { config, requireEnv, providersSet } from "./config";
 import { searchIndexer, pickBestResult, getMagnet, getMagnetOrResolve, testIndexerConnection, getProviderName, isIndexerConfigured } from "./indexer";
-import { addMagnetToTorbox, checkExistingTorrents } from "./torbox";
+import { addMagnetToTorbox, checkExistingTorrents as checkExistingTorbox, listTorboxTorrents } from "./torbox";
+import { addMagnetToRD, selectAllFilesRD, isRDConfigured, listRDTorrents } from "./realdebrid";
 
 interface MediaLike {
   title?: string;
@@ -109,11 +110,19 @@ export function startOverseerrPoller() {
   if (!isIndexerConfigured()) {
     throw new Error("No indexer configured. Set JACKETT_URL/JACKETT_API_KEY or PROWLARR_URL/PROWLARR_API_KEY.");
   }
-  requireEnv("torboxApiKey");
   // Accept either Overseerr API key or Bearer token
   if (!config.overseerrUrl || (!config.overseerrApiKey && !config.overseerrAuth)) {
     throw new Error("Missing Overseerr credentials. Set OVERSEERR_URL and either OVERSEERR_API_KEY or OVERSEERR_AUTH.");
   }
+
+  // Ensure at least one provider is configured
+  const ps = providersSet();
+  const hasTB = ps.has("torbox") && !!config.torboxApiKey;
+  const hasRD = ps.has("realdebrid") && isRDConfigured();
+  if (!hasTB && !hasRD) {
+    throw new Error("No debrid provider configured. Set TORBOX_API_KEY and/or RD_ACCESS_TOKEN.");
+  }
+  console.log(`[${new Date().toISOString()}][poller] providers configured`, { torbox: hasTB, realdebrid: hasRD, order: config.providers });
 
   const processed = new Set<string>();
   const intervalMs = Math.max(5, Number(config.pollIntervalSeconds || 30)) * 1000;
@@ -217,19 +226,84 @@ export function startOverseerrPoller() {
             continue;
           }
           
-          // Check for existing torrents before adding
+          // -----------------------------------------------------------------
+          // Check for existing torrents across ALL configured providers
+          // -----------------------------------------------------------------
           const torrentTitle = (chosenUsed as any)?.title || built.query;
-          const hasExisting = await checkExistingTorrents(torrentTitle);
+          let hasExisting = false;
+          
+          // Check TorBox
+          if (hasTB) {
+            try {
+              hasExisting = await checkExistingTorbox(torrentTitle);
+            } catch (e: any) {
+              console.warn(`[${new Date().toISOString()}][poller] TorBox duplicate check failed`, { err: e?.message });
+            }
+          }
+          
+          // Check RealDebrid (search torrent names)
+          if (!hasExisting && hasRD) {
+            try {
+              const rdTorrents = await listRDTorrents();
+              const normalised = torrentTitle.toLowerCase();
+              hasExisting = rdTorrents.some((t: any) => {
+                const name = (t.filename || t.original_filename || '').toLowerCase();
+                return name.includes(normalised) || normalised.includes(name);
+              });
+              if (hasExisting) {
+                console.log(`[${new Date().toISOString()}][poller] found existing RD torrent`, { title: torrentTitle });
+              }
+            } catch (e: any) {
+              console.warn(`[${new Date().toISOString()}][poller] RD duplicate check failed`, { err: e?.message });
+            }
+          }
+
           if (hasExisting) {
             console.log(`[${new Date().toISOString()}][poller] skipping duplicate torrent`, { id, title: torrentTitle });
             processed.add(id);
             continue;
           }
           
+          // -----------------------------------------------------------------
+          // Add magnet to providers (try in PROVIDERS order, fall back)
+          // -----------------------------------------------------------------
           const teaser = magnet.slice(0, 80) + '...';
-          console.log(`[${new Date().toISOString()}][poller->torbox] adding magnet`, { id, title: torrentTitle, teaser });
-          await addMagnetToTorbox(magnet, torrentTitle);
-          console.log(`[${new Date().toISOString()}][poller->torbox] added`, { id });
+          let added = false;
+          const providerOrder = config.providers.filter(p => 
+            (p === 'torbox' && hasTB) || (p === 'realdebrid' && hasRD)
+          );
+
+          for (const provider of providerOrder) {
+            try {
+              if (provider === 'torbox') {
+                console.log(`[${new Date().toISOString()}][poller->torbox] adding magnet`, { id, title: torrentTitle, teaser });
+                await addMagnetToTorbox(magnet, torrentTitle);
+                console.log(`[${new Date().toISOString()}][poller->torbox] ✅ added`, { id });
+                added = true;
+                break;
+              } else if (provider === 'realdebrid') {
+                console.log(`[${new Date().toISOString()}][poller->rd] adding magnet`, { id, title: torrentTitle, teaser });
+                const rdResult = await addMagnetToRD(magnet);
+                if (rdResult?.id) {
+                  console.log(`[${new Date().toISOString()}][poller->rd] selecting all files`, { id, rdId: rdResult.id });
+                  await selectAllFilesRD(rdResult.id);
+                }
+                console.log(`[${new Date().toISOString()}][poller->rd] ✅ added`, { id, rdId: rdResult?.id });
+                added = true;
+                break;
+              }
+            } catch (err: any) {
+              console.warn(`[${new Date().toISOString()}][poller->${provider}] add failed, trying next provider`, { 
+                id, error: err?.message || String(err) 
+              });
+              // Continue to next provider
+            }
+          }
+
+          if (!added) {
+            console.error(`[${new Date().toISOString()}][poller] ❌ failed to add to ANY provider`, { id, title: torrentTitle });
+          }
+
           processed.add(id);
           if (processed.size > 1000) {
             // Trim processed set
