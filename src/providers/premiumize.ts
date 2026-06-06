@@ -527,11 +527,7 @@ export class PremiumizeProvider implements DebridProvider {
 
       return directories;
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.error(`[${new Date().toISOString()}][premiumize] failed to fetch directories`, { error: errorMsg });
+      this.handleError(err, 'fetch directories');
       return [];
     }
   }
@@ -598,13 +594,7 @@ export class PremiumizeProvider implements DebridProvider {
       console.error(`[${new Date().toISOString()}][premiumize] no download link found for transfer ${torrentId}, file ${fileId}`);
       return null;
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.error(`[${new Date().toISOString()}][premiumize] failed to resolve download URL for transfer ${torrentId}, file ${fileId}`, {
-        error: errorMsg,
-      });
+      this.handleError(err, `resolve download URL for transfer ${torrentId}, file ${fileId}`);
       return null;
     }
   }
