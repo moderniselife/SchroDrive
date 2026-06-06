@@ -230,3 +230,27 @@ export async function isPlexStreaming(): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Concurrent check across all configured media servers (Plex, Jellyfin, Emby)
+ * to determine if any active streaming sessions are running.
+ *
+ * @returns `true` if any media server has active playback.
+ */
+export async function isAnyMediaServerStreaming(): Promise<boolean> {
+  // Use require inline to prevent import-time side effects
+  const { isJellyfinStreaming } = require("./jellyfin");
+  const { isEmbyStreaming } = require("./emby");
+
+  try {
+    const results = await Promise.all([
+      isPlexStreaming().catch(() => false),
+      isJellyfinStreaming().catch(() => false),
+      isEmbyStreaming().catch(() => false),
+    ]);
+    return results.some(Boolean);
+  } catch (err: any) {
+    return false;
+  }
+}
+
