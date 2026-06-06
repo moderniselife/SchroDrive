@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.7.0] - 2026-06-06 🚀
+*Status: .torrent file support, cloud storage mounts, STRM short-codes, error video fallback, organiser improvements*
+
+### Added ✨
+- **`.torrent` file support** (`src/indexers/`, `src/providers/`):
+  - Indexer results that return `.torrent` download URLs are no longer discarded
+  - New `MagnetOrTorrent` discriminated union type for magnet vs torrent URL
+  - `addTorrentFile()` implemented in all 4 providers (RD, TB, AD, PM)
+  - `addTorrentFileFromUrl()` in registry downloads and uploads `.torrent` files
+- **Cloud storage virtual mounts** (`src/core/config.ts`, `src/services/mount.ts`):
+  - Mega (email+password, fully headless), Google Drive (service account), Dropbox (OAuth), OneDrive (OAuth)
+  - Mounted via rclone's `combine` backend under `{mountBase}/cloud/`
+  - Default read-only, cloud-tuned flags (`--tpslimit=10`, `--dir-cache-time=1h`)
+- **STRM short-code service** (`src/services/strmService.ts`, `src/core/db.ts`):
+  - Stable 16-char alphanumeric codes that 302 redirect to ephemeral CDN URLs
+  - HTTP server on port 9120 (configurable via `STRM_PORT`)
+  - 7-day TTL with auto-refresh from provider on expiry
+  - SQLite-persisted with automatic pruning every 6 hours
+- **Error video fallback** (`assets/not_found.mp4`, `src/services/webdavBridge.ts`):
+  - 10-second black MP4 (~8KB) served when download URLs are broken
+  - Prevents media player hangs/crashes on 503 text responses
+- **Anime output category** (`src/services/organizer.ts`):
+  - Organiser now outputs anime to `Anime/` instead of lumping into `TV/`
+  - Uses `mediaClassifier.ts` for CRC hash + fansub detection
+
+### Changed 🔄
+- **Organiser mount awareness** (`src/services/organizer.ts`):
+  - Scans `__all__/` when Zurg-style layout detected (avoids duplicate processing)
+  - Dynamic `MOUNT_STOP_WORDS` set replaces hardcoded provider names
+  - Path walkers (`findShowHintFromPath`, `pickCandidateTitleFromPath`, `isLikelyTvContext`) skip category dirs
+
 ### Version [0.6.0] - 2026-06-06 🧬
 *Status: Mount stability fix, persistent deduplication, Zurg-style organised mounts, Jellyseerr support*
 
