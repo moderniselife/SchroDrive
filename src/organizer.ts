@@ -553,13 +553,76 @@ async function walkDir(root: string, acc: string[], limit: number) {
 }
 
 // ===========================================================================
+// Stale Symlink Pruning
+// ===========================================================================
+
+/**
+ * Recursively walks the organised library directories and removes broken
+ * symlinks (links whose targets no longer exist). Also removes empty
+ * directories left behind after pruning.
+ *
+ * This handles the case where FUSE mounts are removed but the organised
+ * symlinks remain, leaving thousands of dead links in the library.
+ *
+ * @param dir - The directory to prune.
+ * @returns The count of removed symlinks and removed empty directories.
+ */
+async function pruneStaleSymlinks(dir: string): Promise<{ removedLinks: number; removedDirs: number }> {
+  let removedLinks = 0;
+  let removedDirs = 0;
+
+  let entries: fs.Dirent[];
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch {
+    return { removedLinks, removedDirs };
+  }
+
+  for (const ent of entries) {
+    const full = path.join(dir, ent.name);
+
+    if (ent.isDirectory()) {
+      // Recurse into subdirectories first
+      const sub = await pruneStaleSymlinks(full);
+      removedLinks += sub.removedLinks;
+      removedDirs += sub.removedDirs;
+
+      // After pruning contents, remove the directory if it's now empty
+      try {
+        const remaining = await fsp.readdir(full);
+        if (remaining.length === 0) {
+          await fsp.rmdir(full);
+          removedDirs++;
+        }
+      } catch { /* ignore — directory may have been removed already */ }
+    } else if (ent.isSymbolicLink()) {
+      // Check if the symlink target exists
+      try {
+        await fsp.stat(full); // stat follows the link — throws if target missing
+      } catch {
+        // Target doesn't exist — remove the broken symlink
+        try {
+          await fsp.unlink(full);
+          removedLinks++;
+        } catch (e: any) {
+          console.warn(`[${new Date().toISOString()}][organize] failed to remove stale symlink`, { path: full, err: e?.message });
+        }
+      }
+    }
+  }
+
+  return { removedLinks, removedDirs };
+}
+
+// ===========================================================================
 // Main Orchestration
 // ===========================================================================
 
 /**
  * Runs a single pass of the media organiser.
  *
- * Scans all mounted provider directories for video files, parses their
+ * First prunes any stale/broken symlinks from the organised library,
+ * then scans all mounted provider directories for video files, parses their
  * filenames to determine type (movie/TV), looks up canonical metadata
  * from external APIs, and creates symlinks in the organised library.
  *
@@ -577,6 +640,33 @@ async function walkDir(root: string, acc: string[], limit: number) {
 export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) {
   const dryRun = !!opts?.dryRun;
   const limit = opts?.limit ?? 10000;
+
+  // --- Prune stale symlinks before scanning ---
+  const orgBase = config.organizedBase;
+  const movieDir = path.join(orgBase, "Movies");
+  const tvDir = path.join(orgBase, "TV");
+  let totalRemovedLinks = 0;
+  let totalRemovedDirs = 0;
+
+  for (const dir of [movieDir, tvDir]) {
+    try {
+      const st = await fsp.stat(dir);
+      if (st.isDirectory()) {
+        const { removedLinks, removedDirs } = await pruneStaleSymlinks(dir);
+        totalRemovedLinks += removedLinks;
+        totalRemovedDirs += removedDirs;
+      }
+    } catch { /* directory may not exist yet */ }
+  }
+
+  if (totalRemovedLinks > 0 || totalRemovedDirs > 0) {
+    console.log(`[${new Date().toISOString()}][organize] pruned stale content`, {
+      removedSymlinks: totalRemovedLinks,
+      removedEmptyDirs: totalRemovedDirs,
+    });
+  }
+
+  // --- Scan mounted providers for video files ---
   const providerBases = [path.join(config.mountBase, "realdebrid"), path.join(config.mountBase, "torbox")];
   const roots: string[] = [];
   for (const b of providerBases) {
