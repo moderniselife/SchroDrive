@@ -1,8 +1,26 @@
+/**
+ * SchroDrive — Real-Debrid API Client
+ *
+ * Provides functions for interacting with the Real-Debrid debrid service API.
+ * Handles listing torrents (with pagination and streaming), adding magnets,
+ * selecting files, listing downloads, and checking torrent status.
+ *
+ * All requests are rate-limited via the shared {@link rateLimiter} singleton,
+ * with automatic caching of successful responses to serve during backoff periods.
+ * HTTP agents are forced to IPv4 to avoid IPv6 timeout issues in Docker containers.
+ *
+ * @module realdebrid
+ */
+
 import axios from "axios";
 import https from "https";
 import http from "http";
 import { config } from "./config";
 import { rateLimiter } from "./rateLimiter";
+
+// ===========================================================================
+// Constants & HTTP Configuration
+// ===========================================================================
 
 const PROVIDER_NAME = "realdebrid";
 
@@ -11,24 +29,63 @@ const httpAgent = new http.Agent({ family: 4 });
 const httpsAgent = new https.Agent({ family: 4 });
 const axiosIPv4 = axios.create({ httpAgent, httpsAgent });
 
+// ===========================================================================
+// Configuration & Status Helpers
+// ===========================================================================
+
+/**
+ * Checks whether Real-Debrid is configured with a valid access token.
+ *
+ * @returns `true` if the RD access token is set in the configuration.
+ */
 export function isRDConfigured(): boolean {
   return !!config.rdAccessToken;
 }
 
+/**
+ * Checks whether Real-Debrid API requests are currently rate-limited.
+ *
+ * @returns `true` if the provider is in a backoff period.
+ */
 export function isRDRateLimited(): boolean {
   return rateLimiter.isRateLimited(PROVIDER_NAME);
 }
 
+/**
+ * Returns the remaining wait time (in seconds) before Real-Debrid requests
+ * can resume after a rate limit.
+ *
+ * @returns Remaining wait time in seconds, or 0 if not rate-limited.
+ */
 export function getRDWaitTime(): number {
   return rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
 }
 
+/**
+ * Builds the authorisation headers required for Real-Debrid API requests.
+ *
+ * @returns A headers object containing the Bearer token.
+ */
 function rdHeaders() {
   return { Authorization: `Bearer ${config.rdAccessToken}` } as Record<string, string>;
 }
 
+// ===========================================================================
+// Torrent Operations
+// ===========================================================================
+
 const RD_TORRENT_LIST_CACHE_KEY = "realdebrid_torrents";
 
+/**
+ * Fetches the complete list of torrents from Real-Debrid, paginating
+ * through all available results. Returns cached data when rate-limited
+ * or on error.
+ *
+ * The RD API allows a maximum page size of 2500 items. Each page request
+ * is throttled to respect rate limits.
+ *
+ * @returns An array of torrent objects from the RD API.
+ */
 export async function listRDTorrents(): Promise<any[]> {
   if (!isRDConfigured()) return [];
   
@@ -106,7 +163,14 @@ export async function listRDTorrents(): Promise<any[]> {
   }
 }
 
-// Generator version that yields each page as it's fetched - for streaming
+/**
+ * Async generator that yields torrent pages as they are fetched from Real-Debrid.
+ * Uses smaller page sizes (100) for faster initial delivery in SSE streaming contexts.
+ *
+ * Falls back to cached data when rate-limited.
+ *
+ * @yields Arrays of torrent objects, one array per page.
+ */
 export async function* listRDTorrentsStream(): AsyncGenerator<any[], void, unknown> {
   if (!isRDConfigured()) return;
   
@@ -147,6 +211,16 @@ export async function* listRDTorrentsStream(): AsyncGenerator<any[], void, unkno
   }
 }
 
+/**
+ * Adds a magnet link to Real-Debrid for downloading.
+ *
+ * Sends the magnet as a URL-encoded form POST to the RD API.
+ * Throws if rate-limited or if the API request fails.
+ *
+ * @param magnet - The magnet URI to add.
+ * @returns An object containing the torrent `id` and `uri` from the RD response.
+ * @throws {Error} If the provider is rate-limited or the request fails.
+ */
 export async function addMagnetToRD(magnet: string): Promise<{ id?: string; uri?: string }> {
   // Check rate limit before making request
   if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
@@ -185,6 +259,14 @@ export async function addMagnetToRD(magnet: string): Promise<{ id?: string; uri?
   }
 }
 
+/**
+ * Selects all files within a Real-Debrid torrent for download.
+ *
+ * Called after adding a magnet to ensure all files in the torrent
+ * are queued for retrieval by the debrid service.
+ *
+ * @param id - The Real-Debrid torrent ID to select files for.
+ */
 export async function selectAllFilesRD(id: string): Promise<void> {
   if (!id) return;
   
@@ -223,15 +305,39 @@ export async function selectAllFilesRD(id: string): Promise<void> {
   }
 }
 
+/**
+ * Determines whether a Real-Debrid torrent is considered "dead" (failed or errored).
+ *
+ * A torrent is NOT dead if its progress has reached 100%. Otherwise, it is
+ * considered dead if its status contains "error" or "dead".
+ *
+ * @param t - The torrent object from the RD API.
+ * @returns `true` if the torrent is dead/failed.
+ */
 export function isRDTorrentDead(t: any): boolean {
   const s = String(t?.status || "").toLowerCase();
+  // Completed torrents are never dead, regardless of status string
   if (typeof t?.progress === "number" && t.progress >= 100) return false;
   if (s.includes("error") || s.includes("dead")) return true;
   return false;
 }
 
+// ===========================================================================
+// Download Operations
+// ===========================================================================
+
 const RD_DOWNLOADS_CACHE_KEY = "realdebrid_downloads";
 
+/**
+ * Fetches the complete list of downloads from Real-Debrid, paginating
+ * through all available results. Returns cached data when rate-limited
+ * or on error.
+ *
+ * Downloads represent completed/unrestricted files available for direct
+ * download from the RD CDN.
+ *
+ * @returns An array of download objects from the RD API.
+ */
 export async function listRDDownloads(): Promise<any[]> {
   if (!isRDConfigured()) return [];
   
@@ -309,7 +415,14 @@ export async function listRDDownloads(): Promise<any[]> {
   }
 }
 
-// Generator version that yields each page as it's fetched - for streaming
+/**
+ * Async generator that yields download pages as they are fetched from Real-Debrid.
+ * Uses smaller page sizes (100) for faster initial delivery in SSE streaming contexts.
+ *
+ * Falls back to cached data when rate-limited.
+ *
+ * @yields Arrays of download objects, one array per page.
+ */
 export async function* listRDDownloadsStream(): AsyncGenerator<any[], void, unknown> {
   if (!isRDConfigured()) return;
   
