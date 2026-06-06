@@ -27,6 +27,12 @@ import axios from "axios";
 import { config } from "../core/config";
 import { rateLimiter } from "../core/rateLimiter";
 import { registry } from "../providers";
+import {
+  upsertDeadTorrent,
+  removeDeadTorrent as removeDeadTorrentFromDb,
+  getAllDeadTorrents,
+  getDeadTorrent,
+} from "../core/db";
 
 // ===========================================================================
 // HTTP Client (IPv4 forced — matches realdebrid.ts pattern)
@@ -879,6 +885,41 @@ export class WebDAVBridge {
       options.cacheTtlS ?? 30,
       options.downloadCacheTtlS ?? 300,
     );
+
+    // Restore dead torrent state from SQLite
+    this.restoreDeadTorrentsFromDb();
+  }
+
+  /**
+   * Restores dead torrent records and failure counters from the database.
+   * Called during construction to rehydrate state across restarts.
+   */
+  private restoreDeadTorrentsFromDb(): void {
+    try {
+      const records = getAllDeadTorrents();
+      let restored = 0;
+      for (const record of records) {
+        if (record.provider !== this.provider) continue;
+
+        this.torrentFailures.set(record.torrentKey, record.failureCount);
+
+        if (record.flaggedAt) {
+          this.deadTorrents.set(record.torrentKey, {
+            id: record.torrentId,
+            name: record.torrentName || record.torrentId,
+            provider: record.provider,
+            failureCount: record.failureCount,
+            flaggedAt: new Date(record.flaggedAt).toISOString(),
+          });
+        }
+        restored++;
+      }
+      if (restored > 0) {
+        log(this.provider, `Restored ${restored} dead torrent record(s) from database`);
+      }
+    } catch (err: any) {
+      logWarn(this.provider, `Failed to restore dead torrents from database: ${err?.message}`);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1349,18 +1390,49 @@ export class WebDAVBridge {
     const currentFailures = (this.torrentFailures.get(dir.id) ?? 0) + 1;
     this.torrentFailures.set(dir.id, currentFailures);
 
+    // Persist failure count to database
+    try {
+      upsertDeadTorrent(
+        dir.id,
+        this.provider,
+        dir.id,
+        dir.originalName || dir.name,
+        currentFailures,
+        undefined,
+        `Download resolution failed after retries`,
+      );
+    } catch (dbErr: any) {
+      // Non-critical — in-memory tracking still works
+    }
+
     if (currentFailures >= DEAD_TORRENT_THRESHOLD) {
       logError(
         this.provider,
         `Torrent ${dir.name} (${dir.id}) reached ${currentFailures} consecutive failures — flagging as dead`
       );
+      const flaggedAt = new Date().toISOString();
       this.deadTorrents.set(dir.id, {
         id: dir.id,
         name: dir.originalName || dir.name,
         provider: this.provider,
         failureCount: currentFailures,
-        flaggedAt: new Date().toISOString(),
+        flaggedAt,
       });
+
+      // Persist the dead flag to database
+      try {
+        upsertDeadTorrent(
+          dir.id,
+          this.provider,
+          dir.id,
+          dir.originalName || dir.name,
+          currentFailures,
+          Date.now(),
+          `Flagged as dead after ${currentFailures} consecutive failures`,
+        );
+      } catch (dbErr: any) {
+        // Non-critical
+      }
     }
 
     return null;
@@ -1390,6 +1462,14 @@ export class WebDAVBridge {
   clearDeadTorrent(torrentId: string): void {
     this.deadTorrents.delete(torrentId);
     this.torrentFailures.delete(torrentId);
+
+    // Remove from database
+    try {
+      removeDeadTorrentFromDb(torrentId);
+    } catch (err: any) {
+      logWarn(this.provider, `Failed to remove dead torrent from database: ${err?.message}`);
+    }
+
     log(this.provider, `Cleared dead torrent flag for ${torrentId}`);
   }
 }

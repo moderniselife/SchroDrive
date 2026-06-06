@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.4.0] - 2026-06-06 🗄️
+*Status: SQLite persistence layer — state survives restarts*
+
+### Added ✨
+- **SQLite persistence layer** (`src/core/db.ts`):
+  - `better-sqlite3` synchronous database with WAL journalling
+  - Five tables: `processed_watchlist`, `dead_torrents`, `rate_limit_state`, `blacklist_backup`, `response_cache`
+  - Graceful degradation: all DB writes wrapped in try/catch, app continues if DB is corrupted/deleted
+  - Automatic schema migrations via `CREATE TABLE IF NOT EXISTS`
+  - Daily pruning of stale data (30-day TTL for watchlist, expired cache cleanup)
+- New config entries:
+  - `DATA_DIR` — persistent data directory (default: `./data`)
+  - `DB_PATH` — SQLite database path (default: `./data/schrodrive.db`)
+
+### Changed 🔄
+- **Blacklist** (`src/core/blacklist.ts`):
+  - Default path migrated from `/tmp/schrodrive/blacklist.json` to `./data/blacklist.json`
+  - Auto-migration from old `/tmp` path on first run
+  - Every `addToBlacklist()` now backs up to SQLite
+  - `loadBlacklist()` recovers from SQLite backup if JSON file is missing/corrupted
+- **Watchlist poller** (`src/services/mediaServerWatchlist.ts`):
+  - Processed items now persist to SQLite across restarts
+  - Startup hydrates the in-memory Set from database
+  - Manual 2000-entry memory cap replaced by 30-day TTL pruning
+- **Rate limiter** (`src/core/rateLimiter.ts`):
+  - Backoff state and throttle delays persist to SQLite on every change
+  - State restored from database on first access (survives restarts)
+  - Response cache writes through to SQLite with DB fallback on in-memory miss
+- **WebDAV bridge** (`src/services/webdavBridge.ts`):
+  - Dead torrent records and failure counters persist to SQLite
+  - Constructor restores state from database
+  - `clearDeadTorrent()` removes records from both memory and database
+- **Entrypoint** (`src/index.ts`):
+  - Database initialised early in `serve` command startup
+  - Graceful shutdown via `SIGTERM`/`SIGINT` hooks closes DB connection
+  - 24-hour pruning interval for stale database entries
+
 ### Version [0.3.0] - 2026-06-06 🏆
 *Status: Feature parity with all competitors — zero gaps in comparison table*
 

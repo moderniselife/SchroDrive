@@ -15,6 +15,8 @@ services:
         target: /mnt/schrodrive
         bind:
           propagation: rshared
+      # Persistent data directory (SQLite DB, blacklist, rate limit store)
+      - schrodrive_data:/data
     devices:
       - /dev/fuse:/dev/fuse
     cap_add:
@@ -64,6 +66,15 @@ services:
       - RUN_WEBHOOK=${RUN_WEBHOOK:-false}
       - RUN_POLLER=${RUN_POLLER:-true}
       - PORT=8978
+      # --- Data Persistence ---
+      - DATA_DIR=/data
+      # --- Stremio Addon Server ---
+      - STREMIO_ADDON_ENABLED=${STREMIO_ADDON_ENABLED:-true}
+      - STREMIO_ADDON_PORT=7000
+      # --- Torrent Repair ---
+      - ENABLE_REPAIR=true
+      - REPAIR_MAX_ATTEMPTS=3
+      - PREEMPTIVE_REPAIR=true
       # ===== Overseerr =====
       - OVERSEERR_AUTH=${OVERSEERR_AUTH:-}
       - OVERSEERR_API_KEY=${OVERSEERR_API_KEY:-}
@@ -81,6 +92,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    ports:
+      - "7000:7000"  # Stremio addon server
     networks:
       - media
     depends_on:
@@ -103,6 +116,8 @@ services:
 
 volumes:
   prowlarr_config:
+  schrodrive_data:
+    name: schrodrive_data
 
 networks:
   media:
