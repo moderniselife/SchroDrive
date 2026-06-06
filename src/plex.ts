@@ -47,12 +47,12 @@ export interface PlexLibrarySection {
 // Plex API Client
 // =============================================================================
 
-const PLEX_METADATA_URL = "https://metadata.provider.plex.tv";
+const PLEX_DISCOVER_URL = "https://discover.provider.plex.tv";
 
 /**
  * Fetches the current user's Plex watchlist.
  *
- * Uses the Plex metadata API at metadata.provider.plex.tv which
+ * Uses the Plex Discover API at discover.provider.plex.tv which
  * requires a valid Plex authentication token.
  *
  * @returns Array of watchlist items with title, year, type, and GUID info
@@ -64,13 +64,16 @@ export async function getPlexWatchlist(): Promise<PlexWatchlistItem[]> {
     return [];
   }
 
-  const url = `${PLEX_METADATA_URL}/library/sections/watchlist/all`;
+  const url = `${PLEX_DISCOVER_URL}/library/sections/watchlist/all`;
   console.log(`[${new Date().toISOString()}][plex] GET ${url}`);
 
   try {
     const res = await axios.get(url, {
       headers: {
         "X-Plex-Token": token,
+        "X-Plex-Client-Identifier": "schrodrive",
+        "X-Plex-Product": "SchroDrive",
+        "X-Plex-Version": "0.2.0",
         Accept: "application/json",
       },
       timeout: 15000,
