@@ -467,6 +467,8 @@ export class RealDebridProvider implements DebridProvider {
     // Step 2: Delete the broken torrent
     try {
       await this.deleteTorrent(torrentId);
+      // Wait for deletion to propagate in RealDebrid database to avoid race conditions/404s on re-add
+      await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (err: any) {
       console.warn(`[${new Date().toISOString()}][rd] repair delete failed for ${torrentId}`, { err: err?.message });
       // If we can't delete, we can't repair
