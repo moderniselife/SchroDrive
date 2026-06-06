@@ -7,7 +7,16 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Download, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Globe, FileText, Link2, Radio } from "lucide-react"
+import { Download, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Globe, FileText, Link2, Radio, HardDrive } from "lucide-react"
+
+/** Provider-specific colour classes for consistent styling across all debrid providers. */
+const PROVIDER_COLOURS: Record<string, string> = {
+  torbox: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+  realdebrid: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
+  alldebrid: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
+  premiumize: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
+}
+const getProviderColour = (id: string) => PROVIDER_COLOURS[id] || 'bg-slate-500/10 text-slate-500 border-slate-500/20'
 
 interface DownloadItem {
   id: string
@@ -168,10 +177,11 @@ export default function ActivityPage() {
   const completedCount = downloads.filter((d) => getStatus(d) === "completed").length
   const totalSpeed = downloads.reduce((acc, d) => acc + (d.downloadSpeed || 0), 0)
 
-  // Count by type
-  const webCount = downloads.filter((d) => d.type === "web").length
-  const usenetCount = downloads.filter((d) => d.type === "usenet").length
-  const rdCount = downloads.filter((d) => d.provider === "realdebrid").length
+  // Count by provider — dynamically groups all providers
+  const providerCounts = downloads.reduce((acc, d) => {
+    acc[d.provider] = (acc[d.provider] || 0) + 1
+    return acc
+  }, {} as Record<string, number>)
 
   if (loading) {
     return (
@@ -196,7 +206,7 @@ export default function ActivityPage() {
         <div>
           <h1 className="text-2xl font-bold">Downloads</h1>
           <p className="text-muted-foreground">
-            {status || "Real-Debrid downloads & TorBox web/usenet downloads"}
+            {status || "Downloads across all providers"}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -236,28 +246,19 @@ export default function ActivityPage() {
             </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Real-Debrid</p>
-                <p className="text-2xl font-bold">{rdCount}</p>
+        {Object.entries(providerCounts).map(([id, count]) => (
+          <Card key={id}>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground capitalize">{id}</p>
+                  <p className="text-2xl font-bold">{count}</p>
+                </div>
+                <HardDrive className={`h-8 w-8 ${getProviderColour(id).split(' ')[1]}`} />
               </div>
-              <Link2 className="h-8 w-8 text-purple-500" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">TorBox</p>
-                <p className="text-2xl font-bold">{webCount + usenetCount}</p>
-              </div>
-              <Globe className="h-8 w-8 text-blue-500" />
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       <Card className="flex-1">
@@ -271,7 +272,7 @@ export default function ActivityPage() {
                 <Download className="h-12 w-12 text-muted-foreground/50" />
                 <p className="mt-4 text-lg font-medium">No downloads</p>
                 <p className="text-sm text-muted-foreground">
-                  Downloads from Real-Debrid and TorBox web/usenet will appear here
+                  Downloads from your configured providers will appear here
                 </p>
               </div>
             ) : (
