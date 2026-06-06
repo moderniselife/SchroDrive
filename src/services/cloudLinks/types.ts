@@ -12,7 +12,7 @@
 // ===========================================================================
 
 /** Supported cloud link provider types. */
-export type CloudLinkProvider = 'mega' | 'gdrive' | 'dropbox';
+export type CloudLinkProvider = 'mega' | 'gdrive' | 'dropbox' | 'http';
 
 /**
  * A configured cloud link from the user's config file or env var.
@@ -33,6 +33,8 @@ export interface CloudLinkConfig {
   url: string;
   /** Display name for the mount directory. */
   name: string;
+  /** Optional custom HTTP headers (e.g. auth). Only used by 'http' type. */
+  headers?: Record<string, string>;
 }
 
 // ===========================================================================

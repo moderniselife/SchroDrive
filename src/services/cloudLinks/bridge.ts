@@ -29,6 +29,7 @@ import type { CloudLinkConfig, CloudLinkAdapter, CloudFile, CloudLinkProvider } 
 import { MegaAdapter } from './megaAdapter';
 import { GDriveAdapter } from './gdriveAdapter';
 import { DropboxAdapter } from './dropboxAdapter';
+import { HttpAdapter } from './httpAdapter';
 
 // ===========================================================================
 // Constants
@@ -99,7 +100,7 @@ function isValidCloudLink(item: any): item is CloudLinkConfig {
   return (
     item &&
     typeof item.type === 'string' &&
-    ['mega', 'gdrive', 'dropbox'].includes(item.type) &&
+    ['mega', 'gdrive', 'dropbox', 'http'].includes(item.type) &&
     typeof item.url === 'string' &&
     item.url.length > 0 &&
     typeof item.name === 'string' &&
@@ -133,6 +134,9 @@ function createAdapter(link: CloudLinkConfig): CloudLinkAdapter | null {
         return null;
       }
       return new DropboxAdapter(link.url, link.name, config.dropboxToken);
+
+    case 'http':
+      return new HttpAdapter(link.url, link.name, link.headers);
 
     default:
       console.warn(`${LOG_PREFIX} Unknown cloud link type: ${link.type}`);
