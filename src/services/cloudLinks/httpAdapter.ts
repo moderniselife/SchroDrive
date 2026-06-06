@@ -258,9 +258,26 @@ export class HttpAdapter implements CloudLinkAdapter {
   private baseUrl: string;
   private initialised = false;
 
-  /** Cache of folder contents: url → entries. */
-  private folderCache = new Map<string, { files: CloudFile[]; expiresAt: number }>();
-  private static readonly CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes (aggressive for rate-limited servers)
+  /** In-memory cache of folder contents: url → entries. */
+  private folderCache = new Map<string, { files: CloudFile[]; fetchedAt: number }>();
+
+  /**
+   * Fresh TTL — serve from cache without any background refresh.
+   * After this, we still serve the cached copy but trigger a background refresh.
+   */
+  private static readonly FRESH_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+  /**
+   * Stale TTL — maximum age before we MUST refetch before serving.
+   * Between FRESH and STALE, we serve the cached copy and refresh in background.
+   */
+  private static readonly STALE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+  /** Set of URLs currently being refreshed in the background (dedup). */
+  private refreshingUrls = new Set<string>();
+
+  /** Path to persistent disk cache file. */
+  private diskCachePath: string | null = null;
 
   /** Optional custom headers (e.g. for auth). */
   private headers: Record<string, string>;
@@ -277,6 +294,65 @@ export class HttpAdapter implements CloudLinkAdapter {
     // Ensure trailing slash
     this.baseUrl = url.endsWith('/') ? url : url + '/';
     this.headers = headers || {};
+
+    // Set up persistent disk cache path
+    const dataDir = process.env.DATA_DIR || './data';
+    const safeName = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    this.diskCachePath = `${dataDir}/http_cache_${safeName}.json`;
+
+    // Load existing disk cache on construction
+    this.loadDiskCache();
+  }
+
+  /**
+   * Loads cached folder listings from disk (survives restarts).
+   */
+  private loadDiskCache(): void {
+    if (!this.diskCachePath) return;
+    try {
+      const fs = require('fs');
+      if (!fs.existsSync(this.diskCachePath)) return;
+
+      const raw = fs.readFileSync(this.diskCachePath, 'utf-8');
+      const data: Record<string, { files: CloudFile[]; fetchedAt: number }> = JSON.parse(raw);
+
+      let loaded = 0;
+      for (const [url, entry] of Object.entries(data)) {
+        // Only load entries that haven't exceeded the stale TTL
+        if (Date.now() - entry.fetchedAt < HttpAdapter.STALE_TTL_MS) {
+          this.folderCache.set(url, entry);
+          loaded++;
+        }
+      }
+
+      if (loaded > 0) {
+        console.log(`[${new Date().toISOString()}][cloud-links][http] Restored ${loaded} cached folder(s) for "${this.name}" from disk`);
+      }
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}][cloud-links][http] Failed to load disk cache for "${this.name}": ${err?.message}`);
+    }
+  }
+
+  /**
+   * Persists the current in-memory cache to disk.
+   */
+  private saveDiskCache(): void {
+    if (!this.diskCachePath) return;
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const dir = path.dirname(this.diskCachePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+      const data: Record<string, { files: CloudFile[]; fetchedAt: number }> = {};
+      for (const [url, entry] of this.folderCache.entries()) {
+        data[url] = entry;
+      }
+
+      fs.writeFileSync(this.diskCachePath, JSON.stringify(data), 'utf-8');
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}][cloud-links][http] Failed to save disk cache for "${this.name}": ${err?.message}`);
+    }
   }
 
   /**
@@ -311,33 +387,22 @@ export class HttpAdapter implements CloudLinkAdapter {
   }
 
   /**
-   * Lists files and directories at the given sub-path.
+   * Fetches and parses a directory listing from the remote server.
+   * Returns the parsed CloudFile array, or null on failure.
    */
-  async listFolder(subPath?: string): Promise<CloudFile[]> {
-    if (!this.initialised) await this.init();
-
-    const targetUrl = subPath
-      ? new URL(subPath.endsWith('/') ? subPath : subPath + '/', this.baseUrl).toString()
-      : this.baseUrl;
-
-    // Check cache
-    const cached = this.folderCache.get(targetUrl);
-    if (cached && Date.now() < cached.expiresAt) {
-      return cached.files;
-    }
-
+  private async fetchRemoteListing(targetUrl: string): Promise<CloudFile[] | null> {
     try {
       const response = await fetch(targetUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; SchroDrive/1.0)',
           ...this.headers,
         },
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(30000),
       });
 
       if (!response.ok) {
         console.warn(`[${new Date().toISOString()}][cloud-links][http] ${targetUrl} returned HTTP ${response.status}`);
-        return [];
+        return null;
       }
 
       const html = await response.text();
@@ -347,7 +412,6 @@ export class HttpAdapter implements CloudLinkAdapter {
       for (const entry of entries) {
         try {
           files.push({
-            // Use the full URL as the ID for direct download
             id: new URL(entry.href, targetUrl).toString(),
             name: safeDecodeURIComponent(entry.name),
             size: entry.size,
@@ -355,22 +419,86 @@ export class HttpAdapter implements CloudLinkAdapter {
             mimeType: entry.isDirectory ? 'application/directory' : guessMimeType(entry.name),
           });
         } catch (entryErr: any) {
-          // Skip individual broken entries instead of killing the whole listing
           console.warn(`[${new Date().toISOString()}][cloud-links][http] Skipping entry "${entry.name}": ${entryErr?.message}`);
         }
       }
 
-      // Cache the results
-      this.folderCache.set(targetUrl, {
-        files,
-        expiresAt: Date.now() + HttpAdapter.CACHE_TTL_MS,
-      });
-
       return files;
     } catch (err: any) {
-      console.error(`[${new Date().toISOString()}][cloud-links][http] List folder failed for ${targetUrl}: ${err?.message}`);
-      return [];
+      console.error(`[${new Date().toISOString()}][cloud-links][http] Fetch failed for ${targetUrl}: ${err?.message}`);
+      return null;
     }
+  }
+
+  /**
+   * Refreshes a URL's cache in the background (stale-while-revalidate).
+   * Won't duplicate if already refreshing the same URL.
+   */
+  private backgroundRefresh(targetUrl: string): void {
+    if (this.refreshingUrls.has(targetUrl)) return;
+    this.refreshingUrls.add(targetUrl);
+
+    this.fetchRemoteListing(targetUrl)
+      .then((files) => {
+        if (files) {
+          this.folderCache.set(targetUrl, { files, fetchedAt: Date.now() });
+          this.saveDiskCache();
+          console.log(`[${new Date().toISOString()}][cloud-links][http] Background refresh complete for ${targetUrl} (${files.length} entries)`);
+        }
+      })
+      .catch(() => { /* already logged in fetchRemoteListing */ })
+      .finally(() => {
+        this.refreshingUrls.delete(targetUrl);
+      });
+  }
+
+  /**
+   * Lists files and directories at the given sub-path.
+   *
+   * Cache strategy (stale-while-revalidate):
+   * - < 6h old: serve from cache (fresh)
+   * - 6h–24h old: serve from cache + trigger background refresh (stale)
+   * - > 24h old: must fetch fresh (expired)
+   */
+  async listFolder(subPath?: string): Promise<CloudFile[]> {
+    if (!this.initialised) await this.init();
+
+    const targetUrl = subPath
+      ? new URL(subPath.endsWith('/') ? subPath : subPath + '/', this.baseUrl).toString()
+      : this.baseUrl;
+
+    const cached = this.folderCache.get(targetUrl);
+
+    if (cached) {
+      const age = Date.now() - cached.fetchedAt;
+
+      // Fresh — serve directly
+      if (age < HttpAdapter.FRESH_TTL_MS) {
+        return cached.files;
+      }
+
+      // Stale — serve cached but trigger background refresh
+      if (age < HttpAdapter.STALE_TTL_MS) {
+        this.backgroundRefresh(targetUrl);
+        return cached.files;
+      }
+    }
+
+    // Expired or no cache — must fetch fresh
+    const files = await this.fetchRemoteListing(targetUrl);
+    if (files) {
+      this.folderCache.set(targetUrl, { files, fetchedAt: Date.now() });
+      this.saveDiskCache();
+      return files;
+    }
+
+    // Fetch failed — return stale cache if we have one (better than nothing)
+    if (cached) {
+      console.warn(`[${new Date().toISOString()}][cloud-links][http] Serving expired cache for ${targetUrl} (fetch failed)`);
+      return cached.files;
+    }
+
+    return [];
   }
 
   /**
