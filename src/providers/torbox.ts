@@ -642,11 +642,7 @@ export class TorBoxProvider implements DebridProvider {
         };
       });
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.error(`[${new Date().toISOString()}][torbox] failed to fetch directories`, { error: errorMsg });
+      this.handleError(err, 'fetch directories');
       return [];
     }
   }
@@ -688,13 +684,7 @@ export class TorBoxProvider implements DebridProvider {
 
       return downloadUrl;
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.error(`[${new Date().toISOString()}][torbox] failed to resolve download URL for torrent ${torrentId}, file ${fileId}`, {
-        error: errorMsg,
-      });
+      this.handleError(err, `resolve download URL for torrent ${torrentId}, file ${fileId}`);
       return null;
     }
   }

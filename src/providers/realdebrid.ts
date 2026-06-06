@@ -236,10 +236,7 @@ export class RealDebridProvider implements DebridProvider {
         await rateLimiter.throttle(PROVIDER_NAME);
       }
     } catch (err: any) {
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, err?.message);
-      }
-      console.error(`[${new Date().toISOString()}][rd] list torrents stream failed`, err?.message);
+      this.handleError(err, 'list torrents stream');
     }
   }
 
@@ -321,16 +318,7 @@ export class RealDebridProvider implements DebridProvider {
       });
       rateLimiter.recordSuccess(PROVIDER_NAME);
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.warn(`[${new Date().toISOString()}][rd] select all files failed`, {
-        id,
-        error: errorMsg,
-        status: err?.response?.status,
-        rateLimited: rateLimiter.isRateLimited(PROVIDER_NAME),
-      });
+      this.handleError(err, `select all files for torrent ${id}`);
     }
   }
 
@@ -605,10 +593,7 @@ export class RealDebridProvider implements DebridProvider {
         await rateLimiter.throttle(PROVIDER_NAME);
       }
     } catch (err: any) {
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, err?.message);
-      }
-      console.error(`[${new Date().toISOString()}][rd] list downloads stream failed`, err?.message);
+      this.handleError(err, 'list downloads stream');
     }
   }
 
@@ -667,11 +652,7 @@ export class RealDebridProvider implements DebridProvider {
         files: [], // Files are fetched lazily via fetchTorrentFiles()
       }));
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.error(`[${new Date().toISOString()}][rd] failed to fetch directories`, { error: errorMsg });
+      this.handleError(err, 'fetch directories');
       return [];
     }
   }
@@ -721,11 +702,7 @@ export class RealDebridProvider implements DebridProvider {
         return vf;
       });
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.error(`[${new Date().toISOString()}][rd] failed to fetch files for torrent ${torrentId}`, { error: errorMsg });
+      this.handleError(err, `fetch files for torrent ${torrentId}`);
       return [];
     }
   }
@@ -788,11 +765,7 @@ export class RealDebridProvider implements DebridProvider {
 
       return downloadUrl;
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.error(`[${new Date().toISOString()}][rd] failed to resolve download URL for torrent ${torrentId}`, { error: errorMsg });
+      this.handleError(err, `resolve download URL for torrent ${torrentId}, link ${linkIndex}`);
       return null;
     }
   }

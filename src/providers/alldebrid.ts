@@ -349,16 +349,7 @@ export class AllDebridProvider implements DebridProvider {
       });
       rateLimiter.recordSuccess(PROVIDER_NAME);
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.warn(`[${new Date().toISOString()}][ad] select all files failed`, {
-        id,
-        error: errorMsg,
-        status: err?.response?.status,
-        rateLimited: rateLimiter.isRateLimited(PROVIDER_NAME),
-      });
+      this.handleError(err, `select all files for magnet ${id}`);
     }
   }
 
@@ -573,11 +564,7 @@ export class AllDebridProvider implements DebridProvider {
         };
       });
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.error(`[${new Date().toISOString()}][ad] failed to fetch directories`, { error: errorMsg });
+      this.handleError(err, 'fetch directories');
       return [];
     }
   }
@@ -648,11 +635,7 @@ export class AllDebridProvider implements DebridProvider {
 
       return downloadUrl;
     } catch (err: any) {
-      const errorMsg = err?.message || String(err);
-      if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
-        rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
-      }
-      console.error(`[${new Date().toISOString()}][ad] failed to resolve download URL for magnet ${torrentId}`, { error: errorMsg });
+      this.handleError(err, `resolve download URL for magnet ${torrentId}, file ${fileId}`);
       return null;
     }
   }
