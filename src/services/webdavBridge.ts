@@ -140,6 +140,10 @@ export interface DeadTorrentInfo {
  * the hash, and queue a replacement search.
  */
 const DEAD_TORRENT_THRESHOLD = 10;
+/** Dead torrent flags auto-expire after this TTL (6 hours). Gives providers time to process/seed. */
+const DEAD_TORRENT_TTL_MS = 6 * 60 * 60 * 1000;
+/** Suppress repetitive dead torrent log warnings — max once per 60s per torrent. */
+const DEAD_LOG_DEDUP_MS = 60_000;
 
 // ===========================================================================
 // Logging Helper
@@ -941,6 +945,8 @@ export class WebDAVBridge {
 
   /** Torrents flagged as dead due to persistent download failures. */
   private deadTorrents: Map<string, DeadTorrentInfo> = new Map();
+  /** Last time we logged a dead torrent warning, to suppress spam. */
+  private deadLogTimestamps: Map<string, number> = new Map();
 
   /**
    * Creates a new WebDAVBridge instance.
@@ -973,6 +979,15 @@ export class WebDAVBridge {
         this.torrentFailures.set(record.torrentKey, record.failureCount);
 
         if (record.flaggedAt) {
+          // Skip expired dead torrent flags — give them another chance
+          const flagAge = Date.now() - new Date(record.flaggedAt).getTime();
+          if (flagAge > DEAD_TORRENT_TTL_MS) {
+            log(this.provider, `Dead torrent flag expired for ${record.torrentName || record.torrentId} (flagged ${Math.round(flagAge / 3600000)}h ago — TTL is ${DEAD_TORRENT_TTL_MS / 3600000}h)`);
+            // Remove expired record from DB
+            try { removeDeadTorrentFromDb(record.torrentKey); } catch {}
+            continue;
+          }
+
           this.deadTorrents.set(record.torrentKey, {
             id: record.torrentId,
             name: record.torrentName || record.torrentId,
@@ -1454,7 +1469,13 @@ export class WebDAVBridge {
       // Media players (Plex/Jellyfin/Emby) handle a video response gracefully
       // (they'll show "Media not found" to the user) rather than hanging or
       // crashing on a 503 text body.
-      logWarn(this.provider, `Temporarily unavailable: ${dir.name}/${file.name} — serving error video`);
+      // Suppress repetitive log spam — media players retry every 2s
+      const unavailKey = `unavail:${dir.id}:${file.id}`;
+      const lastUnavailLog = this.deadLogTimestamps.get(unavailKey) || 0;
+      if (Date.now() - lastUnavailLog > DEAD_LOG_DEDUP_MS) {
+        logWarn(this.provider, `Temporarily unavailable: ${dir.name}/${file.name} — serving error video`);
+        this.deadLogTimestamps.set(unavailKey, Date.now());
+      }
       const errorVideoPath = nodePath.resolve(__dirname, '../../assets/not_found.mp4');
       if (fs.existsSync(errorVideoPath)) {
         res.setHeader('Content-Type', 'video/mp4');
@@ -1622,8 +1643,25 @@ export class WebDAVBridge {
   private async resolveDownloadUrl(dir: VirtualDirectory, file: VirtualFile): Promise<string | null> {
     // Check if the torrent is already flagged as dead
     if (this.deadTorrents.has(dir.id)) {
-      logWarn(this.provider, `Skipping download resolution for dead torrent ${dir.name} (${dir.id})`);
-      return null;
+      const deadInfo = this.deadTorrents.get(dir.id)!;
+
+      // Check if the dead flag has expired (TTL)
+      const flagAge = Date.now() - new Date(deadInfo.flaggedAt).getTime();
+      if (flagAge > DEAD_TORRENT_TTL_MS) {
+        log(this.provider, `Dead torrent flag expired for ${dir.name} (${dir.id}) — retrying after ${Math.round(flagAge / 3600000)}h`);
+        this.deadTorrents.delete(dir.id);
+        this.torrentFailures.delete(dir.id);
+        try { removeDeadTorrentFromDb(dir.id); } catch {}
+        // Fall through to attempt resolution
+      } else {
+        // Suppress repetitive log spam — only log once per DEAD_LOG_DEDUP_MS
+        const lastLog = this.deadLogTimestamps.get(dir.id) || 0;
+        if (Date.now() - lastLog > DEAD_LOG_DEDUP_MS) {
+          logWarn(this.provider, `Skipping download resolution for dead torrent ${dir.name} (${dir.id})`);
+          this.deadLogTimestamps.set(dir.id, Date.now());
+        }
+        return null;
+      }
     }
 
     const cacheKey = `${dir.id}:${file.id}`;
