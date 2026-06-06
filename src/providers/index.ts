@@ -336,3 +336,5 @@ export const registry = new ProviderRegistry();
 // import issues — each provider file imports registry from this module.
 import './realdebrid';
 import './torbox';
+import './alldebrid';
+import './premiumize';

@@ -176,6 +176,12 @@ function hasDirectWebDAV(provider: string): boolean {
   if (provider === "torbox") {
     return !!(config.torboxWebdavUrl && config.torboxWebdavUsername && config.torboxWebdavPassword);
   }
+  if (provider === "alldebrid") {
+    return !!(config.alldebridWebdavUrl && config.alldebridWebdavUsername && config.alldebridWebdavPassword);
+  }
+  if (provider === "premiumize") {
+    return !!(config.premiumizeWebdavUrl && config.premiumizeWebdavUsername && config.premiumizeWebdavPassword);
+  }
   return false;
 }
 
@@ -185,6 +191,8 @@ function hasDirectWebDAV(provider: string): boolean {
 function hasApiKey(provider: string): boolean {
   if (provider === "realdebrid") return !!config.rdAccessToken;
   if (provider === "torbox") return !!config.torboxApiKey;
+  if (provider === "alldebrid") return !!config.alldebridApiKey;
+  if (provider === "premiumize") return !!config.premiumizeApiKey;
   return false;
 }
 
@@ -241,6 +249,50 @@ function buildRcloneConfigFile(bridgePorts: Map<string, number>): string {
       const port = bridgePorts.get("torbox")!;
       console.log(`[${new Date().toISOString()}][mount] TorBox: using WebDAV bridge on port ${port}`);
       lines.push(`[torbox]`);
+      lines.push(`type = webdav`);
+      lines.push(`url = http://localhost:${port}`);
+      lines.push(`vendor = other`);
+      lines.push("");
+    }
+  }
+
+  // AllDebrid: direct WebDAV or bridge
+  if (ps.has("alldebrid")) {
+    if (hasDirectWebDAV("alldebrid")) {
+      console.log(`[${new Date().toISOString()}][mount] AllDebrid: using direct WebDAV credentials`);
+      lines.push(`[alldebrid]`);
+      lines.push(`type = webdav`);
+      lines.push(`url = ${config.alldebridWebdavUrl}`);
+      lines.push(`vendor = other`);
+      lines.push(`user = ${config.alldebridWebdavUsername}`);
+      lines.push(`pass = ${obscurePassword(config.alldebridWebdavPassword)}`);
+      lines.push("");
+    } else if (bridgePorts.has("alldebrid")) {
+      const port = bridgePorts.get("alldebrid")!;
+      console.log(`[${new Date().toISOString()}][mount] AllDebrid: using WebDAV bridge on port ${port}`);
+      lines.push(`[alldebrid]`);
+      lines.push(`type = webdav`);
+      lines.push(`url = http://localhost:${port}`);
+      lines.push(`vendor = other`);
+      lines.push("");
+    }
+  }
+
+  // Premiumize: direct WebDAV or bridge
+  if (ps.has("premiumize")) {
+    if (hasDirectWebDAV("premiumize")) {
+      console.log(`[${new Date().toISOString()}][mount] Premiumize: using direct WebDAV credentials`);
+      lines.push(`[premiumize]`);
+      lines.push(`type = webdav`);
+      lines.push(`url = ${config.premiumizeWebdavUrl}`);
+      lines.push(`vendor = other`);
+      lines.push(`user = ${config.premiumizeWebdavUsername}`);
+      lines.push(`pass = ${obscurePassword(config.premiumizeWebdavPassword)}`);
+      lines.push("");
+    } else if (bridgePorts.has("premiumize")) {
+      const port = bridgePorts.get("premiumize")!;
+      console.log(`[${new Date().toISOString()}][mount] Premiumize: using WebDAV bridge on port ${port}`);
+      lines.push(`[premiumize]`);
       lines.push(`type = webdav`);
       lines.push(`url = http://localhost:${port}`);
       lines.push(`vendor = other`);
@@ -447,6 +499,42 @@ export async function mountVirtualDrive(): Promise<void> {
         console.error(`[${new Date().toISOString()}][mount] Failed to start TorBox bridge:`, err?.message);
       }
     }
+
+    if (ps.has("alldebrid") && !hasDirectWebDAV("alldebrid") && hasApiKey("alldebrid")) {
+      console.log(`[${new Date().toISOString()}][mount] AllDebrid: no WebDAV creds, starting API bridge...`);
+      try {
+        const bridge = new WebDAVBridge({
+          provider: "alldebrid",
+          port: config.webdavBridgePortAD,
+          cacheTtlS: config.webdavCacheTtlS,
+          downloadCacheTtlS: config.webdavDownloadCacheTtlS,
+        });
+        await bridge.start();
+        activeBridges.set("alldebrid", bridge);
+        bridgePorts.set("alldebrid", config.webdavBridgePortAD);
+        console.log(`[${new Date().toISOString()}][mount] AllDebrid bridge started on port ${config.webdavBridgePortAD}`);
+      } catch (err: any) {
+        console.error(`[${new Date().toISOString()}][mount] Failed to start AllDebrid bridge:`, err?.message);
+      }
+    }
+
+    if (ps.has("premiumize") && !hasDirectWebDAV("premiumize") && hasApiKey("premiumize")) {
+      console.log(`[${new Date().toISOString()}][mount] Premiumize: no WebDAV creds, starting API bridge...`);
+      try {
+        const bridge = new WebDAVBridge({
+          provider: "premiumize",
+          port: config.webdavBridgePortPM,
+          cacheTtlS: config.webdavCacheTtlS,
+          downloadCacheTtlS: config.webdavDownloadCacheTtlS,
+        });
+        await bridge.start();
+        activeBridges.set("premiumize", bridge);
+        bridgePorts.set("premiumize", config.webdavBridgePortPM);
+        console.log(`[${new Date().toISOString()}][mount] Premiumize bridge started on port ${config.webdavBridgePortPM}`);
+      } catch (err: any) {
+        console.error(`[${new Date().toISOString()}][mount] Failed to start Premiumize bridge:`, err?.message);
+      }
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -475,6 +563,12 @@ export async function mountVirtualDrive(): Promise<void> {
   }
   if (ps.has("torbox") && (hasDirectWebDAV("torbox") || bridgePorts.has("torbox"))) {
     mounts.push({ remote: "torbox:", path: path.join(base, "torbox") });
+  }
+  if (ps.has("alldebrid") && (hasDirectWebDAV("alldebrid") || bridgePorts.has("alldebrid"))) {
+    mounts.push({ remote: "alldebrid:", path: path.join(base, "alldebrid") });
+  }
+  if (ps.has("premiumize") && (hasDirectWebDAV("premiumize") || bridgePorts.has("premiumize"))) {
+    mounts.push({ remote: "premiumize:", path: path.join(base, "premiumize") });
   }
 
   if (!mounts.length) {
