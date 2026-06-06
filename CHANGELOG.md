@@ -23,6 +23,7 @@ and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.
 - **Token rotation summary** in `GET /api/status` response
 
 ### Fixed 🐛
+- **Mount service**: Fix `EEXIST` crash on startup when stale FUSE mount points (e.g. from previous container crashes) are present in the host system
 - **Rate limiter**: `recordSuccess()` no longer clears active rate-limit backoffs prematurely — backoffs must expire naturally before the limiter resets
 - **Rate limiter**: `recordRateLimit()` now accepts `backoffOverrideMs` so providers can specify exact cooldown periods (e.g. TorBox's "60 per hour" = 72s)
 - **All 4 providers**: Parse `Retry-After` headers and pass as explicit backoff overrides
