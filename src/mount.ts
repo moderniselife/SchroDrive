@@ -152,7 +152,8 @@ function buildRcloneConfigFile(): string {
   }
 
   if (!lines.length) {
-    throw new Error("No WebDAV providers configured. Set RD_WEBDAV_* or TORBOX_WEBDAV_* envs and PROVIDERS.");
+    console.warn(`[${new Date().toISOString()}][mount] No WebDAV providers configured. Set RD_WEBDAV_* or TORBOX_WEBDAV_* envs. Mount skipped.`);
+    return "";
   }
 
   const dir = path.join(os.tmpdir(), "schrodrive");
@@ -270,6 +271,11 @@ function testRemote(remote: string, cfgPath: string): boolean {
  */
 export async function mountVirtualDrive(): Promise<void> {
   const cfg = buildRcloneConfigFile();
+  if (!cfg) {
+    console.warn(`[${new Date().toISOString()}][mount] Skipping mount — no WebDAV providers configured.`);
+    console.warn(`[${new Date().toISOString()}][mount] To enable mounting, set RD_WEBDAV_URL/USERNAME/PASSWORD or TORBOX_WEBDAV_URL/USERNAME/PASSWORD.`);
+    return;
+  }
   const base = config.mountBase;
   // Never attempt to unmount/cleanup the base — it may be a bind mount from host
   ensureDir(base, { cleanupOnStale: false });
