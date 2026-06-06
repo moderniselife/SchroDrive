@@ -29,14 +29,19 @@ program
 
     // Register graceful shutdown handlers
     const shutdown = () => {
-      console.log(`[${new Date().toISOString()}][serve] Shutting down — unmounting FUSE drives and closing database...`);
+      console.log(`[${new Date().toISOString()}][serve] Shutting down — unmounting FUSE drives...`);
       try {
         unmountAll();
       } catch (err: any) {
         console.error(`[${new Date().toISOString()}][serve] Error during FUSE unmount (non-fatal): ${err?.message}`);
       }
-      closeDb();
-      process.exit(0);
+
+      console.log(`[${new Date().toISOString()}][serve] Waiting 3 seconds for FUSE mounts to clear...`);
+      setTimeout(() => {
+        console.log(`[${new Date().toISOString()}][serve] Closing database and exiting...`);
+        closeDb();
+        process.exit(0);
+      }, 3000);
     };
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
