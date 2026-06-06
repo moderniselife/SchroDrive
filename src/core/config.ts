@@ -1,3 +1,5 @@
+import path from 'path';
+
 const defaultMountBase = (process.env.MOUNT_BASE || (process.platform === 'darwin' ? "/Volumes/SchroDrive" : "/mnt/schrodrive"));
 
 export const config = {
@@ -167,6 +169,9 @@ export const config = {
   // Pre-emptive repair: detect stalling torrents before they die
   preemptiveRepairEnabled: String(process.env.PREEMPTIVE_REPAIR ?? "true").toLowerCase() !== "false",
   preemptiveRepairStallMinutes: Number(process.env.PREEMPTIVE_REPAIR_STALL_MIN || 30),
+  // --- Data Directory & Database ---
+  dataDir: process.env.DATA_DIR || './data',
+  dbPath: process.env.DB_PATH || path.join(process.env.DATA_DIR || './data', 'schrodrive.db'),
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {

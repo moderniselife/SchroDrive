@@ -6,7 +6,9 @@ import { mountVirtualDrive } from "./services/mount";
 import { scanDeadOnce, startDeadScanner } from "./services/deadScanner";
 import { organizeOnce, startOrganizerWatch } from "./services/organizer";
 import { startWatchlistPoller } from "./services/mediaServerWatchlist";
+import { startStremioAddonServer } from "./services/stremioAddon";
 import { config } from "./core/config";
+import { getDb, closeDb, pruneOldEntries } from "./core/db";
 
 const program = new Command();
 program
@@ -18,6 +20,32 @@ program
   .command("serve")
   .description("Start the webhook HTTP server")
   .action(async () => {
+    // Initialise SQLite database early in the startup sequence
+    try {
+      getDb();
+    } catch (err: any) {
+      console.error(`[${new Date().toISOString()}][serve] Database initialisation failed (non-fatal): ${err?.message}`);
+    }
+
+    // Register graceful shutdown handlers
+    const shutdown = () => {
+      console.log(`[${new Date().toISOString()}][serve] Shutting down — closing database...`);
+      closeDb();
+      process.exit(0);
+    };
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
+
+    // Schedule database pruning every 24 hours
+    const PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+    setInterval(() => {
+      try {
+        pruneOldEntries();
+      } catch (err: any) {
+        console.error(`[${new Date().toISOString()}][serve] Scheduled prune failed: ${err?.message}`);
+      }
+    }, PRUNE_INTERVAL_MS);
+
     // Start additional services if enabled via environment variables
     const promises: Promise<void>[] = [];
     
@@ -46,6 +74,9 @@ program
     
     // Start the main server
     startServer();
+
+    // Start Stremio addon server (separate port)
+    startStremioAddonServer();
     
     // If additional services are running, handle their errors
     if (promises.length > 0) {
