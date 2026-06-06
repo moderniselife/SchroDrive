@@ -1,27 +1,69 @@
+/**
+ * SchroDrive — HTTP API Server
+ *
+ * Defines the Express HTTP server with all REST API routes and SSE streaming
+ * endpoints powering the SchroDrive web GUI. Provides endpoints for:
+ *
+ * - Health checks and system status
+ * - Configuration management (read, update, restart)
+ * - Provider connectivity and torrent/download listing
+ * - SSE streaming for real-time torrent and download data
+ * - Indexer search (Jackett/Prowlarr) and magnet submission
+ * - Log viewing and streaming
+ * - Overseerr webhook integration
+ * - Mounted filesystem browsing
+ *
+ * @module server
+ */
+
 import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
-import { config, requireEnv } from "./config";
-import { searchIndexer, pickBestResult, getMagnet, getProviderName, isIndexerConfigured } from "./indexer";
-import { addMagnetToTorbox, listTorboxTorrents, listTorboxWebDownloads, listTorboxUsenetDownloads } from "./torbox";
-import { listRDTorrents, isRDConfigured, addMagnetToRD, selectAllFilesRD, listRDDownloads, listRDTorrentsStream, listRDDownloadsStream } from "./realdebrid";
-import { startOverseerrPoller } from "./overseerr";
-import { startAutoUpdater } from "./autoUpdate";
-import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDocker, CONFIG_SCHEMA } from "./configApi";
-import { logBuffer } from "./logger";
-import { rateLimiter } from "./rateLimiter";
+import { config, requireEnv } from "./core/config";
+import { searchIndexer, pickBestResult, getMagnet, getProviderName, isIndexerConfigured } from "./indexers/index";
+import { registry, type DebridProvider, type TorrentInfo, type DownloadInfo } from "./providers";
+import { startOverseerrPoller } from "./services/overseerr";
+import { startAutoUpdater } from "./services/autoUpdate";
+import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDocker, CONFIG_SCHEMA } from "./core/configApi";
+import { logBuffer } from "./core/logger";
+import { rateLimiter } from "./core/rateLimiter";
+import { getBridgeStatuses, refreshBridges } from "./services/mount";
 
+// ===========================================================================
+// Server Initialisation
+// ===========================================================================
+
+/**
+ * Initialises and starts the Express HTTP server with all API routes,
+ * SSE streaming endpoints, and optional background services (Overseerr poller,
+ * auto-updater).
+ *
+ * The server listens on the port specified in `config.port`.
+ */
 export function startServer() {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   app.use(cors()); // Allow web GUI to connect
 
+  // ===========================================================================
+  // Health Check
+  // ===========================================================================
+
+  /** GET /health — Simple liveness probe. */
   app.get("/health", (_req, res) => {
     res.json({ ok: true });
   });
 
-  // Config API endpoints for web GUI
+  // ===========================================================================
+  // Configuration API
+  // ===========================================================================
+
+  /**
+   * GET /api/config — Returns the current configuration with metadata.
+   * Includes the env file path, Docker detection flag, and schema definition
+   * for the web GUI's settings editor.
+   */
   app.get("/api/config", (_req, res) => {
     try {
       const { config: configData, envPath } = getConfigWithSources();
@@ -37,6 +79,10 @@ export function startServer() {
     }
   });
 
+  /**
+   * POST /api/config — Persists configuration updates to the env file.
+   * Expects `{ config: { key: value, ... } }` in the request body.
+   */
   app.post("/api/config", (req, res) => {
     try {
       const updates = req.body?.config || {};
@@ -51,6 +97,7 @@ export function startServer() {
     }
   });
 
+  /** POST /api/restart — Triggers a graceful process restart. */
   app.post("/api/restart", (_req, res) => {
     try {
       const result = triggerRestart();
@@ -60,6 +107,10 @@ export function startServer() {
     }
   });
 
+  /**
+   * GET /api/status — Returns system status including active services
+   * and indexer configuration.
+   */
   app.get("/api/status", (_req, res) => {
     res.json({
       ok: true,
@@ -76,89 +127,82 @@ export function startServer() {
         configured: isIndexerConfigured(),
         provider: isIndexerConfigured() ? getProviderName() : null,
       },
+      webdavBridges: getBridgeStatuses(),
     });
   });
 
-  // Provider status endpoint
+  // ===========================================================================
+  // WebDAV Bridge Management
+  // ===========================================================================
+
+  /** GET /api/webdav/status — Returns status of all active WebDAV bridge instances. */
+  app.get("/api/webdav/status", (_req, res) => {
+    res.json({ ok: true, bridges: getBridgeStatuses() });
+  });
+
+  /** POST /api/webdav/refresh — Forces a cache refresh on all active bridges. */
+  app.post("/api/webdav/refresh", async (_req, res) => {
+    try {
+      await refreshBridges();
+      res.json({ ok: true, message: "Cache refreshed", bridges: getBridgeStatuses() });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
+  // ===========================================================================
+  // Provider Status
+  // ===========================================================================
+
+  /**
+   * GET /api/providers — Returns connectivity and configuration status
+   * for all active debrid providers (TorBox, Real-Debrid).
+   * Attempts a live torrent list fetch to verify connectivity.
+   */
   app.get("/api/providers", async (_req, res) => {
     try {
       const providers: any[] = [];
-      const activeProviders = config.providers.length > 0 ? config.providers : ["torbox"];
 
-      // Check TorBox
-      if (activeProviders.includes("torbox") && config.torboxApiKey) {
-        try {
-          const torrents = await listTorboxTorrents();
+      // Check all registered providers (configured or not)
+      for (const p of registry.all()) {
+        if (p.isConfigured()) {
+          try {
+            const torrents = await p.listTorrents();
+            const webdavConfig = p.getWebDAVConfig();
+            providers.push({
+              name: p.displayName,
+              id: p.id,
+              configured: true,
+              connected: true,
+              torrentCount: torrents.length,
+              webdav: {
+                configured: p.hasDirectWebDAV(),
+                url: webdavConfig?.url || null,
+              },
+            });
+          } catch (err: any) {
+            const webdavConfig = p.getWebDAVConfig();
+            providers.push({
+              name: p.displayName,
+              id: p.id,
+              configured: true,
+              connected: false,
+              error: err.message,
+              webdav: {
+                configured: p.hasDirectWebDAV(),
+                url: webdavConfig?.url || null,
+              },
+            });
+          }
+        } else {
           providers.push({
-            name: "TorBox",
-            id: "torbox",
-            configured: true,
-            connected: true,
-            torrentCount: torrents.length,
-            webdav: {
-              configured: !!(config.torboxWebdavUrl && config.torboxWebdavUsername),
-              url: config.torboxWebdavUrl || null,
-            },
-          });
-        } catch (err: any) {
-          providers.push({
-            name: "TorBox",
-            id: "torbox",
-            configured: true,
+            name: p.displayName,
+            id: p.id,
+            configured: false,
             connected: false,
-            error: err.message,
-            webdav: {
-              configured: !!(config.torboxWebdavUrl && config.torboxWebdavUsername),
-              url: config.torboxWebdavUrl || null,
-            },
+            webdav: { configured: false, url: null },
           });
         }
-      } else if (activeProviders.includes("torbox")) {
-        providers.push({
-          name: "TorBox",
-          id: "torbox",
-          configured: false,
-          connected: false,
-          webdav: { configured: false, url: null },
-        });
-      }
-
-      // Check Real-Debrid
-      if (activeProviders.includes("realdebrid") && isRDConfigured()) {
-        try {
-          const torrents = await listRDTorrents();
-          providers.push({
-            name: "Real-Debrid",
-            id: "realdebrid",
-            configured: true,
-            connected: true,
-            torrentCount: torrents.length,
-            webdav: {
-              configured: !!(config.rdWebdavUrl && config.rdWebdavUsername),
-              url: config.rdWebdavUrl || null,
-            },
-          });
-        } catch (err: any) {
-          providers.push({
-            name: "Real-Debrid",
-            id: "realdebrid",
-            configured: true,
-            connected: false,
-            error: err.message,
-            webdav: {
-              configured: !!(config.rdWebdavUrl && config.rdWebdavUsername),
-              url: config.rdWebdavUrl || null,
-            },
-          });
-        }
-      } else if (activeProviders.includes("realdebrid")) {
-        providers.push({
-          name: "Real-Debrid",
-          id: "realdebrid",
-          configured: false,
-          connected: false,
-          webdav: { configured: false, url: null },
-        });
       }
 
       res.json({ ok: true, providers });
@@ -167,61 +211,42 @@ export function startServer() {
     }
   });
 
-  // Torrents list endpoint
+  // ===========================================================================
+  // Torrents API
+  // ===========================================================================
+
+  /**
+   * GET /api/torrents — Returns a combined, sorted list of torrents from
+   * all active providers. Each torrent is normalised to a consistent shape.
+   */
   app.get("/api/torrents", async (_req, res) => {
     try {
       const allTorrents: any[] = [];
-      const activeProviders = config.providers.length > 0 ? config.providers : ["torbox"];
 
-      // Get TorBox torrents
-      if (activeProviders.includes("torbox") && config.torboxApiKey) {
+      for (const provider of registry.configured()) {
         try {
-          const torrents = await listTorboxTorrents();
-          for (const t of torrents) {
-            allTorrents.push({
-              id: t.id || t.hash,
-              name: t.name,
-              status: t.download_state || t.status || "unknown",
-              progress: typeof t.progress === "number" ? t.progress : 0,
-              size: t.size || 0,
-              provider: "torbox",
-              addedAt: t.created_at || t.added,
-              downloadSpeed: t.download_speed || 0,
-              uploadSpeed: t.upload_speed || 0,
-              seeds: t.seeds || 0,
-              peers: t.peers || 0,
-            });
-          }
-        } catch (err: any) {
-          console.error("[api/torrents] TorBox error:", err.message);
-        }
-      }
-
-      // Get Real-Debrid torrents
-      if (activeProviders.includes("realdebrid") && isRDConfigured()) {
-        try {
-          const torrents = await listRDTorrents();
+          const torrents = await provider.listTorrents();
           for (const t of torrents) {
             allTorrents.push({
               id: t.id,
-              name: t.filename || t.original_filename,
+              name: t.name,
               status: t.status || "unknown",
               progress: typeof t.progress === "number" ? t.progress : 0,
               size: t.bytes || 0,
-              provider: "realdebrid",
-              addedAt: t.added,
-              downloadSpeed: t.speed || 0,
-              uploadSpeed: 0,
-              seeds: t.seeders || 0,
-              peers: 0,
+              provider: provider.id,
+              addedAt: t.addedAt || t.raw?.created_at || t.raw?.added,
+              downloadSpeed: t.raw?.download_speed || t.raw?.speed || 0,
+              uploadSpeed: t.raw?.upload_speed || 0,
+              seeds: t.raw?.seeds || t.raw?.seeders || 0,
+              peers: t.raw?.peers || 0,
             });
           }
         } catch (err: any) {
-          console.error("[api/torrents] Real-Debrid error:", err.message);
+          console.error(`[api/torrents] ${provider.id} error:`, err.message);
         }
       }
 
-      // Sort by added date descending
+      // Sort by added date descending (newest first)
       allTorrents.sort((a, b) => {
         const dateA = new Date(a.addedAt || 0).getTime();
         const dateB = new Date(b.addedAt || 0).getTime();
@@ -234,81 +259,91 @@ export function startServer() {
     }
   });
 
-  // Downloads list endpoint (Real-Debrid downloads + TorBox web/usenet downloads)
+  // ===========================================================================
+  // Downloads API
+  // ===========================================================================
+
+  /**
+   * GET /api/downloads — Returns a combined, sorted list of downloads from
+   * all active providers (RD downloads, TorBox web/usenet downloads).
+   */
   app.get("/api/downloads", async (_req, res) => {
     try {
       const allDownloads: any[] = [];
-      const activeProviders = config.providers.length > 0 ? config.providers : ["torbox"];
 
-      // Get Real-Debrid downloads
-      if (activeProviders.includes("realdebrid") && isRDConfigured()) {
-        try {
-          const downloads = await listRDDownloads();
-          for (const d of downloads) {
-            allDownloads.push({
-              id: d.id,
-              name: d.filename,
-              type: "download",
-              status: "downloaded",
-              progress: 100,
-              size: d.filesize || 0,
-              provider: "realdebrid",
-              addedAt: d.generated,
-              downloadUrl: d.download,
-              host: d.host,
-              link: d.link,
-              streamable: d.streamable,
-              mimeType: d.mimeType,
-            });
+      for (const provider of registry.configured()) {
+        // Standard downloads (RealDebrid's unrestricted files)
+        if (provider.listDownloads) {
+          try {
+            const downloads = await provider.listDownloads();
+            for (const d of downloads) {
+              allDownloads.push({
+                id: d.id,
+                name: d.name,
+                type: d.type || "download",
+                status: d.status || "downloaded",
+                progress: typeof d.progress === "number" ? d.progress : 100,
+                size: d.size || 0,
+                provider: provider.id,
+                addedAt: d.raw?.generated || d.raw?.created_at || d.raw?.added,
+                downloadUrl: d.url || d.raw?.download,
+                host: d.raw?.host,
+                link: d.raw?.link,
+                streamable: d.raw?.streamable,
+                mimeType: d.raw?.mimeType,
+              });
+            }
+          } catch (err: any) {
+            console.error(`[api/downloads] ${provider.id} downloads error:`, err.message);
           }
-        } catch (err: any) {
-          console.error("[api/downloads] Real-Debrid error:", err.message);
+        }
+
+        // Web downloads (TorBox only)
+        if (provider.listWebDownloads) {
+          try {
+            const webDownloads = await provider.listWebDownloads();
+            for (const d of webDownloads) {
+              allDownloads.push({
+                id: d.id,
+                name: d.name,
+                type: "web",
+                status: d.status || "unknown",
+                progress: typeof d.progress === "number" ? d.progress : 100,
+                size: d.size || 0,
+                provider: provider.id,
+                addedAt: d.raw?.created_at || d.raw?.added,
+                downloadSpeed: d.raw?.download_speed || 0,
+              });
+            }
+          } catch (err: any) {
+            console.error(`[api/downloads] ${provider.id} web downloads error:`, err.message);
+          }
+        }
+
+        // Usenet downloads (TorBox only)
+        if (provider.listUsenetDownloads) {
+          try {
+            const usenetDownloads = await provider.listUsenetDownloads();
+            for (const d of usenetDownloads) {
+              allDownloads.push({
+                id: d.id,
+                name: d.name,
+                type: "usenet",
+                status: d.status || "unknown",
+                progress: typeof d.progress === "number" ? d.progress : 100,
+                size: d.size || 0,
+                provider: provider.id,
+                addedAt: d.raw?.created_at || d.raw?.added,
+                downloadSpeed: d.raw?.download_speed || 0,
+              });
+            }
+          } catch (err: any) {
+            console.error(`[api/downloads] ${provider.id} usenet downloads error:`, err.message);
+          }
         }
       }
 
-      // Get TorBox web downloads
-      if (activeProviders.includes("torbox") && config.torboxApiKey) {
-        try {
-          const webDownloads = await listTorboxWebDownloads();
-          for (const d of webDownloads) {
-            allDownloads.push({
-              id: d.id,
-              name: d.name,
-              type: "web",
-              status: d.download_state || d.status || "unknown",
-              progress: typeof d.progress === "number" ? d.progress : 100,
-              size: d.size || 0,
-              provider: "torbox",
-              addedAt: d.created_at || d.added,
-              downloadSpeed: d.download_speed || 0,
-            });
-          }
-        } catch (err: any) {
-          console.error("[api/downloads] TorBox web downloads error:", err.message);
-        }
-
-        // Get TorBox usenet downloads
-        try {
-          const usenetDownloads = await listTorboxUsenetDownloads();
-          for (const d of usenetDownloads) {
-            allDownloads.push({
-              id: d.id,
-              name: d.name,
-              type: "usenet",
-              status: d.download_state || d.status || "unknown",
-              progress: typeof d.progress === "number" ? d.progress : 100,
-              size: d.size || 0,
-              provider: "torbox",
-              addedAt: d.created_at || d.added,
-              downloadSpeed: d.download_speed || 0,
-            });
-          }
-        } catch (err: any) {
-          console.error("[api/downloads] TorBox usenet downloads error:", err.message);
-        }
-      }
-
-      // Sort by added date descending
+      // Sort by added date descending (newest first)
       allDownloads.sort((a, b) => {
         const dateA = new Date(a.addedAt || 0).getTime();
         const dateB = new Date(b.addedAt || 0).getTime();
@@ -321,105 +356,91 @@ export function startServer() {
     }
   });
 
-  // SSE Streaming endpoint for torrents - sends data page by page as fetched
+  // ===========================================================================
+  // SSE Streaming — Torrents
+  // ===========================================================================
+
+  /**
+   * GET /api/torrents/stream — Server-Sent Events endpoint that streams
+   * torrent data page-by-page as it's fetched from providers.
+   *
+   * Uses in-flight request locking to prevent duplicate concurrent fetches.
+   * If another request is already in-flight, returns cached data immediately
+   * or waits for the in-flight request to complete.
+   *
+   * Events emitted: `status`, `torrents`, `error`, `done`.
+   */
   app.get("/api/torrents/stream", async (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
+    /** Helper to emit a named SSE event with JSON data. */
     const send = (event: string, data: any) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    // Try to acquire lock - if another request is in-flight, check cache or wait
+    // Acquire an exclusive lock to prevent concurrent API requests
     const lockKey = "stream:torrents";
     let gotLock = await rateLimiter.acquireLock(lockKey);
     
     if (!gotLock) {
-      // Check if we have cached data
-      const cachedTorrents = rateLimiter.getCache<any[]>("realdebrid_torrents");
-      if (cachedTorrents && cachedTorrents.length > 0) {
-        // Return cached data immediately
-        send("status", { message: "Using cached data..." });
-        const mapped = cachedTorrents.map((t: any) => ({
-          id: t.id,
-          name: t.filename || t.original_filename,
-          status: t.status || "unknown",
-          progress: typeof t.progress === "number" ? t.progress : 0,
-          size: t.bytes || 0,
-          provider: "realdebrid",
-          addedAt: t.added,
-          downloadSpeed: t.speed || 0,
-          uploadSpeed: 0,
-          seeds: t.seeders || 0,
-          peers: 0,
-        }));
-        send("torrents", { provider: "realdebrid", torrents: mapped, count: mapped.length, total: mapped.length, cached: true });
-        send("done", { message: "Returned cached data", cached: true });
-        res.end();
-        return;
-      }
-      // No cache - wait for in-flight request then fetch fresh
+      // Another request is already in-flight — wait for it to finish
       send("status", { message: "Waiting for data..." });
       gotLock = await rateLimiter.acquireLock(lockKey, true); // wait for lock
     }
 
     try {
-      const activeProviders = config.providers.length > 0 ? config.providers : ["torbox"];
-      send("status", { message: "Fetching torrents...", providers: activeProviders });
+      const configuredProviders = registry.configured();
+      send("status", { message: "Fetching torrents...", providers: configuredProviders.map(p => p.id) });
       let totalCount = 0;
 
-      // Fetch TorBox torrents (not paginated, single call)
-      if (activeProviders.includes("torbox") && config.torboxApiKey) {
-        send("status", { message: "Fetching TorBox torrents..." });
+      for (const provider of configuredProviders) {
+        send("status", { message: `Fetching ${provider.displayName} torrents...` });
         try {
-          const torrents = await listTorboxTorrents();
-          const mapped = torrents.map((t: any) => ({
-            id: t.id || t.hash,
-            name: t.name,
-            status: t.download_state || t.status || "unknown",
-            progress: typeof t.progress === "number" ? t.progress : 0,
-            size: t.size || 0,
-            provider: "torbox",
-            addedAt: t.created_at || t.added,
-            downloadSpeed: t.download_speed || 0,
-            uploadSpeed: t.upload_speed || 0,
-            seeds: t.seeds || 0,
-            peers: t.peers || 0,
-          }));
-          totalCount += mapped.length;
-          send("torrents", { provider: "torbox", torrents: mapped, count: mapped.length, total: totalCount });
-        } catch (err: any) {
-          send("error", { provider: "torbox", error: err.message });
-        }
-      }
-
-      // Fetch Real-Debrid torrents - stream page by page
-      if (activeProviders.includes("realdebrid") && isRDConfigured()) {
-        send("status", { message: "Fetching Real-Debrid torrents..." });
-        try {
-          let pageNum = 0;
-          for await (const page of listRDTorrentsStream()) {
-            pageNum++;
-            const mapped = page.map((t: any) => ({
+          if (provider.listTorrentsStream) {
+            // Stream page-by-page via async generator
+            let pageNum = 0;
+            for await (const page of provider.listTorrentsStream()) {
+              pageNum++;
+              const mapped = page.map((t: TorrentInfo) => ({
+                id: t.id,
+                name: t.name,
+                status: t.status || "unknown",
+                progress: typeof t.progress === "number" ? t.progress : 0,
+                size: t.bytes || 0,
+                provider: provider.id,
+                addedAt: t.addedAt || t.raw?.created_at || t.raw?.added,
+                downloadSpeed: t.raw?.download_speed || t.raw?.speed || 0,
+                uploadSpeed: t.raw?.upload_speed || 0,
+                seeds: t.raw?.seeds || t.raw?.seeders || 0,
+                peers: t.raw?.peers || 0,
+              }));
+              totalCount += mapped.length;
+              send("torrents", { provider: provider.id, torrents: mapped, count: mapped.length, total: totalCount, page: pageNum });
+            }
+          } else {
+            // Fall back to single fetch
+            const torrents = await provider.listTorrents();
+            const mapped = torrents.map((t: TorrentInfo) => ({
               id: t.id,
-              name: t.filename || t.original_filename,
+              name: t.name,
               status: t.status || "unknown",
               progress: typeof t.progress === "number" ? t.progress : 0,
               size: t.bytes || 0,
-              provider: "realdebrid",
-              addedAt: t.added,
-              downloadSpeed: t.speed || 0,
-              uploadSpeed: 0,
-              seeds: t.seeders || 0,
-              peers: 0,
+              provider: provider.id,
+              addedAt: t.addedAt || t.raw?.created_at || t.raw?.added,
+              downloadSpeed: t.raw?.download_speed || t.raw?.speed || 0,
+              uploadSpeed: t.raw?.upload_speed || 0,
+              seeds: t.raw?.seeds || t.raw?.seeders || 0,
+              peers: t.raw?.peers || 0,
             }));
             totalCount += mapped.length;
-            send("torrents", { provider: "realdebrid", torrents: mapped, count: mapped.length, total: totalCount, page: pageNum });
+            send("torrents", { provider: provider.id, torrents: mapped, count: mapped.length, total: totalCount });
           }
         } catch (err: any) {
-          send("error", { provider: "realdebrid", error: err.message });
+          send("error", { provider: provider.id, error: err.message });
         }
       }
 
@@ -433,125 +454,140 @@ export function startServer() {
     }
   });
 
-  // SSE Streaming endpoint for downloads - sends data page by page as fetched
+  // ===========================================================================
+  // SSE Streaming — Downloads
+  // ===========================================================================
+
+  /**
+   * GET /api/downloads/stream — Server-Sent Events endpoint that streams
+   * download data page-by-page as it's fetched from providers.
+   *
+   * Uses the same in-flight locking pattern as the torrents stream endpoint.
+   *
+   * Events emitted: `status`, `downloads`, `error`, `done`.
+   */
   app.get("/api/downloads/stream", async (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
+    /** Helper to emit a named SSE event with JSON data. */
     const send = (event: string, data: any) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    // Try to acquire lock - if another request is in-flight, check cache or wait
+    // Acquire an exclusive lock to prevent concurrent API requests
     const lockKey = "stream:downloads";
     let gotLock = await rateLimiter.acquireLock(lockKey);
     
     if (!gotLock) {
-      // Check if we have cached data
-      const cachedDownloads = rateLimiter.getCache<any[]>("realdebrid_downloads");
-      if (cachedDownloads && cachedDownloads.length > 0) {
-        // Return cached data immediately
-        send("status", { message: "Using cached data..." });
-        const mapped = cachedDownloads.map((d: any) => ({
-          id: d.id,
-          name: d.filename,
-          type: "download",
-          status: "downloaded",
-          progress: 100,
-          size: d.filesize || 0,
-          provider: "realdebrid",
-          addedAt: d.generated,
-          downloadUrl: d.download,
-          host: d.host,
-        }));
-        send("downloads", { provider: "realdebrid", type: "download", downloads: mapped, count: mapped.length, total: mapped.length, cached: true });
-        send("done", { message: "Returned cached data", cached: true });
-        res.end();
-        return;
-      }
-      // No cache - wait for in-flight request then fetch fresh
+      // Another request is already in-flight — wait for it to finish
       send("status", { message: "Waiting for data..." });
       gotLock = await rateLimiter.acquireLock(lockKey, true); // wait for lock
     }
 
     try {
-      const activeProviders = config.providers.length > 0 ? config.providers : ["torbox"];
-      send("status", { message: "Fetching downloads...", providers: activeProviders });
+      const configuredProviders = registry.configured();
+      send("status", { message: "Fetching downloads...", providers: configuredProviders.map(p => p.id) });
       let totalCount = 0;
 
-      // Fetch Real-Debrid downloads - stream page by page
-      if (activeProviders.includes("realdebrid") && isRDConfigured()) {
-        send("status", { message: "Fetching Real-Debrid downloads..." });
-        try {
-          let pageNum = 0;
-          for await (const page of listRDDownloadsStream()) {
-            pageNum++;
-            const mapped = page.map((d: any) => ({
+      for (const provider of configuredProviders) {
+        // Standard downloads (stream if available, else single fetch)
+        if (provider.listDownloadsStream) {
+          send("status", { message: `Fetching ${provider.displayName} downloads...` });
+          try {
+            let pageNum = 0;
+            for await (const page of provider.listDownloadsStream()) {
+              pageNum++;
+              const mapped = page.map((d: DownloadInfo) => ({
+                id: d.id,
+                name: d.name,
+                type: d.type || "download",
+                status: d.status || "downloaded",
+                progress: typeof d.progress === "number" ? d.progress : 100,
+                size: d.size || 0,
+                provider: provider.id,
+                addedAt: d.raw?.generated || d.raw?.created_at || d.raw?.added,
+                downloadUrl: d.url || d.raw?.download,
+                host: d.raw?.host,
+                link: d.raw?.link,
+                streamable: d.raw?.streamable,
+                mimeType: d.raw?.mimeType,
+              }));
+              totalCount += mapped.length;
+              send("downloads", { provider: provider.id, type: "download", downloads: mapped, count: mapped.length, total: totalCount, page: pageNum });
+            }
+          } catch (err: any) {
+            send("error", { provider: provider.id, error: err.message });
+          }
+        } else if (provider.listDownloads) {
+          send("status", { message: `Fetching ${provider.displayName} downloads...` });
+          try {
+            const downloads = await provider.listDownloads();
+            const mapped = downloads.map((d: DownloadInfo) => ({
               id: d.id,
-              name: d.filename,
-              type: "download",
-              status: "downloaded",
-              progress: 100,
-              size: d.filesize || 0,
-              provider: "realdebrid",
-              addedAt: d.generated,
-              downloadUrl: d.download,
-              host: d.host,
-              link: d.link,
-              streamable: d.streamable,
-              mimeType: d.mimeType,
+              name: d.name,
+              type: d.type || "download",
+              status: d.status || "downloaded",
+              progress: typeof d.progress === "number" ? d.progress : 100,
+              size: d.size || 0,
+              provider: provider.id,
+              addedAt: d.raw?.generated || d.raw?.created_at || d.raw?.added,
+              downloadUrl: d.url || d.raw?.download,
+              host: d.raw?.host,
             }));
             totalCount += mapped.length;
-            send("downloads", { provider: "realdebrid", type: "download", downloads: mapped, count: mapped.length, total: totalCount, page: pageNum });
+            send("downloads", { provider: provider.id, type: "download", downloads: mapped, count: mapped.length, total: totalCount });
+          } catch (err: any) {
+            send("error", { provider: provider.id, error: err.message });
           }
-        } catch (err: any) {
-          send("error", { provider: "realdebrid", error: err.message });
-        }
-      }
-
-      // Fetch TorBox web downloads (not paginated)
-      if (activeProviders.includes("torbox") && config.torboxApiKey) {
-        send("status", { message: "Fetching TorBox web downloads..." });
-        try {
-          const webDownloads = await listTorboxWebDownloads();
-          const mapped = webDownloads.map((d: any) => ({
-            id: d.id,
-            name: d.name,
-            type: "web",
-            status: d.download_state || d.status || "unknown",
-            progress: typeof d.progress === "number" ? d.progress : 100,
-            size: d.size || 0,
-            provider: "torbox",
-            addedAt: d.created_at || d.added,
-            downloadSpeed: d.download_speed || 0,
-          }));
-          totalCount += mapped.length;
-          send("downloads", { provider: "torbox", type: "web", downloads: mapped, count: mapped.length, total: totalCount });
-        } catch (err: any) {
-          send("error", { provider: "torbox", type: "web", error: err.message });
         }
 
-        // Fetch TorBox usenet downloads
-        send("status", { message: "Fetching TorBox usenet downloads..." });
-        try {
-          const usenetDownloads = await listTorboxUsenetDownloads();
-          const mapped = usenetDownloads.map((d: any) => ({
-            id: d.id,
-            name: d.name,
-            type: "usenet",
-            status: d.download_state || d.status || "unknown",
-            progress: typeof d.progress === "number" ? d.progress : 100,
-            size: d.size || 0,
-            provider: "torbox",
-            addedAt: d.created_at || d.added,
-            downloadSpeed: d.download_speed || 0,
-          }));
-          totalCount += mapped.length;
-          send("downloads", { provider: "torbox", type: "usenet", downloads: mapped, count: mapped.length, total: totalCount });
-        } catch (err: any) {
-          send("error", { provider: "torbox", type: "usenet", error: err.message });
+        // Web downloads
+        if (provider.listWebDownloads) {
+          send("status", { message: `Fetching ${provider.displayName} web downloads...` });
+          try {
+            const webDownloads = await provider.listWebDownloads();
+            const mapped = webDownloads.map((d: DownloadInfo) => ({
+              id: d.id,
+              name: d.name,
+              type: "web",
+              status: d.status || "unknown",
+              progress: typeof d.progress === "number" ? d.progress : 100,
+              size: d.size || 0,
+              provider: provider.id,
+              addedAt: d.raw?.created_at || d.raw?.added,
+              downloadSpeed: d.raw?.download_speed || 0,
+            }));
+            totalCount += mapped.length;
+            send("downloads", { provider: provider.id, type: "web", downloads: mapped, count: mapped.length, total: totalCount });
+          } catch (err: any) {
+            send("error", { provider: provider.id, type: "web", error: err.message });
+          }
+        }
+
+        // Usenet downloads
+        if (provider.listUsenetDownloads) {
+          send("status", { message: `Fetching ${provider.displayName} usenet downloads...` });
+          try {
+            const usenetDownloads = await provider.listUsenetDownloads();
+            const mapped = usenetDownloads.map((d: DownloadInfo) => ({
+              id: d.id,
+              name: d.name,
+              type: "usenet",
+              status: d.status || "unknown",
+              progress: typeof d.progress === "number" ? d.progress : 100,
+              size: d.size || 0,
+              provider: provider.id,
+              addedAt: d.raw?.created_at || d.raw?.added,
+              downloadSpeed: d.raw?.download_speed || 0,
+            }));
+            totalCount += mapped.length;
+            send("downloads", { provider: provider.id, type: "usenet", downloads: mapped, count: mapped.length, total: totalCount });
+          } catch (err: any) {
+            send("error", { provider: provider.id, type: "usenet", error: err.message });
+          }
         }
       }
 
@@ -565,7 +601,18 @@ export function startServer() {
     }
   });
 
-  // Search endpoint
+  // ===========================================================================
+  // Search API
+  // ===========================================================================
+
+  /**
+   * GET /api/search — Searches configured indexers (Jackett/Prowlarr)
+   * for torrents matching the given query.
+   *
+   * Query params:
+   * - `q` (required) — The search query string.
+   * - `categories` (optional) — Comma-separated category IDs.
+   */
   app.get("/api/search", async (req, res) => {
     try {
       const query = String(req.query.q || "").trim();
@@ -586,7 +633,7 @@ export function startServer() {
       console.log(`[${new Date().toISOString()}][api/search] searching`, { query, categories });
       const results = await searchIndexer(query, { categories });
       
-      // Map results to a consistent format
+      // Normalise results to a consistent shape regardless of indexer response format
       const mappedResults = results.map((r: any) => ({
         title: r.title || r.Title,
         size: r.size || r.Size || 0,
@@ -611,7 +658,18 @@ export function startServer() {
     }
   });
 
-  // Add magnet endpoint
+  // ===========================================================================
+  // Add Magnet API
+  // ===========================================================================
+
+  /**
+   * POST /api/add — Adds a magnet link to the specified (or default) provider.
+   *
+   * Request body:
+   * - `magnet` (required) — The magnet URI to add.
+   * - `name` (optional) — Human-readable name for the torrent.
+   * - `provider` (optional) — T    * For Real-Debrid, automatically selects all files after adding.
+   */
   app.post("/api/add", async (req, res) => {
     try {
       const { magnet, name, provider: targetProvider } = req.body || {};
@@ -620,28 +678,28 @@ export function startServer() {
         return res.status(400).json({ ok: false, error: "Missing 'magnet' in request body" });
       }
 
-      const activeProviders = config.providers.length > 0 ? config.providers : ["torbox"];
-      const selectedProvider = targetProvider || activeProviders[0];
-
-      if (selectedProvider === "torbox") {
-        if (!config.torboxApiKey) {
-          return res.status(503).json({ ok: false, error: "TorBox API key not configured" });
+      // If a specific provider is requested, use it; otherwise use the strategy
+      if (targetProvider) {
+        const provider = registry.get(targetProvider);
+        if (!provider) {
+          return res.status(400).json({ ok: false, error: `Unknown provider: ${targetProvider}` });
         }
-        console.log(`[${new Date().toISOString()}][api/add] adding to TorBox`, { name });
-        const result = await addMagnetToTorbox(magnet, name);
-        res.json({ ok: true, provider: "torbox", result });
-      } else if (selectedProvider === "realdebrid") {
-        if (!isRDConfigured()) {
-          return res.status(503).json({ ok: false, error: "Real-Debrid not configured" });
+        if (!provider.isConfigured()) {
+          return res.status(503).json({ ok: false, error: `${provider.displayName} not configured` });
         }
-        console.log(`[${new Date().toISOString()}][api/add] adding to Real-Debrid`, { name });
-        const result = await addMagnetToRD(magnet);
-        if (result.id) {
-          await selectAllFilesRD(result.id);
-        }
-        res.json({ ok: true, provider: "realdebrid", result });
+        console.log(`[${new Date().toISOString()}][api/add] adding to ${provider.displayName}`, { name });
+        const result = await provider.addMagnet(magnet, name);
+        res.json({ ok: true, provider: provider.id, result });
       } else {
-        return res.status(400).json({ ok: false, error: `Unknown provider: ${selectedProvider}` });
+        // Use configured strategy
+        const addStrategy = (config as any).addStrategy || 'all';
+        console.log(`[${new Date().toISOString()}][api/add] adding with strategy '${addStrategy}'`, { name });
+        const { results } = await registry.addMagnetWithStrategy(magnet, name, addStrategy);
+        const anySuccess = results.some(r => r.success);
+        if (!anySuccess) {
+          return res.status(503).json({ ok: false, error: "Failed to add to any provider", results });
+        }
+        res.json({ ok: true, results });
       }
     } catch (err: any) {
       console.error(`[${new Date().toISOString()}][api/add] error`, err.message);
@@ -649,7 +707,17 @@ export function startServer() {
     }
   });
 
-  // Logs API - GET recent logs
+  // ===========================================================================
+  // Logs API
+  // ===========================================================================
+
+  /**
+   * GET /api/logs — Returns recent log entries from the in-memory log buffer.
+   *
+   * Query params:
+   * - `limit` (optional) — Number of entries to return (max 500, default 100).
+   * - `level` (optional) — Filter by log level (default "all").
+   */
   app.get("/api/logs", (req, res) => {
     try {
       const limit = Math.min(Number(req.query.limit) || 100, 500);
@@ -661,7 +729,11 @@ export function startServer() {
     }
   });
 
-  // Logs API - SSE streaming endpoint
+  /**
+   * GET /api/logs/stream — SSE endpoint for real-time log streaming.
+   * Sends initial log batch, then streams new entries as they arrive.
+   * Includes a 30-second heartbeat to keep the connection alive.
+   */
   app.get("/api/logs/stream", (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -669,28 +741,28 @@ export function startServer() {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.flushHeaders();
 
-    // Send initial logs
+    // Send initial batch of recent logs
     const initialLogs = logBuffer.getLogs(50);
     res.write(`data: ${JSON.stringify({ type: "initial", logs: initialLogs })}\n\n`);
 
-    // Subscribe to new logs
+    // Subscribe to new log entries — callback fires for each new entry
     const unsubscribe = logBuffer.subscribe((entry) => {
       res.write(`data: ${JSON.stringify({ type: "log", log: entry })}\n\n`);
     });
 
-    // Keep connection alive with heartbeat
+    // Keep connection alive with periodic heartbeat comments
     const heartbeat = setInterval(() => {
       res.write(`: heartbeat\n\n`);
     }, 30000);
 
-    // Cleanup on close
+    // Cleanup on client disconnect
     req.on("close", () => {
       clearInterval(heartbeat);
       unsubscribe();
     });
   });
 
-  // Logs API - Clear logs
+  /** DELETE /api/logs — Clears the in-memory log buffer. */
   app.delete("/api/logs", (_req, res) => {
     try {
       logBuffer.clear();
@@ -700,7 +772,22 @@ export function startServer() {
     }
   });
 
+  // ===========================================================================
+  // Overseerr Webhook
+  // ===========================================================================
+
   if (config.runWebhook) {
+    /**
+     * POST /webhook/overseerr — Receives webhook payloads from Overseerr
+     * when new media is requested.
+     *
+     * Processing flow:
+     * 1. Validates indexer and API key configuration
+     * 2. Checks optional authorisation header
+     * 3. Extracts search query from the webhook payload
+     * 4. Responds with HTTP 202 immediately (avoids Overseerr's 20s timeout)
+     * 5. Processes asynchronously: searches indexer → picks best result → adds magnet
+     */
     app.post("/webhook/overseerr", async (req, res) => {
       try {
         console.log(`[${new Date().toISOString()}][webhook] hit /webhook/overseerr`);
@@ -722,6 +809,7 @@ export function startServer() {
           });
         }
 
+        // Optional webhook authorisation check
         if (config.overseerrAuth && req.get("authorization") !== config.overseerrAuth) {
           console.warn(`[${new Date().toISOString()}][webhook] unauthorized request (bad auth header)`);
           return res.status(401).json({ ok: false, error: "Unauthorized" });
@@ -740,6 +828,7 @@ export function startServer() {
         res.status(202).json({ ok: true, accepted: true, query: built.query, categories: built.categories });
         console.log(`[${new Date().toISOString()}][webhook] responded 202, processing async...`);
 
+        // Background async processing — search, select best result, and add magnet
         (async () => {
           try {
             const provider = getProviderName();
@@ -757,9 +846,10 @@ export function startServer() {
             }
 
             const teaser = typeof magnet === 'string' ? magnet.slice(0, 80) + '...' : undefined;
-            console.log(`[${new Date().toISOString()}][webhook->torbox] adding magnet`, { title: best?.title, teaser });
-            await addMagnetToTorbox(magnet, best?.title);
-            console.log(`[${new Date().toISOString()}][webhook->torbox] added`);
+            console.log(`[${new Date().toISOString()}][webhook] adding magnet`, { title: best?.title, teaser });
+            const { results: addResults } = await registry.addMagnetWithStrategy(magnet, best?.title, 'all');
+            const anyOk = addResults.some(r => r.success);
+            console.log(`[${new Date().toISOString()}][webhook] add results`, { anyOk, results: addResults.map(r => ({ provider: r.provider, success: r.success })) });
           } catch (err: any) {
             console.error(`[${new Date().toISOString()}][webhook] async processing error`, err?.message || String(err));
           }
@@ -778,17 +868,30 @@ export function startServer() {
     });
   }
 
-  // Filesystem browser endpoint - browses actual mounted files
+  // ===========================================================================
+  // Filesystem Browser
+  // ===========================================================================
+
+  /**
+   * GET /api/files — Browses the actual mounted filesystem.
+   * Returns directory listings or file metadata for the requested path.
+   *
+   * Query params:
+   * - `path` (optional) — Relative path within the mount base (default "/").
+   *
+   * Includes directory traversal protection to prevent accessing files
+   * outside the mount base.
+   */
   app.get("/api/files", async (req, res) => {
     try {
       const requestedPath = String(req.query.path || "/");
       const mountBase = config.mountBase || "/mnt/schrodrive";
       
-      // Sanitize path to prevent directory traversal
+      // Sanitise path to prevent directory traversal attacks
       const safePath = path.normalize(requestedPath).replace(/^(\.\.[\/\\])+/, "");
       const fullPath = path.join(mountBase, safePath);
       
-      // Ensure we're still within mount base
+      // Ensure the resolved path hasn't escaped the mount base
       if (!fullPath.startsWith(mountBase)) {
         return res.status(403).json({ ok: false, error: "Access denied" });
       }
@@ -801,7 +904,7 @@ export function startServer() {
       const stat = fs.statSync(fullPath);
       
       if (stat.isFile()) {
-        // Return file info
+        // Return file metadata (not the file contents)
         return res.json({
           ok: true,
           type: "file",
@@ -834,7 +937,7 @@ export function startServer() {
         }
       });
       
-      // Sort: directories first, then by name
+      // Sort: directories first, then alphabetically by name
       items.sort((a, b) => {
         if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
         return a.name.localeCompare(b.name);
@@ -853,19 +956,41 @@ export function startServer() {
     }
   });
 
+  // ===========================================================================
+  // Server Startup
+  // ===========================================================================
+
   app.listen(config.port, () => {
     console.log(`Server listening on port ${config.port}`);
   });
 
-  // Optional: start Overseerr API poller
+  // Optional: start Overseerr API poller for periodic request checking
   if (config.runPoller) {
     startOverseerrPoller();
   }
 
-  // Optional: start auto-updater
+  // Optional: start auto-updater for self-update checks
   startAutoUpdater();
 }
 
+// ===========================================================================
+// Webhook Payload Parser
+// ===========================================================================
+
+/**
+ * Extracts a search query and optional category filters from an Overseerr
+ * webhook payload.
+ *
+ * Prefers the `subject` field if present. Falls back to constructing a
+ * query from `media.title`/`media.name` with optional year and TMDB ID.
+ *
+ * Maps `media_type` to Prowlarr category IDs:
+ * - "movie" → `["5000"]`
+ * - "tv" → `["5000"]`
+ *
+ * @param payload - The raw Overseerr webhook payload.
+ * @returns An object with `query` and optional `categories`, or `undefined` if no query could be derived.
+ */
 export function buildQueryFromPayload(payload: any): { query: string; categories?: string[] } | undefined {
   const subject: string | undefined = payload?.subject;
   const media = payload?.media || {};
@@ -879,6 +1004,7 @@ export function buildQueryFromPayload(payload: any): { query: string; categories
     query = subject.trim();
   } else if (title) {
     query = year ? `${title} ${year}` : title;
+    // Append TMDB ID for more specific search results
     if (tmdbId && Number.isInteger(Number(tmdbId))) {
       query += ` TMDB${tmdbId}`;
     }

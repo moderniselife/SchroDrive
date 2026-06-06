@@ -1,7 +1,7 @@
 import axios from "axios";
-import { config, requireEnv } from "./config";
-import { searchIndexer, pickBestResult, getMagnet, getMagnetOrResolve, testIndexerConnection, getProviderName, isIndexerConfigured } from "./indexer";
-import { addMagnetToTorbox, checkExistingTorrents } from "./torbox";
+import { config, requireEnv } from "../core/config";
+import { searchIndexer, pickBestResult, getMagnet, getMagnetOrResolve, testIndexerConnection, getProviderName, isIndexerConfigured } from "../indexers/index";
+import { registry } from "../providers";
 
 interface MediaLike {
   title?: string;
@@ -109,11 +109,20 @@ export function startOverseerrPoller() {
   if (!isIndexerConfigured()) {
     throw new Error("No indexer configured. Set JACKETT_URL/JACKETT_API_KEY or PROWLARR_URL/PROWLARR_API_KEY.");
   }
-  requireEnv("torboxApiKey");
   // Accept either Overseerr API key or Bearer token
   if (!config.overseerrUrl || (!config.overseerrApiKey && !config.overseerrAuth)) {
     throw new Error("Missing Overseerr credentials. Set OVERSEERR_URL and either OVERSEERR_API_KEY or OVERSEERR_AUTH.");
   }
+
+  // Ensure at least one provider is configured
+  const providers = registry.configured();
+  if (providers.length === 0) {
+    throw new Error("No debrid provider configured. Set TORBOX_API_KEY and/or RD_ACCESS_TOKEN.");
+  }
+  console.log(`[${new Date().toISOString()}][poller] providers configured`, { 
+    providers: providers.map(p => p.id),
+    order: registry.ordered().map(p => p.id),
+  });
 
   const processed = new Set<string>();
   const intervalMs = Math.max(5, Number(config.pollIntervalSeconds || 30)) * 1000;
@@ -217,19 +226,30 @@ export function startOverseerrPoller() {
             continue;
           }
           
-          // Check for existing torrents before adding
+          // -----------------------------------------------------------------
+          // Check for existing torrents across ALL configured providers
+          // -----------------------------------------------------------------
           const torrentTitle = (chosenUsed as any)?.title || built.query;
-          const hasExisting = await checkExistingTorrents(torrentTitle);
+          const { exists: hasExisting, provider: existingProvider } = await registry.checkExistingAcrossAll(torrentTitle);
+
           if (hasExisting) {
-            console.log(`[${new Date().toISOString()}][poller] skipping duplicate torrent`, { id, title: torrentTitle });
+            console.log(`[${new Date().toISOString()}][poller] skipping duplicate torrent`, { id, title: torrentTitle, existingProvider });
             processed.add(id);
             continue;
           }
           
+          // -----------------------------------------------------------------
+          // Add magnet to providers using configured strategy
+          // -----------------------------------------------------------------
           const teaser = magnet.slice(0, 80) + '...';
-          console.log(`[${new Date().toISOString()}][poller->torbox] adding magnet`, { id, title: torrentTitle, teaser });
-          await addMagnetToTorbox(magnet, torrentTitle);
-          console.log(`[${new Date().toISOString()}][poller->torbox] added`, { id });
+          const addStrategy = (config as any).addStrategy || 'all';
+          const { results: addResults } = await registry.addMagnetWithStrategy(magnet, torrentTitle, addStrategy);
+          
+          const anySuccess = addResults.some(r => r.success);
+          if (!anySuccess) {
+            console.error(`[${new Date().toISOString()}][poller] ❌ failed to add to ANY provider`, { id, title: torrentTitle });
+          }
+
           processed.add(id);
           if (processed.size > 1000) {
             // Trim processed set
