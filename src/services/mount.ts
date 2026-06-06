@@ -903,6 +903,65 @@ export async function mountVirtualDrive(): Promise<void> {
 
   console.log(`[${new Date().toISOString()}][mount] mounts initiated at ${base}`);
 
+  // Mount cloud-links WebDAV bridge via rclone (if configured)
+  if (config.cloudLinksEnabled) {
+    const clPath = path.join(base, 'cloud-links');
+    ensureDir(clPath, { cleanupOnStale: true });
+
+    console.log(`[${new Date().toISOString()}][mount] Mounting cloud-links WebDAV bridge at ${clPath}`);
+
+    // Write a dedicated rclone config for the cloud-links remote
+    const clConfigPath = path.join(tmpDir, 'rclone-cloud-links.conf');
+    const clConfigLines = [
+      `[cloud-links]`,
+      `type = webdav`,
+      `url = http://localhost:${config.cloudLinksBridgePort}`,
+      `vendor = other`,
+      ``,
+    ];
+    fs.writeFileSync(clConfigPath, clConfigLines.join('\n'), 'utf-8');
+
+    const clArgs = [
+      'mount', 'cloud-links:', clPath,
+      '--daemon',
+      '--vfs-cache-mode=full',
+      '--dir-cache-time=5m',
+      '--vfs-cache-max-age=168h',
+      '--poll-interval=5m',
+      '--allow-other',
+      '--allow-non-empty',
+      '--read-only',
+      `--config=${clConfigPath}`,
+      `--log-file=${path.join(tmpDir, 'rclone-cloud-links.log')}`,
+      '--log-level=NOTICE',
+    ];
+
+    // Add UID/GID matching (mirrors debrid mount perms)
+    if (typeof config.mountUid === 'number') {
+      clArgs.push('--uid', String(config.mountUid));
+    }
+    if (typeof config.mountGid === 'number') {
+      clArgs.push('--gid', String(config.mountGid));
+    }
+
+    console.log(`[${new Date().toISOString()}][mount] rclone ${clArgs.join(' ')}`);
+
+    const clProc = spawn(config.rclonePath, clArgs, { stdio: 'inherit' });
+    clProc.on('error', (e) => {
+      console.error(`[${new Date().toISOString()}][mount] cloud-links mount failed`, { err: (e as any)?.message });
+    });
+    clProc.on('close', (code) => {
+      if (code !== 0) {
+        console.error(`[${new Date().toISOString()}][mount] cloud-links daemon exited with code ${code}`);
+      }
+    });
+
+    mounts.push({ remote: 'cloud-links:', path: clPath });
+    console.log(`[${new Date().toISOString()}][mount] Cloud links mount initiated at ${clPath}`);
+  }
+
+  console.log(`[${new Date().toISOString()}][mount] All mounts initiated at ${base}`);
+
   // Start the mount health monitor to detect and recover from IO errors
   startMountHealthMonitor(mounts, cfg, base);
 }
@@ -921,6 +980,7 @@ export function unmountAll(): void {
   if (ps.has("alldebrid")) mounts.push(path.join(base, "alldebrid"));
   if (ps.has("premiumize")) mounts.push(path.join(base, "premiumize"));
   if (config.cloudMountsEnabled) mounts.push(path.join(base, "cloud"));
+  if (config.cloudLinksEnabled) mounts.push(path.join(base, "cloud-links"));
 
   console.log(`[${new Date().toISOString()}][mount] Cleaning up and unmounting all FUSE mount points...`);
   for (const m of mounts) {

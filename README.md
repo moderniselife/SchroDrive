@@ -153,11 +153,20 @@ Set via `ADD_STRATEGY` environment variable.
 │   ├── shows/
 │   └── movies/
 ├── ... (other providers)
-└── cloud/               # Cloud storage mounts
+├── cloud/               # Cloud storage mounts (account login)
+│   ├── mega/
+│   ├── dropbox/
+│   ├── gdrive/
+│   └── onedrive/
+└── cloud-links/          # Public shared folder links (no login)
     ├── mega/
-    ├── dropbox/
+    │   └── Australian.Survivor/
     ├── gdrive/
-    └── onedrive/
+    │   └── Shared.Media/
+    └── http/
+        ├── a.111477.xyz/
+        ├── 23.147.64.113/
+        └── RealDebrid.HTTP.Folder/
 ```
 
 ### 🔗 STRM Short-Code Service (Port 9120)
@@ -811,6 +820,85 @@ DROPBOX_TOKEN={"access_token":"...","token_type":"Bearer",...}
 
 > [!TIP]
 > Cloud mounts appear under `/mnt/schrodrive/cloud/<provider>/`. Set `CLOUD_MOUNT_READ_ONLY=false` if you need write access.
+
+---
+
+## 🔗 Cloud Link Manager (Public Shared Folders)
+
+Mount public shared folder links directly as FUSE directories — no full account access needed! This is separate from the ☁️ Cloud Storage Setup (which requires login credentials).
+
+### How It Works
+
+1. Create a `cloud_links.json` file listing your public folder URLs:
+```json
+[
+  {
+    "type": "mega",
+    "url": "https://mega.nz/folder/sKxxzSYI#cz5spJH9KLxotRD--a5c2A",
+    "name": "Australian.Survivor"
+  },
+  {
+    "type": "gdrive",
+    "url": "https://drive.google.com/drive/folders/1ABCxyz",
+    "name": "Shared.Media"
+  }
+]
+```
+
+2. Set the env vars:
+```env
+CLOUD_LINKS_ENABLED=true
+CLOUD_LINKS_FILE=/config/cloud_links.json
+```
+
+3. Files appear at:
+```
+/mnt/schrodrive/cloud-links/
+├── mega/
+│   └── Australian.Survivor/
+│       ├── Season 01/
+│       └── Season 02/
+└── gdrive/
+    └── Shared.Media/
+```
+
+### Supported Providers
+
+| Provider | Auth Needed? | Download Method | Notes |
+|----------|-------------|-----------------|-------|
+| **MEGA** | ❌ None | Stream proxy (encrypted) | ~1-5GB/6hr free quota |
+| **Google Drive** | API key only | 302 redirect (direct URL) | Folder must be "Anyone with link" |
+| **Dropbox** | OAuth token | 302 redirect (temp URL) | Reuses `DROPBOX_TOKEN` from cloud mounts |
+| **HTTP** | ❌ None (or custom headers) | 302 redirect (direct URL) | Any open directory (Nginx/Apache autoindex, RD HTTP folder) |
+
+> [!WARNING]
+> MEGA files are encrypted client-side — SchröDrive proxies the decrypted stream, so MEGA content uses your server's bandwidth. For large collections, consider a MEGA Pro account for higher transfer quotas.
+
+> [!TIP]
+> For Google Drive, create a free API key at [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials. Set `GDRIVE_API_KEY` in your env.
+
+> [!TIP]
+> Your Real-Debrid HTTP folder link (e.g. `https://my.real-debrid.com/ZA2NWLMLIZMPM/`) works perfectly with the `http` type — it serves standard Apache mod_autoindex HTML.
+
+#### HTTP Directory Example
+
+Mount any open directory, file server, or RD HTTP folder:
+```json
+[
+  { "type": "http", "url": "https://a.111477.xyz/", "name": "a.111477.xyz" },
+  { "type": "http", "url": "http://23.147.64.113/", "name": "23.147.64.113" },
+  { "type": "http", "url": "https://my.real-debrid.com/YOURCODE/", "name": "RealDebrid.HTTP" }
+]
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLOUD_LINKS_ENABLED` | `false` | Enable public shared folder mounting |
+| `CLOUD_LINKS_FILE` | `/config/cloud_links.json` | Path to JSON config file |
+| `CLOUD_LINKS` | — | Inline JSON array (fallback if file not found) |
+| `GDRIVE_API_KEY` | — | Google Drive API key (for public folder access) |
+| `CLOUD_LINKS_PORT` | `9121` | WebDAV bridge port for cloud links |
 
 ---
 
