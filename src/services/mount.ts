@@ -470,7 +470,7 @@ export async function mountVirtualDrive(): Promise<void> {
   for (const m of mounts) {
     // Safe to cleanup the leaf mount path only
     ensureDir(m.path, { cleanupOnStale: true });
-    if (!testRemote(m.remote, cfg)) {
+    if (!(await testRemote(m.remote, cfg))) {
       continue;
     }
     const args = [
@@ -539,14 +539,19 @@ export async function mountVirtualDrive(): Promise<void> {
       }
     });
 
-    // Quick post-mount verification (best-effort)
+    // Quick post-mount verification (best-effort, non-blocking)
+    // IMPORTANT: Do NOT use readdirSync here — FUSE mounts trigger PROPFIND
+    // to the WebDAV bridge, which needs the event loop to respond.
     try {
-      await sleep(1500);
-      const items = fs.readdirSync(m.path);
-      console.log(`[${new Date().toISOString()}][mount] verify ${m.remote} at ${m.path} -> entries=${items.length}`);
+      await sleep(3000);
+      const items = await Promise.race([
+        fs.promises.readdir(m.path),
+        sleep(10000).then(() => { throw new Error("readdir timed out after 10s"); }),
+      ]);
+      console.log(`[${new Date().toISOString()}][mount] verify ${m.remote} at ${m.path} -> entries=${(items as string[]).length}`);
     } catch (e: any) {
-      console.warn(`[${new Date().toISOString()}][mount] verify error for ${m.remote} at ${m.path}`, { err: e?.message });
-      console.warn(`[${new Date().toISOString()}][mount] see rclone log: ${logFile}`);
+      console.warn(`[${new Date().toISOString()}][mount] verify warning for ${m.remote} at ${m.path}`, { err: e?.message });
+      console.warn(`[${new Date().toISOString()}][mount] mount may still be initialising — see rclone log: ${logFile}`);
     }
   }
 
