@@ -19,6 +19,7 @@ import http from 'http';
 import { config } from '../core/config';
 import { rateLimiter } from '../core/rateLimiter';
 import { tokenRotator } from '../core/tokenRotator';
+import { UnplayableTorrentError } from '../core/errors';
 import type {
   DebridProvider,
   TorrentInfo,
@@ -609,10 +610,29 @@ export class RealDebridProvider implements DebridProvider {
    *
    * @returns Array of virtual directories representing completed RD torrents.
    */
+  private rawTorrentsToDirs(torrents: any[]): VirtualDirectory[] {
+    const completed = torrents.filter((t) => {
+      const progress = typeof t.progress === 'number' ? t.progress : 0;
+      return progress >= 100;
+    });
+    return completed.map((t) => ({
+      id: String(t.id),
+      name: sanitiseName(t.filename || t.id),
+      originalName: t.filename || t.id,
+      files: [],
+    }));
+  }
+
   async fetchDirectories(): Promise<VirtualDirectory[]> {
     if (!this.isConfigured()) return [];
 
     if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+      const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+      const cached = rateLimiter.getCache<any[]>(TORRENT_LIST_CACHE_KEY);
+      if (cached && cached.length > 0) {
+        console.warn(`[${new Date().toISOString()}][rd] rate limited, returning cached directories (${cached.length} items, wait ${waitTime}s)`);
+        return this.rawTorrentsToDirs(cached);
+      }
       console.warn(`[${new Date().toISOString()}][rd] rate limited, skipping directory fetch`);
       return [];
     }
@@ -638,25 +658,21 @@ export class RealDebridProvider implements DebridProvider {
         await rateLimiter.throttle(PROVIDER_NAME);
       }
 
-      // Only include fully downloaded torrents
-      const completed = allTorrents.filter((t) => {
-        const progress = typeof t.progress === 'number' ? t.progress : 0;
-        return progress >= 100;
-      });
+      rateLimiter.setCache(TORRENT_LIST_CACHE_KEY, allTorrents);
+      console.log(`[${new Date().toISOString()}][rd] fetched ${allTorrents.length} torrents`);
 
-      console.log(`[${new Date().toISOString()}][rd] fetched ${completed.length} completed torrents out of ${allTorrents.length} total`);
-
-      return completed.map((t) => ({
-        id: String(t.id),
-        name: sanitiseName(t.filename || t.id),
-        originalName: t.filename || t.id,
-        files: [], // Files are fetched lazily via fetchTorrentFiles()
-      }));
+      return this.rawTorrentsToDirs(allTorrents);
     } catch (err: any) {
       this.handleError(err, 'fetch directories');
+      const cached = rateLimiter.getCache<any[]>(TORRENT_LIST_CACHE_KEY);
+      if (cached && cached.length > 0) {
+        console.log(`[${new Date().toISOString()}][rd] returning cached directories on error (${cached.length} items)`);
+        return this.rawTorrentsToDirs(cached);
+      }
       return [];
     }
   }
+
 
   /**
    * Fetches detailed file information for a single RealDebrid torrent.
@@ -723,12 +739,13 @@ export class RealDebridProvider implements DebridProvider {
       return null;
     }
 
-    if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+    const downloadToken = tokenRotator.getDownloadToken(PROVIDER_NAME) || config.rdAccessToken;
+    const isRotated = downloadToken !== config.rdAccessToken;
+
+    if (rateLimiter.isRateLimited(PROVIDER_NAME) && !isRotated) {
       console.warn(`[${new Date().toISOString()}][rd] rate limited, cannot resolve download URL for torrent ${torrentId}`);
       return null;
     }
-
-    const downloadToken = tokenRotator.getDownloadToken(PROVIDER_NAME) || config.rdAccessToken;
 
     await rateLimiter.throttle(PROVIDER_NAME);
 
@@ -742,8 +759,7 @@ export class RealDebridProvider implements DebridProvider {
 
       const links: string[] = Array.isArray(infoRes?.data?.links) ? infoRes.data.links : [];
       if (linkIndex < 0 || linkIndex >= links.length) {
-        console.error(`[${new Date().toISOString()}][rd] link index ${linkIndex} out of range (${links.length} links) for torrent ${torrentId}`);
-        return null;
+        throw new UnplayableTorrentError(`Link index ${linkIndex} out of range (${links.length} links) for torrent ${torrentId}`);
       }
 
       const link = links[linkIndex];
@@ -930,6 +946,6 @@ export class RealDebridProvider implements DebridProvider {
 // Self-Registration
 // ===========================================================================
 
-import { registry } from './index';
+import { registry } from './registry';
 registry.register(new RealDebridProvider());
 tokenRotator.registerProvider(PROVIDER_NAME, config.rdAccessToken, config.rdDownloadTokens);

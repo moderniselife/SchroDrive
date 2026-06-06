@@ -24,6 +24,7 @@ const http_1 = __importDefault(require("http"));
 const config_1 = require("../core/config");
 const rateLimiter_1 = require("../core/rateLimiter");
 const tokenRotator_1 = require("../core/tokenRotator");
+const errors_1 = require("../core/errors");
 // ===========================================================================
 // Constants & HTTP Configuration
 // ===========================================================================
@@ -554,10 +555,28 @@ class RealDebridProvider {
      *
      * @returns Array of virtual directories representing completed RD torrents.
      */
+    rawTorrentsToDirs(torrents) {
+        const completed = torrents.filter((t) => {
+            const progress = typeof t.progress === 'number' ? t.progress : 0;
+            return progress >= 100;
+        });
+        return completed.map((t) => ({
+            id: String(t.id),
+            name: sanitiseName(t.filename || t.id),
+            originalName: t.filename || t.id,
+            files: [],
+        }));
+    }
     async fetchDirectories() {
         if (!this.isConfigured())
             return [];
         if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
+            const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+            const cached = rateLimiter_1.rateLimiter.getCache(TORRENT_LIST_CACHE_KEY);
+            if (cached && cached.length > 0) {
+                console.warn(`[${new Date().toISOString()}][rd] rate limited, returning cached directories (${cached.length} items, wait ${waitTime}s)`);
+                return this.rawTorrentsToDirs(cached);
+            }
             console.warn(`[${new Date().toISOString()}][rd] rate limited, skipping directory fetch`);
             return [];
         }
@@ -578,21 +597,17 @@ class RealDebridProvider {
                 page++;
                 await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
             }
-            // Only include fully downloaded torrents
-            const completed = allTorrents.filter((t) => {
-                const progress = typeof t.progress === 'number' ? t.progress : 0;
-                return progress >= 100;
-            });
-            console.log(`[${new Date().toISOString()}][rd] fetched ${completed.length} completed torrents out of ${allTorrents.length} total`);
-            return completed.map((t) => ({
-                id: String(t.id),
-                name: sanitiseName(t.filename || t.id),
-                originalName: t.filename || t.id,
-                files: [], // Files are fetched lazily via fetchTorrentFiles()
-            }));
+            rateLimiter_1.rateLimiter.setCache(TORRENT_LIST_CACHE_KEY, allTorrents);
+            console.log(`[${new Date().toISOString()}][rd] fetched ${allTorrents.length} torrents`);
+            return this.rawTorrentsToDirs(allTorrents);
         }
         catch (err) {
             this.handleError(err, 'fetch directories');
+            const cached = rateLimiter_1.rateLimiter.getCache(TORRENT_LIST_CACHE_KEY);
+            if (cached && cached.length > 0) {
+                console.log(`[${new Date().toISOString()}][rd] returning cached directories on error (${cached.length} items)`);
+                return this.rawTorrentsToDirs(cached);
+            }
             return [];
         }
     }
@@ -653,11 +668,12 @@ class RealDebridProvider {
             console.error(`[${new Date().toISOString()}][rd] resolveDownloadUrl requires linkIndex for RealDebrid`);
             return null;
         }
-        if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
+        const downloadToken = tokenRotator_1.tokenRotator.getDownloadToken(PROVIDER_NAME) || config_1.config.rdAccessToken;
+        const isRotated = downloadToken !== config_1.config.rdAccessToken;
+        if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME) && !isRotated) {
             console.warn(`[${new Date().toISOString()}][rd] rate limited, cannot resolve download URL for torrent ${torrentId}`);
             return null;
         }
-        const downloadToken = tokenRotator_1.tokenRotator.getDownloadToken(PROVIDER_NAME) || config_1.config.rdAccessToken;
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         const base = getBaseUrl();
         try {
@@ -667,8 +683,7 @@ class RealDebridProvider {
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             const links = Array.isArray(infoRes?.data?.links) ? infoRes.data.links : [];
             if (linkIndex < 0 || linkIndex >= links.length) {
-                console.error(`[${new Date().toISOString()}][rd] link index ${linkIndex} out of range (${links.length} links) for torrent ${torrentId}`);
-                return null;
+                throw new errors_1.UnplayableTorrentError(`Link index ${linkIndex} out of range (${links.length} links) for torrent ${torrentId}`);
             }
             const link = links[linkIndex];
             // Unrestrict the link to get the direct download URL
@@ -838,6 +853,6 @@ exports.RealDebridProvider = RealDebridProvider;
 // ===========================================================================
 // Self-Registration
 // ===========================================================================
-const index_1 = require("./index");
-index_1.registry.register(new RealDebridProvider());
+const registry_1 = require("./registry");
+registry_1.registry.register(new RealDebridProvider());
 tokenRotator_1.tokenRotator.registerProvider(PROVIDER_NAME, config_1.config.rdAccessToken, config_1.config.rdDownloadTokens);

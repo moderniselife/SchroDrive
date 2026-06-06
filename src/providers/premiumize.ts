@@ -18,6 +18,7 @@ import https from 'https';
 import { config, requireEnv } from '../core/config';
 import { rateLimiter } from '../core/rateLimiter';
 import { tokenRotator } from '../core/tokenRotator';
+import { UnplayableTorrentError } from '../core/errors';
 import type {
   DebridProvider,
   TorrentInfo,
@@ -545,12 +546,13 @@ export class PremiumizeProvider implements DebridProvider {
    * @returns The direct download URL, or `null` on failure.
    */
   async resolveDownloadUrl(torrentId: string, fileId: string, _linkIndex?: number): Promise<string | null> {
-    if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+    const downloadToken = tokenRotator.getDownloadToken(PROVIDER_NAME) || config.premiumizeApiKey;
+    const isRotated = downloadToken !== config.premiumizeApiKey;
+
+    if (rateLimiter.isRateLimited(PROVIDER_NAME) && !isRotated) {
       console.warn(`[${new Date().toISOString()}][premiumize] rate limited, cannot resolve download URL for transfer ${torrentId}`);
       return null;
     }
-
-    const downloadToken = tokenRotator.getDownloadToken(PROVIDER_NAME) || config.premiumizeApiKey;
 
     await rateLimiter.throttle(PROVIDER_NAME);
 
@@ -582,20 +584,21 @@ export class PremiumizeProvider implements DebridProvider {
       const content = Array.isArray(folderRes?.data?.content) ? folderRes.data.content : [];
       const file = content.find((f: any) => String(f.id) === fileId);
 
-      if (file?.link) {
-        return file.link;
+      if (file) {
+        if (file.link) return file.link;
+        throw new UnplayableTorrentError(`File found but contains no streamable link for transfer ${torrentId}, file ${fileId}`);
       }
 
       // If file not found by ID, try matching by name in nested folders
       const allFiles = this.flattenFolderContent(content);
       const matchedFile = allFiles.find((f: any) => String(f.id) === fileId);
 
-      if (matchedFile?.link) {
-        return matchedFile.link;
+      if (matchedFile) {
+        if (matchedFile.link) return matchedFile.link;
+        throw new UnplayableTorrentError(`File found in subfolder but contains no streamable link for transfer ${torrentId}, file ${fileId}`);
       }
 
-      console.error(`[${new Date().toISOString()}][premiumize] no download link found for transfer ${torrentId}, file ${fileId}`);
-      return null;
+      throw new UnplayableTorrentError(`File ${fileId} not found in transfer ${torrentId}`);
     } catch (err: any) {
       this.handleError(err, `resolve download URL for transfer ${torrentId}, file ${fileId}`, downloadToken);
       const status = err?.response?.status;
@@ -778,6 +781,6 @@ export class PremiumizeProvider implements DebridProvider {
 // Self-Registration
 // ===========================================================================
 
-import { registry } from './index';
+import { registry } from './registry';
 registry.register(new PremiumizeProvider());
 tokenRotator.registerProvider(PROVIDER_NAME, config.premiumizeApiKey, config.premiumizeDownloadTokens);
