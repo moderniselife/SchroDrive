@@ -11,6 +11,7 @@ import { startAutoUpdater } from "./autoUpdate";
 import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDocker, CONFIG_SCHEMA } from "./configApi";
 import { logBuffer } from "./logger";
 import { rateLimiter } from "./rateLimiter";
+import { getBlocklist, getBlocklistInfo, addBlocked, removeBlocked, checkBlocked } from "./infringementList";
 
 export function startServer() {
   const app = express();
@@ -71,11 +72,18 @@ export function startServer() {
         deadScanner: config.runDeadScanner,
         deadScannerWatch: config.runDeadScannerWatch,
         organizerWatch: config.runOrganizerWatch,
+        watchlistPoller: config.runWatchlistPoller,
       },
       indexer: {
         configured: isIndexerConfigured(),
         provider: isIndexerConfigured() ? getProviderName() : null,
       },
+      mediaServers: {
+        plex: { configured: !!config.plexToken },
+        jellyfin: { configured: !!(config.jellyfinUrl && config.jellyfinApiKey) },
+        emby: { configured: !!(config.embyUrl && config.embyApiKey) },
+      },
+      infringementList: getBlocklistInfo(),
     });
   });
 
@@ -849,6 +857,68 @@ export function startServer() {
       });
     } catch (err: any) {
       console.error("[api/files] Error:", err.message);
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // =========================================================================
+  // Infringement Blocklist API
+  // =========================================================================
+
+  /** GET /api/infringement-list — list all blocked patterns. */
+  app.get("/api/infringement-list", (_req, res) => {
+    try {
+      const entries = getBlocklist();
+      const info = getBlocklistInfo();
+      res.json({ ok: true, ...info, entries });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  /** POST /api/infringement-list — manually add a blocklist entry. */
+  app.post("/api/infringement-list", (req, res) => {
+    try {
+      const { pattern, blockedBy, reason, matchType } = req.body || {};
+      if (!pattern) {
+        return res.status(400).json({ ok: false, error: "Missing 'pattern' in request body" });
+      }
+      const entry = addBlocked(
+        pattern,
+        blockedBy || "both",
+        reason || "Manually added",
+        matchType || "contains"
+      );
+      res.status(201).json({ ok: true, entry });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  /** DELETE /api/infringement-list/:id — remove a blocklist entry. */
+  app.delete("/api/infringement-list/:id", (req, res) => {
+    try {
+      const removed = removeBlocked(req.params.id);
+      if (!removed) {
+        return res.status(404).json({ ok: false, error: "Entry not found" });
+      }
+      res.json({ ok: true, removed: true });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  /** GET /api/infringement-list/check?name=... — check if a name is blocked. */
+  app.get("/api/infringement-list/check", (req, res) => {
+    try {
+      const name = String(req.query.name || "").trim();
+      const provider = req.query.provider as "realdebrid" | "torbox" | undefined;
+      if (!name) {
+        return res.status(400).json({ ok: false, error: "Missing query parameter 'name'" });
+      }
+      const blocked = checkBlocked(name, provider);
+      res.json({ ok: true, blocked: !!blocked, entry: blocked });
+    } catch (err: any) {
       res.status(500).json({ ok: false, error: err.message });
     }
   });
