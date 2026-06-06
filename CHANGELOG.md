@@ -6,7 +6,7 @@ The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
 ### Version [0.2.1] - 2026-06-06 🚀
-*Status: AllDebrid provider support*
+*Status: Multi-provider expansion + self-healing mount resilience*
 
 ### Added ✨
 - **AllDebrid provider** (`src/providers/alldebrid.ts`):
@@ -14,18 +14,69 @@ and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.
   - Auth via `apikey` + `agent` query parameters
   - Magnet management: list, add (upload + selectFiles), delete
   - Status code mapping: 0–3 downloading, 4 finished, 5–7 error
-  - Embedded file info in magnet status (no separate file fetch needed)
   - Link resolution via `/v4/link/unlock` endpoint
   - WebDAV bridge support with inline file population
-  - Rate limiting via shared `rateLimiter` singleton
-  - IPv4-forced axios for Docker compatibility
-  - Self-registers with provider registry on module load
-- New config options (already in config.ts):
+  - **⚠️ Untested** — awaiting live account verification
+- **Premiumize provider** (`src/providers/premiumize.ts`):
+  - Full `DebridProvider` interface implementation for Premiumize API
+  - Bearer token authentication
+  - Transfer management: list, create, delete
+  - Folder-based file resolution with direct download links
+  - WebDAV bridge support (native WebDAV at `webdav.premiumize.me`)
+  - **⚠️ Untested** — awaiting live account verification
+- **Persistent torrent blacklist** (`src/core/blacklist.ts`):
+  - JSON-backed blacklist stored at `/tmp/schrodrive/blacklist.json`
+  - Bi-directional substring matching to catch naming variants
+  - Load/save/add/remove/check API
+  - Checked during dead torrent replacement to prevent re-adding bad content
+- **Stale-while-locked cache** in WebDAV bridge:
+  - Expired CDN URLs moved to stale cache instead of deleted
+  - Served as fallback when fresh URL resolution fails (423 Locked, etc.)
+  - CDN URLs typically live 6–12 hours past cache expiry
+- **Dead torrent auto-lifecycle**:
+  - Tracks per-torrent consecutive download failures
+  - After 10 failures: delete from provider → blacklist → search replacement
+  - Two-phase scanning: provider status + bridge-detected failures
+  - `getDeadTorrents()` / `clearDeadTorrent()` API on WebDAV bridge
+- **Mount health monitor** in `mount.ts`:
+  - Background process monitoring rclone log patterns (423, IO error)
+  - Async readdir health checks
+  - Auto-remount after 5 consecutive failures
+- **`deleteTorrent()`** method on `DebridProvider` interface:
+  - RealDebrid: `DELETE /torrents/delete/{id}`
+  - TorBox: `POST /v1/api/torrents/controltorrent` (operation: delete)
+  - AllDebrid: `GET /v4/magnet/delete?id=ID`
+  - Premiumize: `POST /transfer/delete`
+- New config options:
   - `ALLDEBRID_API_KEY`, `ALLDEBRID_API_BASE`, `ALLDEBRID_AGENT`
-  - `ALLDEBRID_WEBDAV_URL`, `ALLDEBRID_WEBDAV_USERNAME`, `ALLDEBRID_WEBDAV_PASSWORD`
-  - `WEBDAV_BRIDGE_PORT_AD` (default: 9117)
+  - `ALLDEBRID_WEBDAV_*`, `WEBDAV_BRIDGE_PORT_AD` (9117)
+  - `PREMIUMIZE_API_KEY`, `PREMIUMIZE_API_BASE`
+  - `PREMIUMIZE_WEBDAV_*`, `WEBDAV_BRIDGE_PORT_PM` (9118)
+  - `BLACKLIST_PATH`
 
----
+### Changed 🔄
+- **WebDAV bridge** refactored to be provider-agnostic:
+  - Uses provider registry for directory fetching and URL resolution
+  - New providers work automatically without bridge code changes
+  - Legacy inline helpers retained for RD/TB backwards compatibility
+- **Dead scanner** rewritten with two-phase scanning:
+  - Phase 1: Provider-status scan (error/failed/stalled)
+  - Phase 2: Bridge-detected scan (persistent download failures)
+  - Dead torrents now deleted from provider, not just re-added elsewhere
+- **Mount service** extended for 4-provider support:
+  - `hasDirectWebDAV()` / `hasApiKey()` support AllDebrid + Premiumize
+  - rclone config generation for all 4 providers
+  - Bridge startup blocks for all 4 providers
+- **README** completely rewritten:
+  - Added competition comparison table (vs pd_zurg, Zurg, Riven)
+  - Dead torrent lifecycle Mermaid diagram
+  - AllDebrid + Premiumize documentation with untested warnings
+  - New troubleshooting section for 423 Locked errors
+
+### Fixed 🐛
+- WebDAV bridge `503 Retry-After` response prevents rclone from treating transient locks as permanent errors
+- Retry-with-backoff for download URL resolution (3 attempts: 1s, 2s, 4s)
+
 
 ### Version [0.2.0] - 2026-06-06 🚀
 *Status: Major release — replaces PD Zurg + TorBox Media Center*

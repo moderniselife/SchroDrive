@@ -26,6 +26,7 @@ import https from "https";
 import axios from "axios";
 import { config } from "../core/config";
 import { rateLimiter } from "../core/rateLimiter";
+import { registry } from "../providers";
 
 // ===========================================================================
 // HTTP Client (IPv4 forced — matches realdebrid.ts pattern)
@@ -42,7 +43,7 @@ const axiosIPv4 = axios.create({ httpAgent, httpsAgent });
 /** Configuration options for a WebDAV bridge instance. */
 export interface WebDAVBridgeOptions {
   /** Which debrid provider this bridge serves. */
-  provider: "realdebrid" | "torbox";
+  provider: string;
   /** Local port to listen on. */
   port: number;
   /** How long (seconds) to cache the torrent/directory listing. Default: 30. */
@@ -108,7 +109,7 @@ export interface DeadTorrentInfo {
   /** Original torrent name. */
   name: string;
   /** Which provider this torrent belongs to. */
-  provider: "realdebrid" | "torbox";
+  provider: string;
   /** Number of consecutive download failures. */
   failureCount: number;
   /** ISO timestamp when the torrent was flagged. */
@@ -854,7 +855,7 @@ async function resolveTBDownloadUrl(torrentId: string, fileId: string): Promise<
  * ```
  */
 export class WebDAVBridge {
-  private readonly provider: "realdebrid" | "torbox";
+  private readonly provider: string;
   private readonly port: number;
   private readonly cache: BridgeCache;
   private server: http.Server | null = null;
@@ -1224,7 +1225,12 @@ export class WebDAVBridge {
 
     let dirs: VirtualDirectory[];
 
-    if (this.provider === "realdebrid") {
+    // Use the provider registry to fetch directories — provider-agnostic
+    const providerImpl = registry.get(this.provider);
+    if (providerImpl) {
+      dirs = await providerImpl.fetchDirectories();
+    } else if (this.provider === "realdebrid") {
+      // Fallback to inline helpers for backwards compatibility
       dirs = await fetchRDDirectories();
     } else {
       dirs = await fetchTBDirectories();
@@ -1245,16 +1251,24 @@ export class WebDAVBridge {
    * @returns Array of virtual files.
    */
   private async getFilesForTorrent(dir: VirtualDirectory): Promise<VirtualFile[]> {
-    // TorBox embeds files in the torrent listing — no extra call needed
-    if (this.provider === "torbox") {
+    // If files are already embedded (TorBox, AllDebrid, Premiumize), return them
+    if (dir.files.length > 0) {
       return dir.files;
     }
 
-    // RealDebrid: check info cache first
+    // Otherwise fetch lazily (RealDebrid)
     const cached = this.cache.getTorrentInfo(dir.id);
     if (cached) return cached;
 
-    const files = await fetchRDTorrentFiles(dir.id);
+    // Use provider registry if available
+    const providerImpl = registry.get(this.provider);
+    let files: VirtualFile[];
+    if (providerImpl?.fetchTorrentFiles) {
+      files = await providerImpl.fetchTorrentFiles(dir.id);
+    } else {
+      files = await fetchRDTorrentFiles(dir.id);
+    }
+
     if (files.length > 0) {
       this.cache.setTorrentInfo(dir.id, files);
     }
@@ -1294,6 +1308,13 @@ export class WebDAVBridge {
 
     const url = await retryWithBackoff(
       async () => {
+        // Use provider registry for provider-agnostic resolution
+        const providerImpl = registry.get(this.provider);
+        if (providerImpl && this.provider !== "realdebrid" && this.provider !== "torbox") {
+          // New providers (AllDebrid, Premiumize, etc.) use the interface
+          return providerImpl.resolveDownloadUrl(dir.id, file.id, file.linkIndex);
+        }
+        // Legacy inline helpers for RD/TB (proven, battle-tested)
         if (this.provider === "realdebrid") {
           if (typeof file.linkIndex !== "number") {
             logError(this.provider, `No link index for file ${file.name} in torrent ${dir.name}`);

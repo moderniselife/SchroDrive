@@ -50,6 +50,21 @@ export const config = {
   torboxWebdavUrl: process.env.TORBOX_WEBDAV_URL || "https://webdav.torbox.app",
   torboxWebdavUsername: process.env.TORBOX_WEBDAV_USERNAME || "",
   torboxWebdavPassword: process.env.TORBOX_WEBDAV_PASSWORD || "",
+  // AllDebrid API
+  alldebridApiKey: process.env.ALLDEBRID_API_KEY || "",
+  alldebridApiBase: process.env.ALLDEBRID_API_BASE || "https://api.alldebrid.com/v4",
+  alldebridAgent: process.env.ALLDEBRID_AGENT || "schrodrive",
+  // AllDebrid WebDAV (if supported)
+  alldebridWebdavUrl: process.env.ALLDEBRID_WEBDAV_URL || "",
+  alldebridWebdavUsername: process.env.ALLDEBRID_WEBDAV_USERNAME || "",
+  alldebridWebdavPassword: process.env.ALLDEBRID_WEBDAV_PASSWORD || "",
+  // Premiumize API
+  premiumizeApiKey: process.env.PREMIUMIZE_API_KEY || "",
+  premiumizeApiBase: process.env.PREMIUMIZE_API_BASE || "https://www.premiumize.me/api",
+  // Premiumize WebDAV
+  premiumizeWebdavUrl: process.env.PREMIUMIZE_WEBDAV_URL || "https://webdav.premiumize.me",
+  premiumizeWebdavUsername: process.env.PREMIUMIZE_WEBDAV_USERNAME || "",
+  premiumizeWebdavPassword: process.env.PREMIUMIZE_WEBDAV_PASSWORD || "",
   // Mount settings
   mountBase: defaultMountBase,
   rclonePath: process.env.RCLONE_PATH || "rclone",
@@ -110,6 +125,8 @@ export const config = {
   webdavBridgeEnabled: String(process.env.WEBDAV_BRIDGE_ENABLED ?? "true").toLowerCase() !== "false",
   webdavBridgePortRD: Number(process.env.WEBDAV_BRIDGE_PORT_RD || 9115),
   webdavBridgePortTB: Number(process.env.WEBDAV_BRIDGE_PORT_TB || 9116),
+  webdavBridgePortAD: Number(process.env.WEBDAV_BRIDGE_PORT_AD || 9117),
+  webdavBridgePortPM: Number(process.env.WEBDAV_BRIDGE_PORT_PM || 9118),
   webdavCacheTtlS: Number(process.env.WEBDAV_CACHE_TTL_S || 30),
   webdavDownloadCacheTtlS: Number(process.env.WEBDAV_DOWNLOAD_CACHE_TTL_S || 300),
 };
