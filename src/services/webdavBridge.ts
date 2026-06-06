@@ -885,7 +885,7 @@ export class WebDAVBridge {
     app.use(express.raw({ type: "*/*", limit: "1mb" }));
 
     // ------ OPTIONS ------
-    app.options("*", (_req: Request, res: Response) => {
+    app.options("/{*splat}", (_req: Request, res: Response) => {
       res.setHeader("DAV", "1");
       res.setHeader("Allow", "OPTIONS, GET, HEAD, PROPFIND");
       res.status(200).end();
@@ -905,7 +905,7 @@ export class WebDAVBridge {
     });
 
     // ------ HEAD ------
-    app.head("*", async (req: Request, res: Response) => {
+    app.head("/{*splat}", async (req: Request, res: Response) => {
       try {
         await this.handleHead(req, res);
       } catch (err: any) {
@@ -915,7 +915,7 @@ export class WebDAVBridge {
     });
 
     // ------ GET ------
-    app.get("*", async (req: Request, res: Response) => {
+    app.get("/{*splat}", async (req: Request, res: Response) => {
       try {
         await this.handleGet(req, res);
       } catch (err: any) {
