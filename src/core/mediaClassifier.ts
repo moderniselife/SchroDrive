@@ -116,6 +116,7 @@ const DEFAULT_RULES: ClassificationRule[] = [
  */
 const EPISODE_PATTERNS: RegExp[] = [
   /S\d{1,3}E\d{1,3}/i,           // S01E01, S1E1
+  /\bS\d{1,3}\b(?!ub|pecial|ample|cene|creens|eries)/i, // S01, S1 (season pack — excludes Sub, Special, Sample, etc.)
   /S\d{1,3}\s*[-–]\s*S\d{1,3}/i, // S01-S03 (multi-season packs)
   /Season\s*\d+/i,                 // Season 01, Season 1
   /Seasons?\s*\d+\s*[-–&]\s*\d+/i, // Seasons 1-5, Season 1 & 2
@@ -123,6 +124,8 @@ const EPISODE_PATTERNS: RegExp[] = [
   /\bE(?:p|pisode)?\s*\d+/i,      // E01, Ep01, Episode 01
   /Complete\s*Series/i,            // Complete Series
   /\bMini[- ]?Series\b/i,         // Mini-Series, Miniseries
+  /\bTVShows?\b/i,                 // TVShows, TVShow
+  /\bSeason\s*Pack\b/i,            // Season Pack
 ];
 
 /**
