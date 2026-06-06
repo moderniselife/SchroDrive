@@ -104,6 +104,12 @@ export const config = {
   watchlistPollIntervalSeconds: Number(process.env.WATCHLIST_POLL_INTERVAL_S || 60),
   // Refresh library after adding content
   refreshLibraryOnAdd: String(process.env.REFRESH_LIBRARY_ON_ADD ?? "true").toLowerCase() !== "false",
+  // --- WebDAV Bridge (API-to-filesystem translation) ---
+  webdavBridgeEnabled: String(process.env.WEBDAV_BRIDGE_ENABLED ?? "true").toLowerCase() !== "false",
+  webdavBridgePortRD: Number(process.env.WEBDAV_BRIDGE_PORT_RD || 9115),
+  webdavBridgePortTB: Number(process.env.WEBDAV_BRIDGE_PORT_TB || 9116),
+  webdavCacheTtlS: Number(process.env.WEBDAV_CACHE_TTL_S || 30),
+  webdavDownloadCacheTtlS: Number(process.env.WEBDAV_DOWNLOAD_CACHE_TTL_S || 300),
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {
