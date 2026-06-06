@@ -378,6 +378,34 @@ export class RealDebridProvider implements DebridProvider {
     return false;
   }
 
+  /**
+   * Deletes a torrent from RealDebrid by its ID.
+   *
+   * Uses the `DELETE /torrents/delete/{id}` endpoint. Rate-limit aware.
+   *
+   * @param torrentId - The RD torrent ID to delete.
+   * @throws {Error} If the deletion fails.
+   */
+  async deleteTorrent(torrentId: string): Promise<void> {
+    if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+      throw new Error(`RealDebrid rate limited, cannot delete torrent ${torrentId}`);
+    }
+
+    await rateLimiter.throttle(PROVIDER_NAME);
+
+    const base = getBaseUrl();
+    const url = `${base}/torrents/delete/${encodeURIComponent(torrentId)}`;
+
+    try {
+      await axiosIPv4.delete(url, { headers: rdHeaders(), timeout: 20000 });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+      console.log(`[${new Date().toISOString()}][rd] deleted torrent ${torrentId}`);
+    } catch (err: any) {
+      this.handleError(err, `delete torrent ${torrentId}`);
+      throw err;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Download Operations
   // -------------------------------------------------------------------------

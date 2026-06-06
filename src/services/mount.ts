@@ -159,6 +159,14 @@ export async function refreshBridges(): Promise<void> {
 }
 
 /**
+ * Returns the active bridge instances for external consumers
+ * (e.g. dead scanner checking for bridge-detected dead torrents).
+ */
+export function getActiveBridges(): Map<string, WebDAVBridge> {
+  return activeBridges;
+}
+
+/**
  * Checks if a provider has direct WebDAV credentials configured.
  */
 function hasDirectWebDAV(provider: string): boolean {

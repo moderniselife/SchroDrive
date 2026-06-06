@@ -150,6 +150,8 @@ export interface DebridProvider {
   checkExisting(title: string): Promise<boolean>;
   /** Determines whether a torrent is dead (failed/errored/stalled). */
   isTorrentDead(torrent: TorrentInfo): boolean;
+  /** Deletes a torrent from the provider by its ID. */
+  deleteTorrent(torrentId: string): Promise<void>;
 
   // --- Download Operations (optional — TB has web/usenet, RD doesn't) -------
 
