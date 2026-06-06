@@ -473,76 +473,141 @@ async function mountVirtualDrive() {
     // Phase 1: Start WebDAV bridges for providers with API keys but no WebDAV creds
     // -----------------------------------------------------------------------
     if (config_1.config.webdavBridgeEnabled) {
+        const maxAttempts = 20;
         if (ps.has("realdebrid") && !hasDirectWebDAV("realdebrid") && hasApiKey("realdebrid")) {
             console.log(`[${new Date().toISOString()}][mount] RealDebrid: no WebDAV creds, starting API bridge...`);
-            try {
-                const bridge = new webdavBridge_1.WebDAVBridge({
-                    provider: "realdebrid",
-                    port: config_1.config.webdavBridgePortRD,
-                    cacheTtlS: config_1.config.webdavCacheTtlS,
-                    downloadCacheTtlS: config_1.config.webdavDownloadCacheTtlS,
-                });
-                await bridge.start();
-                activeBridges.set("realdebrid", bridge);
-                bridgePorts.set("realdebrid", config_1.config.webdavBridgePortRD);
-                console.log(`[${new Date().toISOString()}][mount] RealDebrid bridge started on port ${config_1.config.webdavBridgePortRD}`);
+            let port = config_1.config.webdavBridgePortRD;
+            let bridge = null;
+            for (let i = 0; i < maxAttempts; i++) {
+                while (Array.from(bridgePorts.values()).includes(port)) {
+                    port++;
+                }
+                try {
+                    const testBridge = new webdavBridge_1.WebDAVBridge({
+                        provider: "realdebrid",
+                        port: port,
+                        cacheTtlS: config_1.config.webdavCacheTtlS,
+                        downloadCacheTtlS: config_1.config.webdavDownloadCacheTtlS,
+                    });
+                    await testBridge.start();
+                    bridge = testBridge;
+                    break;
+                }
+                catch (err) {
+                    if (i === maxAttempts - 1) {
+                        console.error(`[${new Date().toISOString()}][mount] Failed to start RealDebrid bridge after ${maxAttempts} attempts:`, err?.message);
+                        break;
+                    }
+                    console.warn(`[${new Date().toISOString()}][mount] RealDebrid port ${port} in use, trying next port...`);
+                    port++;
+                }
             }
-            catch (err) {
-                console.error(`[${new Date().toISOString()}][mount] Failed to start RealDebrid bridge:`, err?.message);
+            if (bridge) {
+                activeBridges.set("realdebrid", bridge);
+                bridgePorts.set("realdebrid", port);
+                console.log(`[${new Date().toISOString()}][mount] RealDebrid bridge started on port ${port}`);
             }
         }
         if (ps.has("torbox") && !hasDirectWebDAV("torbox") && hasApiKey("torbox")) {
             console.log(`[${new Date().toISOString()}][mount] TorBox: no WebDAV creds, starting API bridge...`);
-            try {
-                const bridge = new webdavBridge_1.WebDAVBridge({
-                    provider: "torbox",
-                    port: config_1.config.webdavBridgePortTB,
-                    cacheTtlS: config_1.config.webdavCacheTtlS,
-                    downloadCacheTtlS: config_1.config.webdavDownloadCacheTtlS,
-                });
-                await bridge.start();
-                activeBridges.set("torbox", bridge);
-                bridgePorts.set("torbox", config_1.config.webdavBridgePortTB);
-                console.log(`[${new Date().toISOString()}][mount] TorBox bridge started on port ${config_1.config.webdavBridgePortTB}`);
+            let port = config_1.config.webdavBridgePortTB;
+            let bridge = null;
+            for (let i = 0; i < maxAttempts; i++) {
+                while (Array.from(bridgePorts.values()).includes(port)) {
+                    port++;
+                }
+                try {
+                    const testBridge = new webdavBridge_1.WebDAVBridge({
+                        provider: "torbox",
+                        port: port,
+                        cacheTtlS: config_1.config.webdavCacheTtlS,
+                        downloadCacheTtlS: config_1.config.webdavDownloadCacheTtlS,
+                    });
+                    await testBridge.start();
+                    bridge = testBridge;
+                    break;
+                }
+                catch (err) {
+                    if (i === maxAttempts - 1) {
+                        console.error(`[${new Date().toISOString()}][mount] Failed to start TorBox bridge after ${maxAttempts} attempts:`, err?.message);
+                        break;
+                    }
+                    console.warn(`[${new Date().toISOString()}][mount] TorBox port ${port} in use, trying next port...`);
+                    port++;
+                }
             }
-            catch (err) {
-                console.error(`[${new Date().toISOString()}][mount] Failed to start TorBox bridge:`, err?.message);
+            if (bridge) {
+                activeBridges.set("torbox", bridge);
+                bridgePorts.set("torbox", port);
+                console.log(`[${new Date().toISOString()}][mount] TorBox bridge started on port ${port}`);
             }
         }
         if (ps.has("alldebrid") && !hasDirectWebDAV("alldebrid") && hasApiKey("alldebrid")) {
             console.log(`[${new Date().toISOString()}][mount] AllDebrid: no WebDAV creds, starting API bridge...`);
-            try {
-                const bridge = new webdavBridge_1.WebDAVBridge({
-                    provider: "alldebrid",
-                    port: config_1.config.webdavBridgePortAD,
-                    cacheTtlS: config_1.config.webdavCacheTtlS,
-                    downloadCacheTtlS: config_1.config.webdavDownloadCacheTtlS,
-                });
-                await bridge.start();
-                activeBridges.set("alldebrid", bridge);
-                bridgePorts.set("alldebrid", config_1.config.webdavBridgePortAD);
-                console.log(`[${new Date().toISOString()}][mount] AllDebrid bridge started on port ${config_1.config.webdavBridgePortAD}`);
+            let port = config_1.config.webdavBridgePortAD;
+            let bridge = null;
+            for (let i = 0; i < maxAttempts; i++) {
+                while (Array.from(bridgePorts.values()).includes(port)) {
+                    port++;
+                }
+                try {
+                    const testBridge = new webdavBridge_1.WebDAVBridge({
+                        provider: "alldebrid",
+                        port: port,
+                        cacheTtlS: config_1.config.webdavCacheTtlS,
+                        downloadCacheTtlS: config_1.config.webdavDownloadCacheTtlS,
+                    });
+                    await testBridge.start();
+                    bridge = testBridge;
+                    break;
+                }
+                catch (err) {
+                    if (i === maxAttempts - 1) {
+                        console.error(`[${new Date().toISOString()}][mount] Failed to start AllDebrid bridge after ${maxAttempts} attempts:`, err?.message);
+                        break;
+                    }
+                    console.warn(`[${new Date().toISOString()}][mount] AllDebrid port ${port} in use, trying next port...`);
+                    port++;
+                }
             }
-            catch (err) {
-                console.error(`[${new Date().toISOString()}][mount] Failed to start AllDebrid bridge:`, err?.message);
+            if (bridge) {
+                activeBridges.set("alldebrid", bridge);
+                bridgePorts.set("alldebrid", port);
+                console.log(`[${new Date().toISOString()}][mount] AllDebrid bridge started on port ${port}`);
             }
         }
         if (ps.has("premiumize") && !hasDirectWebDAV("premiumize") && hasApiKey("premiumize")) {
             console.log(`[${new Date().toISOString()}][mount] Premiumize: no WebDAV creds, starting API bridge...`);
-            try {
-                const bridge = new webdavBridge_1.WebDAVBridge({
-                    provider: "premiumize",
-                    port: config_1.config.webdavBridgePortPM,
-                    cacheTtlS: config_1.config.webdavCacheTtlS,
-                    downloadCacheTtlS: config_1.config.webdavDownloadCacheTtlS,
-                });
-                await bridge.start();
-                activeBridges.set("premiumize", bridge);
-                bridgePorts.set("premiumize", config_1.config.webdavBridgePortPM);
-                console.log(`[${new Date().toISOString()}][mount] Premiumize bridge started on port ${config_1.config.webdavBridgePortPM}`);
+            let port = config_1.config.webdavBridgePortPM;
+            let bridge = null;
+            for (let i = 0; i < maxAttempts; i++) {
+                while (Array.from(bridgePorts.values()).includes(port)) {
+                    port++;
+                }
+                try {
+                    const testBridge = new webdavBridge_1.WebDAVBridge({
+                        provider: "premiumize",
+                        port: port,
+                        cacheTtlS: config_1.config.webdavCacheTtlS,
+                        downloadCacheTtlS: config_1.config.webdavDownloadCacheTtlS,
+                    });
+                    await testBridge.start();
+                    bridge = testBridge;
+                    break;
+                }
+                catch (err) {
+                    if (i === maxAttempts - 1) {
+                        console.error(`[${new Date().toISOString()}][mount] Failed to start Premiumize bridge after ${maxAttempts} attempts:`, err?.message);
+                        break;
+                    }
+                    console.warn(`[${new Date().toISOString()}][mount] Premiumize port ${port} in use, trying next port...`);
+                    port++;
+                }
             }
-            catch (err) {
-                console.error(`[${new Date().toISOString()}][mount] Failed to start Premiumize bridge:`, err?.message);
+            if (bridge) {
+                activeBridges.set("premiumize", bridge);
+                bridgePorts.set("premiumize", port);
+                console.log(`[${new Date().toISOString()}][mount] Premiumize bridge started on port ${port}`);
             }
         }
     }
