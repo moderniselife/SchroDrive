@@ -1,11 +1,11 @@
 import axios from "axios";
 import { exec } from "child_process";
-import { config } from "../core/config";
+import { config } from "./config";
 // Importing JSON is supported by tsconfig (resolveJsonModule)
 // This resolves at runtime to projectRoot/package.json from dist
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import pkg from "../../package.json";
+import pkg from "../package.json";
 
 function parseSemver(v: string): [number, number, number] {
   const s = String(v || "").trim().replace(/^v/i, "").split("-")[0];
