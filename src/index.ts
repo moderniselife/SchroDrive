@@ -6,6 +6,7 @@ import { mountVirtualDrive } from "./services/mount";
 import { scanDeadOnce, startDeadScanner } from "./services/deadScanner";
 import { organizeOnce, startOrganizerWatch } from "./services/organizer";
 import { startWatchlistPoller } from "./services/mediaServerWatchlist";
+import { startStremioAddonServer } from "./services/stremioAddon";
 import { config } from "./core/config";
 
 const program = new Command();
@@ -46,6 +47,9 @@ program
     
     // Start the main server
     startServer();
+
+    // Start Stremio addon server (separate port)
+    startStremioAddonServer();
     
     // If additional services are running, handle their errors
     if (promises.length > 0) {
