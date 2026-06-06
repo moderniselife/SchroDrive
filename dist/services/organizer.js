@@ -564,21 +564,28 @@ async function makeSymlink(src, dst, dryRun) {
 }
 /**
  * Recursively walks a directory tree, collecting absolute paths of video files.
- * Handles symlinks by falling back to `lstat` when `withFileTypes` doesn't resolve.
+ * Handles symlinks by falling back to `stat` when `withFileTypes` doesn't resolve.
  *
  * @param root - The directory to start walking from.
  * @param acc - Accumulator array to push discovered file paths into.
  * @param limit - Maximum number of files to collect (prevents runaway scans).
  */
 async function walkDir(root, acc, limit) {
-    const entries = await fsp.readdir(root, { withFileTypes: true }).catch(() => []);
+    let entries;
+    try {
+        entries = await fsp.readdir(root, { withFileTypes: true });
+    }
+    catch (err) {
+        console.error(`[${new Date().toISOString()}][organize] failed to read directory ${root}`, { err: err?.message || String(err) });
+        return;
+    }
     for (const ent of entries) {
         const full = path.join(root, ent.name);
         let isDir = ent.isDirectory();
         let isFil = ent.isFile();
-        // Symlinks may not report type correctly via withFileTypes — fall back to lstat
+        // Symlinks may not report type correctly via withFileTypes — fall back to stat to follow them
         if (!isDir && !isFil) {
-            const st = await fsp.lstat(full).catch(() => null);
+            const st = await fsp.stat(full).catch(() => null);
             if (st) {
                 isDir = st.isDirectory();
                 isFil = st.isFile();
@@ -707,7 +714,7 @@ async function organizeOnce(opts) {
         });
     }
     // --- Scan mounted providers for video files ---
-    const providerBases = [path.join(config_1.config.mountBase, "realdebrid"), path.join(config_1.config.mountBase, "torbox")];
+    const providerBases = config_1.config.providers.map((p) => path.join(config_1.config.mountBase, p));
     const roots = [];
     for (const b of providerBases) {
         try {
