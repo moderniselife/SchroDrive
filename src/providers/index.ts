@@ -150,6 +150,15 @@ export interface DebridProvider {
   checkExisting(title: string): Promise<boolean>;
   /** Determines whether a torrent is dead (failed/errored/stalled). */
   isTorrentDead(torrent: TorrentInfo): boolean;
+  /** Deletes a torrent from the provider by its ID. */
+  deleteTorrent(torrentId: string): Promise<void>;
+  /** Returns the info hash or magnet URI for a torrent (used for repair). */
+  getInfoHash?(torrentId: string): Promise<string | null>;
+  /**
+   * Attempts to repair a dead torrent by re-adding its magnet to the same provider.
+   * Returns true if repair succeeded, false if the torrent should be replaced.
+   */
+  repairTorrent?(torrentId: string): Promise<boolean>;
 
   // --- Download Operations (optional — TB has web/usenet, RD doesn't) -------
 
@@ -334,3 +343,5 @@ export const registry = new ProviderRegistry();
 // import issues — each provider file imports registry from this module.
 import './realdebrid';
 import './torbox';
+import './alldebrid';
+import './premiumize';

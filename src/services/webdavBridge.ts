@@ -26,6 +26,7 @@ import https from "https";
 import axios from "axios";
 import { config } from "../core/config";
 import { rateLimiter } from "../core/rateLimiter";
+import { registry } from "../providers";
 
 // ===========================================================================
 // HTTP Client (IPv4 forced — matches realdebrid.ts pattern)
@@ -42,7 +43,7 @@ const axiosIPv4 = axios.create({ httpAgent, httpsAgent });
 /** Configuration options for a WebDAV bridge instance. */
 export interface WebDAVBridgeOptions {
   /** Which debrid provider this bridge serves. */
-  provider: "realdebrid" | "torbox";
+  provider: string;
   /** Local port to listen on. */
   port: number;
   /** How long (seconds) to cache the torrent/directory listing. Default: 30. */
@@ -100,6 +101,27 @@ interface CacheEntry<T> {
   /** Timestamp (ms since epoch) when this entry expires. */
   expiresAt: number;
 }
+
+/** Information about a torrent flagged as dead due to persistent download failures. */
+export interface DeadTorrentInfo {
+  /** Provider-side torrent identifier. */
+  id: string;
+  /** Original torrent name. */
+  name: string;
+  /** Which provider this torrent belongs to. */
+  provider: string;
+  /** Number of consecutive download failures. */
+  failureCount: number;
+  /** ISO timestamp when the torrent was flagged. */
+  flaggedAt: string;
+}
+
+/**
+ * Number of consecutive download failures before a torrent is flagged as dead.
+ * Once flagged, the dead scanner can delete it from the provider, blacklist
+ * the hash, and queue a replacement search.
+ */
+const DEAD_TORRENT_THRESHOLD = 10;
 
 // ===========================================================================
 // Logging Helper
@@ -180,6 +202,50 @@ function sanitiseName(name: string): string {
     .replace(/^[.\s]+|[.\s]+$/g, "")
     // Fallback if the name is now empty
     || "unnamed";
+}
+
+// ===========================================================================
+// Retry Utility
+// ===========================================================================
+
+/**
+ * Retries an async operation with exponential backoff.
+ * Used to handle transient provider errors (423 Locked, 429 Rate Limit,
+ * 503 Service Unavailable) that would otherwise cascade through rclone
+ * and break FUSE mounts.
+ *
+ * @param fn - The async function to retry.
+ * @param maxRetries - Maximum number of retry attempts.
+ * @param baseDelayMs - Initial delay in milliseconds (doubles each retry).
+ * @param label - Label for log messages.
+ * @returns The result of the function, or null if all retries failed.
+ */
+async function retryWithBackoff<T>(
+  fn: () => Promise<T | null>,
+  maxRetries: number,
+  baseDelayMs: number,
+  label: string,
+): Promise<T | null> {
+  let lastError: string | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await fn();
+      if (result !== null) return result;
+      lastError = "returned null";
+    } catch (err: any) {
+      lastError = err?.message || String(err);
+    }
+
+    if (attempt < maxRetries) {
+      const delay = baseDelayMs * Math.pow(2, attempt);
+      logWarn("retry", `${label} attempt ${attempt + 1}/${maxRetries + 1} failed (${lastError}), retrying in ${delay}ms`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+
+  logError("retry", `${label} failed after ${maxRetries + 1} attempts: ${lastError}`);
+  return null;
 }
 
 // ===========================================================================
@@ -276,6 +342,16 @@ class BridgeCache {
   /** Resolved download URLs, keyed by `{torrentId}:{fileId}`. */
   private downloadUrlCache: Map<string, CacheEntry<string>> = new Map();
 
+  /**
+   * Stale download URL cache — keeps expired URLs as a fallback.
+   * RealDebrid CDN URLs typically live 6-12 hours, so expired cache entries
+   * are very likely still valid. Used as a last resort when fresh resolution
+   * fails (423 Locked, rate limited, network error).
+   *
+   * This is the "serve stale while locked" strategy.
+   */
+  private staleDownloadUrls: Map<string, string> = new Map();
+
   /** TTL for torrent/directory listing in milliseconds. */
   private readonly listTtlMs: number;
 
@@ -370,10 +446,24 @@ class BridgeCache {
     const entry = this.downloadUrlCache.get(key);
     if (!entry) return null;
     if (Date.now() >= entry.expiresAt) {
+      // Move to stale cache instead of deleting — CDN URLs often live 6-12h
+      this.staleDownloadUrls.set(key, entry.data);
       this.downloadUrlCache.delete(key);
       return null;
     }
     return entry.data;
+  }
+
+  /**
+   * Retrieves a stale (expired) download URL as a fallback.
+   * Used when fresh resolution fails due to provider lock/rate limit.
+   * CDN URLs typically outlive our cache TTL by hours.
+   *
+   * @param key - The cache key (`{torrentId}:{fileId}`).
+   * @returns The stale URL, or null if none available.
+   */
+  getStaleDownloadUrl(key: string): string | null {
+    return this.staleDownloadUrls.get(key) ?? null;
   }
 
   /**
@@ -765,11 +855,17 @@ async function resolveTBDownloadUrl(torrentId: string, fileId: string): Promise<
  * ```
  */
 export class WebDAVBridge {
-  private readonly provider: "realdebrid" | "torbox";
+  private readonly provider: string;
   private readonly port: number;
   private readonly cache: BridgeCache;
   private server: http.Server | null = null;
   private lastRefresh: string | null = null;
+
+  /** Per-torrent consecutive failure counter for dead torrent detection. */
+  private torrentFailures: Map<string, number> = new Map();
+
+  /** Torrents flagged as dead due to persistent download failures. */
+  private deadTorrents: Map<string, DeadTorrentInfo> = new Map();
 
   /**
    * Creates a new WebDAVBridge instance.
@@ -1095,12 +1191,17 @@ export class WebDAVBridge {
       return;
     }
 
-    // Resolve the download URL (with caching)
+    // Resolve the download URL (with caching + retry)
     const downloadUrl = await this.resolveDownloadUrl(dir, file);
 
     if (!downloadUrl) {
-      logError(this.provider, `Could not resolve download URL for ${dir.name}/${file.name}`);
-      res.status(502).send("Failed to resolve download URL from provider");
+      // Return 503 with Retry-After header instead of 502.
+      // This tells rclone the file is temporarily unavailable and to retry,
+      // rather than treating it as a permanent failure that breaks the mount.
+      // This is the key fix for the "423 Locked" cascade that plagued pd_zurg.
+      logWarn(this.provider, `Temporarily unavailable: ${dir.name}/${file.name} — returning 503 Retry-After`);
+      res.setHeader("Retry-After", "5");
+      res.status(503).send("File temporarily unavailable — provider returned an error. Retry shortly.");
       return;
     }
 
@@ -1124,7 +1225,12 @@ export class WebDAVBridge {
 
     let dirs: VirtualDirectory[];
 
-    if (this.provider === "realdebrid") {
+    // Use the provider registry to fetch directories — provider-agnostic
+    const providerImpl = registry.get(this.provider);
+    if (providerImpl) {
+      dirs = await providerImpl.fetchDirectories();
+    } else if (this.provider === "realdebrid") {
+      // Fallback to inline helpers for backwards compatibility
       dirs = await fetchRDDirectories();
     } else {
       dirs = await fetchTBDirectories();
@@ -1145,16 +1251,24 @@ export class WebDAVBridge {
    * @returns Array of virtual files.
    */
   private async getFilesForTorrent(dir: VirtualDirectory): Promise<VirtualFile[]> {
-    // TorBox embeds files in the torrent listing — no extra call needed
-    if (this.provider === "torbox") {
+    // If files are already embedded (TorBox, AllDebrid, Premiumize), return them
+    if (dir.files.length > 0) {
       return dir.files;
     }
 
-    // RealDebrid: check info cache first
+    // Otherwise fetch lazily (RealDebrid)
     const cached = this.cache.getTorrentInfo(dir.id);
     if (cached) return cached;
 
-    const files = await fetchRDTorrentFiles(dir.id);
+    // Use provider registry if available
+    const providerImpl = registry.get(this.provider);
+    let files: VirtualFile[];
+    if (providerImpl?.fetchTorrentFiles) {
+      files = await providerImpl.fetchTorrentFiles(dir.id);
+    } else {
+      files = await fetchRDTorrentFiles(dir.id);
+    }
+
     if (files.length > 0) {
       this.cache.setTorrentInfo(dir.id, files);
     }
@@ -1165,6 +1279,18 @@ export class WebDAVBridge {
    * Resolves a direct download URL for a file, using the cache when available.
    * On cache miss, calls the provider API to generate a fresh CDN URL.
    *
+   * Includes retry-with-backoff to handle transient provider errors
+   * (423 Locked, 429 Rate Limit, network blips). This is the primary
+   * defence against the cascade failures that plagued pd_zurg.
+   *
+   * Falls back to stale (expired) cached URLs when fresh resolution fails —
+   * CDN URLs typically live 6-12 hours, so stale entries are very likely
+   * still valid ("serve stale while locked" strategy).
+   *
+   * Tracks per-torrent failure counts. After DEAD_TORRENT_THRESHOLD
+   * consecutive failures, marks the torrent as dead for the dead scanner
+   * to replace.
+   *
    * @param dir - The virtual directory containing the file.
    * @param file - The virtual file to resolve.
    * @returns The download URL, or null on failure.
@@ -1172,23 +1298,98 @@ export class WebDAVBridge {
   private async resolveDownloadUrl(dir: VirtualDirectory, file: VirtualFile): Promise<string | null> {
     const cacheKey = `${dir.id}:${file.id}`;
     const cached = this.cache.getDownloadUrl(cacheKey);
-    if (cached) return cached;
-
-    let url: string | null = null;
-
-    if (this.provider === "realdebrid") {
-      if (typeof file.linkIndex !== "number") {
-        logError(this.provider, `No link index for file ${file.name} in torrent ${dir.name}`);
-        return null;
-      }
-      url = await resolveRDDownloadUrl(dir.id, file.linkIndex);
-    } else {
-      url = await resolveTBDownloadUrl(dir.id, file.id);
+    if (cached) {
+      // Fresh cache hit — reset failure counter for this torrent
+      this.torrentFailures.delete(dir.id);
+      return cached;
     }
+
+    const label = `${this.provider}:${dir.name}/${file.name}`;
+
+    const url = await retryWithBackoff(
+      async () => {
+        // Use provider registry for provider-agnostic resolution
+        const providerImpl = registry.get(this.provider);
+        if (providerImpl && this.provider !== "realdebrid" && this.provider !== "torbox") {
+          // New providers (AllDebrid, Premiumize, etc.) use the interface
+          return providerImpl.resolveDownloadUrl(dir.id, file.id, file.linkIndex);
+        }
+        // Legacy inline helpers for RD/TB (proven, battle-tested)
+        if (this.provider === "realdebrid") {
+          if (typeof file.linkIndex !== "number") {
+            logError(this.provider, `No link index for file ${file.name} in torrent ${dir.name}`);
+            return null;
+          }
+          return resolveRDDownloadUrl(dir.id, file.linkIndex);
+        } else {
+          return resolveTBDownloadUrl(dir.id, file.id);
+        }
+      },
+      2,    // 3 total attempts (initial + 2 retries)
+      1000, // 1s → 2s → 4s backoff
+      label,
+    );
 
     if (url) {
       this.cache.setDownloadUrl(cacheKey, url);
+      // Successful resolution — reset failure counter
+      this.torrentFailures.delete(dir.id);
+      return url;
     }
-    return url;
+
+    // Fresh resolution failed — try stale cache ("serve stale while locked")
+    const staleUrl = this.cache.getStaleDownloadUrl(cacheKey);
+    if (staleUrl) {
+      logWarn(this.provider, `Serving stale cached URL for ${dir.name}/${file.name} (fresh resolution failed)`);
+      // Don't increment failure counter for stale hits — the file is still serving
+      return staleUrl;
+    }
+
+    // Total failure — no fresh URL, no stale URL. Track for dead torrent detection.
+    const currentFailures = (this.torrentFailures.get(dir.id) ?? 0) + 1;
+    this.torrentFailures.set(dir.id, currentFailures);
+
+    if (currentFailures >= DEAD_TORRENT_THRESHOLD) {
+      logError(
+        this.provider,
+        `Torrent ${dir.name} (${dir.id}) reached ${currentFailures} consecutive failures — flagging as dead`
+      );
+      this.deadTorrents.set(dir.id, {
+        id: dir.id,
+        name: dir.originalName || dir.name,
+        provider: this.provider,
+        failureCount: currentFailures,
+        flaggedAt: new Date().toISOString(),
+      });
+    }
+
+    return null;
+  }
+
+  // -------------------------------------------------------------------------
+  // Dead Torrent API
+  // -------------------------------------------------------------------------
+
+  /**
+   * Returns torrents that have been flagged as dead due to persistent
+   * download failures. External consumers (dead scanner) can use this
+   * to delete them from the provider and search for replacements.
+   *
+   * @returns Map of torrent ID to dead torrent info.
+   */
+  getDeadTorrents(): Map<string, DeadTorrentInfo> {
+    return new Map(this.deadTorrents);
+  }
+
+  /**
+   * Clears a torrent from the dead list after it's been handled
+   * (deleted from provider, replacement queued, etc.).
+   *
+   * @param torrentId - The torrent ID to clear.
+   */
+  clearDeadTorrent(torrentId: string): void {
+    this.deadTorrents.delete(torrentId);
+    this.torrentFailures.delete(torrentId);
+    log(this.provider, `Cleared dead torrent flag for ${torrentId}`);
   }
 }
