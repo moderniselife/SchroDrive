@@ -13,6 +13,7 @@
  */
 
 import { config } from "../core/config";
+import { isWatchlistProcessed, markWatchlistProcessed, getProcessedWatchlistKeys } from "../core/db";
 import { getPlexWatchlist, extractTmdbId, refreshPlexLibrary, type PlexWatchlistItem } from "../integrations/plex";
 import { getJellyfinWatchlist, refreshJellyfinLibrary, type JellyfinWatchlistItem } from "../integrations/jellyfin";
 import { getEmbyWatchlist, refreshEmbyLibrary, type EmbyWatchlistItem } from "../integrations/emby";
@@ -178,8 +179,11 @@ async function fetchAllWatchlists(): Promise<UnifiedWatchlistItem[]> {
 // Poller
 // =============================================================================
 
-/** Set of already-processed watchlist item keys to avoid re-processing. */
-const processed = new Set<string>();
+/** In-memory cache of processed keys, hydrated from SQLite at startup. */
+let processed = new Set<string>();
+
+/** Whether the processed set has been hydrated from the database. */
+let processedHydrated = false;
 
 /**
  * Builds a search query string from a watchlist item.
@@ -314,29 +318,28 @@ async function pollOnce(): Promise<void> {
 
     let newCount = 0;
     for (const item of items) {
-      if (processed.has(item.key)) continue;
+      // Check in-memory cache first, then fall back to DB
+      if (processed.has(item.key) || isWatchlistProcessed(item.key)) {
+        // Ensure the in-memory cache stays in sync
+        processed.add(item.key);
+        continue;
+      }
 
       try {
         const success = await processWatchlistItem(item);
         if (success) {
           processed.add(item.key);
+          markWatchlistProcessed(item.key, item.source, item.title);
           newCount++;
         } else {
           // Still mark as processed to avoid hammering the indexer
-          // Item will be retried if the user re-adds or if we restart
+          // Item will be retried if the user re-adds or if DB is pruned after 30 days
           processed.add(item.key);
+          markWatchlistProcessed(item.key, item.source, item.title);
         }
       } catch (err: any) {
         console.error(`[${new Date().toISOString()}][watchlist] Error processing ${item.key}:`, err?.message || String(err));
         // Don't add to processed — will retry next tick
-      }
-
-      // Trim processed set to avoid memory growth
-      if (processed.size > 2000) {
-        const first = processed.values().next().value as string | undefined;
-        if (typeof first === "string") {
-          processed.delete(first);
-        }
       }
     }
 
@@ -391,6 +394,18 @@ export function startWatchlistPoller(): void {
   if (isListrrConfigured()) servers.push("Listrr");
 
   console.log(`[${new Date().toISOString()}][watchlist] Starting poller — servers: ${servers.join(", ")}, interval: ${Math.round(intervalMs / 1000)}s`);
+
+  // Hydrate processed set from SQLite on first start
+  if (!processedHydrated) {
+    try {
+      processed = getProcessedWatchlistKeys();
+      processedHydrated = true;
+      console.log(`[${new Date().toISOString()}][watchlist] Hydrated ${processed.size} processed keys from database`);
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}][watchlist] Failed to hydrate from database: ${err?.message}`);
+      processedHydrated = true; // Don't retry every tick
+    }
+  }
 
   // Initial poll after a short delay to let mounts stabilise
   setTimeout(() => {

@@ -12,6 +12,8 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { config } from "./config";
+import { backupBlacklistEntry, recoverBlacklistFromDb } from "./db";
 
 // ===========================================================================
 // Types
@@ -33,7 +35,8 @@ export interface BlacklistEntry {
 // Blacklist Store
 // ===========================================================================
 
-const BLACKLIST_PATH = process.env.BLACKLIST_PATH || "/tmp/schrodrive/blacklist.json";
+const OLD_BLACKLIST_PATH = "/tmp/schrodrive/blacklist.json";
+const BLACKLIST_PATH = process.env.BLACKLIST_PATH || path.join(config.dataDir, 'blacklist.json');
 
 /** In-memory blacklist set (normalised lowercase names). */
 let blacklistSet: Set<string> = new Set();
@@ -47,16 +50,43 @@ let blacklistEntries: BlacklistEntry[] = [];
  */
 export function loadBlacklist(): void {
   try {
+    // Auto-migrate from old /tmp path if the new path doesn't exist but the old one does
+    if (!fs.existsSync(BLACKLIST_PATH) && fs.existsSync(OLD_BLACKLIST_PATH)) {
+      console.log(`[${new Date().toISOString()}][blacklist] Migrating from ${OLD_BLACKLIST_PATH} to ${BLACKLIST_PATH}`);
+      const dir = path.dirname(BLACKLIST_PATH);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.copyFileSync(OLD_BLACKLIST_PATH, BLACKLIST_PATH);
+    }
+
     if (fs.existsSync(BLACKLIST_PATH)) {
       const raw = fs.readFileSync(BLACKLIST_PATH, "utf8");
-      blacklistEntries = JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error("Blacklist file is empty or not an array");
+      }
+      blacklistEntries = parsed;
       blacklistSet = new Set(blacklistEntries.map((e) => e.name.toLowerCase()));
-      console.log(`[${new Date().toISOString()}][blacklist] loaded ${blacklistSet.size} entries from ${BLACKLIST_PATH}`);
+      console.log(`[${new Date().toISOString()}][blacklist] Loaded ${blacklistSet.size} entries from ${BLACKLIST_PATH}`);
     } else {
-      console.log(`[${new Date().toISOString()}][blacklist] no blacklist file found, starting empty`);
+      console.log(`[${new Date().toISOString()}][blacklist] No blacklist file found, starting empty`);
     }
   } catch (e: any) {
-    console.warn(`[${new Date().toISOString()}][blacklist] failed to load: ${e?.message}`);
+    console.warn(`[${new Date().toISOString()}][blacklist] Failed to load from file: ${e?.message}`);
+    // Attempt recovery from SQLite backup
+    try {
+      const recovered = recoverBlacklistFromDb();
+      if (recovered.length > 0) {
+        blacklistEntries = recovered;
+        blacklistSet = new Set(blacklistEntries.map((e) => e.name.toLowerCase()));
+        console.log(`[${new Date().toISOString()}][blacklist] Recovered ${recovered.length} entries from SQLite backup`);
+        // Re-save the recovered data to the JSON file
+        saveBlacklist();
+      } else {
+        console.warn(`[${new Date().toISOString()}][blacklist] No entries in SQLite backup, starting empty`);
+      }
+    } catch (dbErr: any) {
+      console.warn(`[${new Date().toISOString()}][blacklist] SQLite recovery also failed: ${dbErr?.message}`);
+    }
   }
 }
 
@@ -87,15 +117,30 @@ export function addToBlacklist(name: string, reason: string, provider: string): 
   if (blacklistSet.has(normalised)) return; // Already blacklisted
 
   blacklistSet.add(normalised);
-  blacklistEntries.push({
+  const entry: BlacklistEntry = {
     name,
     reason,
     provider,
     blacklistedAt: new Date().toISOString(),
-  });
+  };
+  blacklistEntries.push(entry);
 
   saveBlacklist();
-  console.log(`[${new Date().toISOString()}][blacklist] added: "${name}" (${reason})`);
+
+  // Backup to SQLite for disaster recovery
+  try {
+    backupBlacklistEntry(
+      name,
+      reason,
+      provider,
+      Date.now(),
+      JSON.stringify(entry),
+    );
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][blacklist] SQLite backup failed: ${err?.message}`);
+  }
+
+  console.log(`[${new Date().toISOString()}][blacklist] Added: "${name}" (${reason})`);
 }
 
 /**

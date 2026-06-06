@@ -222,6 +222,7 @@ SchröDrive is designed to handle the real-world chaos of debrid services:
 | **423 Locked resilience** | ✅ Stale cache + retry + 503 Retry-After | Not documented | Rate-limit config (mitigation) | Not documented |
 | **Mount health monitoring** | ✅ Auto-remount | Not documented | Not applicable (WebDAV server) | Not applicable (built-in VFS) |
 | **Persistent blacklist** | ✅ | — | — | — |
+| **Persistent state (DB)** | ✅ SQLite (embedded, zero-config) | — (in-memory) | — (in-memory) | PostgreSQL + Redis (2 extra containers) |
 | **Media organiser** | ✅ TMDB/TVMaze symlinks | — | — | ✅ Built-in VFS |
 | **Rate limit learning** | ✅ Per-endpoint adaptive | — | Configurable per-minute limits | Not documented |
 
@@ -231,6 +232,34 @@ SchröDrive is designed to handle the real-world chaos of debrid services:
 - **pd_zurg** — *Deprecated (Jan 2026).* Was the original all-in-one Docker solution. Successor is [DUMB](https://github.com/I-am-PUID-0/DUMB).
 - **Zurg** — Purpose-built, high-performance WebDAV server for RealDebrid. Excellent at what it does (serving files), but needs additional tools for automation.
 - **Riven** — Feature-rich with 7+ scrapers, Trakt/Mdblist integration, built-in VFS, and a settings UI. However, requires multi-container deployment (App + PostgreSQL + Redis).
+
+### Why SQLite Instead of PostgreSQL + Redis?
+
+Riven requires **three separate containers** to run: the app itself, a PostgreSQL database, and a Redis cache. That's 3 processes, 3 potential failure points, and ~500–800 MB of extra RAM sitting idle.
+
+SchröDrive uses **embedded SQLite** with WAL (Write-Ahead Logging) instead:
+
+| | SchröDrive (SQLite) | Riven (PostgreSQL + Redis) |
+|---|:---:|:---:|
+| **Containers needed** | 1 | 3 (App + Postgres + Redis) |
+| **Extra RAM overhead** | ~0 MB | ~500–800 MB |
+| **Backup** | Copy one `.db` file | `pg_dump` + Redis `SAVE` |
+| **Configuration** | Zero (auto-created) | Connection strings, passwords, volumes |
+| **Failure modes** | 1 process | 3 processes (any can crash) |
+| **Data recovery** | App still works if DB deleted | App crashes without Postgres |
+| **Migration** | WAL journalling, auto-schema | Requires migration tooling |
+| **Concurrent reads** | ✅ WAL mode | ✅ |
+| **Write performance** | Microseconds (local disk) | Milliseconds (network + serialisation) |
+
+SchröDrive's SQLite database is a **bonus persistence layer** — the app degrades gracefully if the database is missing or corrupted. Every DB write is wrapped in try/catch. The in-memory state remains the primary source of truth; SQLite just ensures it survives restarts.
+
+What SchröDrive persists in SQLite:
+- **Processed watchlist items** — prevents re-processing on restart
+- **Dead torrent flags + failure counters** — detection survives restarts
+- **Rate limit backoff state** — doesn't re-hammer rate-limited APIs
+- **API response cache** — avoids cold-start request bursts
+- **Blacklist backup** — auto-recovers if the JSON file is deleted
+
 
 ---
 
@@ -252,6 +281,7 @@ src/
 │   ├── webdavBridge.ts       #   API-to-WebDAV translation layer (provider-agnostic)
 │   ├── organizer.ts          #   Media organiser (symlinks + metadata)
 │   ├── mediaServerWatchlist.ts#  Plex/Jellyfin/Emby watchlist polling
+│   ├── stremioAddon.ts       #   Stremio addon server (port 7000)
 │   ├── autoUpdate.ts         #   GitHub release auto-updater
 │   └── infringementList.ts   #   Content filtering
 ├── integrations/             # Watchlist sources
@@ -276,6 +306,7 @@ src/
 │   ├── rateLimiter.ts        #   Adaptive rate limiter with caching
 │   ├── rateLimitStore.ts     #   Persistent rate limit state
 │   ├── blacklist.ts          #   Persistent dead torrent blacklist
+│   ├── db.ts                 #   SQLite persistence layer (WAL mode)
 │   └── logger.ts             #   In-memory log buffer
 ├── server.ts                 # Express HTTP server + REST API
 └── index.ts                  # CLI entrypoint (Commander)
