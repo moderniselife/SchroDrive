@@ -361,6 +361,101 @@ export class PremiumizeProvider implements DebridProvider {
     }
   }
 
+  /**
+   * Returns the info hash for a transfer, used for repair (re-adding).
+   *
+   * Premiumize stores the original magnet/source in the transfer data.
+   * We extract the info hash from the `src` field using a regex match
+   * on the `btih:` URN. Falls back to the `hash` field if present.
+   *
+   * @param torrentId - The Premiumize transfer ID.
+   * @returns The info hash string, or null if not available.
+   */
+  async getInfoHash(torrentId: string): Promise<string | null> {
+    // Check cached transfer list first
+    const cached = rateLimiter.getCache<any[]>(TRANSFER_LIST_CACHE_KEY);
+    if (cached) {
+      const transfer = cached.find((t: any) => String(t.id) === String(torrentId));
+      if (transfer) {
+        // Try hash field first, then extract from src magnet
+        if (transfer.hash) return transfer.hash;
+        const match = (transfer.src || '').match(/btih:([a-fA-F0-9]{32,})/i);
+        if (match) return match[1];
+      }
+    }
+
+    // Fall back to API call
+    if (rateLimiter.isRateLimited(PROVIDER_NAME)) return null;
+    await rateLimiter.throttle(PROVIDER_NAME);
+
+    const base = getBaseUrl();
+    const url = `${base}/transfer/list`;
+
+    try {
+      const res = await axiosIPv4.get(url, {
+        headers: premiumizeHeaders(),
+        timeout: 20000,
+      });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+
+      const transfers = Array.isArray(res?.data?.transfers) ? res.data.transfers : [];
+      const transfer = transfers.find((t: any) => String(t.id) === String(torrentId));
+      if (!transfer) return null;
+
+      if (transfer.hash) return transfer.hash;
+      const match = (transfer.src || '').match(/btih:([a-fA-F0-9]{32,})/i);
+      return match ? match[1] : null;
+    } catch (err: any) {
+      this.handleError(err, `get info hash ${torrentId}`);
+      return null;
+    }
+  }
+
+  /**
+   * Attempts to repair a dead transfer by re-adding the same magnet.
+   *
+   * Flow:
+   * 1. Fetch the info hash from the dead transfer
+   * 2. Delete the broken transfer
+   * 3. Re-add the same magnet to Premiumize
+   * 4. If successful → repaired; if failed → needs replacement
+   *
+   * @param torrentId - The Premiumize transfer ID to repair.
+   * @returns `true` if repair succeeded, `false` if the transfer should be replaced.
+   */
+  async repairTorrent(torrentId: string): Promise<boolean> {
+    console.log(`[${new Date().toISOString()}][premiumize] attempting repair for transfer ${torrentId}`);
+
+    // Step 1: Get the info hash before deletion
+    const infoHash = await this.getInfoHash(torrentId);
+    if (!infoHash) {
+      console.warn(`[${new Date().toISOString()}][premiumize] repair failed — could not get info hash for ${torrentId}`);
+      return false;
+    }
+
+    // Step 2: Delete the broken transfer
+    try {
+      await this.deleteTorrent(torrentId);
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}][premiumize] repair delete failed for ${torrentId}`, { err: err?.message });
+      return false;
+    }
+
+    // Step 3: Re-add the same magnet
+    const magnet = `magnet:?xt=urn:btih:${infoHash.toUpperCase()}`;
+    try {
+      const result = await this.addMagnet(magnet);
+      if (result.id) {
+        console.log(`[${new Date().toISOString()}][premiumize] repair successful — re-added as ${result.id}`, { hash: infoHash });
+        return true;
+      }
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}][premiumize] repair re-add failed`, { hash: infoHash, err: err?.message });
+    }
+
+    return false;
+  }
+
   // -------------------------------------------------------------------------
   // WebDAV Bridge Support
   // -------------------------------------------------------------------------
