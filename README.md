@@ -987,6 +987,32 @@ curl http://localhost:8978/health
 
 </details>
 
+<details>
+<summary><strong>Docker container fails to stop / recreate (naming conflict / "D-state")</strong></summary>
+
+This happens when the `rclone` FUSE mount process on the host gets into an uninterruptible sleep state (D-state) due to network disconnects or API rate limits, or when an orphaned `rclone` process continues to run on the host after the container is stopped.
+
+Docker cannot kill or remove a container when its FUSE mount is locked.
+
+**Solution:**
+1. Kill any orphaned `rclone` processes on the host:
+   ```bash
+   sudo killall -9 rclone
+   ```
+2. Forcefully unmount the stale mount points on the host:
+   ```bash
+   sudo umount -l ~/schrodrive/realdebrid ~/schrodrive/torbox
+   # or
+   sudo fusermount -uz ~/schrodrive/realdebrid ~/schrodrive/torbox
+   ```
+3. Forcefully remove the conflicting container:
+   ```bash
+   docker rm -f schrodrive
+   ```
+4. Bring the docker-compose stack back up.
+
+</details>
+
 ---
 
 ## 📦 Releases
