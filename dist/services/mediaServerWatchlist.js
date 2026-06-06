@@ -275,6 +275,11 @@ async function processWatchlistItem(item) {
  */
 async function pollOnce() {
     try {
+        const isStreaming = await (0, plex_1.isAnyMediaServerStreaming)();
+        if (isStreaming) {
+            console.log(`[${new Date().toISOString()}][watchlist] Active media stream detected. Skipping watchlist poll to avoid debrid rate limits.`);
+            return;
+        }
         console.log(`[${new Date().toISOString()}][watchlist] Polling all configured media servers...`);
         const items = await fetchAllWatchlists();
         console.log(`[${new Date().toISOString()}][watchlist] Total watchlist items: ${items.length}`);

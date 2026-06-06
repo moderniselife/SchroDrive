@@ -2,6 +2,7 @@ import { config } from "../core/config";
 import { searchIndexer, pickBestResult, getMagnet, getMagnetOrResolve } from "../indexers/index";
 import { registry, type TorrentInfo } from "../providers";
 import { getActiveBridges } from "./mount";
+import { isAnyMediaServerStreaming } from "../integrations/plex";
 import { addToBlacklist, isBlacklisted, loadBlacklist } from "../core/blacklist";
 import type { DeadTorrentInfo } from "./webdavBridge";
 
@@ -337,6 +338,19 @@ export function startDeadScanner() {
   console.log(`[${new Date().toISOString()}][dead-scan] starting`, { everySeconds: Math.round(intervalMs / 1000) });
   const run = async () => {
     try {
+      const isStreaming = await isAnyMediaServerStreaming();
+      if (isStreaming) {
+        console.log(`[${new Date().toISOString()}][dead-scan] Active media stream detected. Skipping scan to avoid debrid rate limits.`);
+        return;
+      }
+
+      const configuredProviders = registry.configured();
+      const allRateLimited = configuredProviders.every(p => p.isRateLimited());
+      if (allRateLimited && configuredProviders.length > 0) {
+        console.warn(`[${new Date().toISOString()}][dead-scan] All debrid providers are rate-limited. Skipping scan to avoid API spam.`);
+        return;
+      }
+
       await scanDeadOnce();
     } catch (e: any) {
       console.error(`[${new Date().toISOString()}][dead-scan] error`, e?.message || String(e));

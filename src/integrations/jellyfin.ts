@@ -123,3 +123,33 @@ export async function refreshJellyfinLibrary(): Promise<void> {
     console.error(`[${new Date().toISOString()}][jellyfin] Library refresh failed:`, err?.message || String(err));
   }
 }
+
+/**
+ * Checks if there are any active playing sessions on the Jellyfin server.
+ *
+ * @returns `true` if Jellyfin has active playing sessions.
+ */
+export async function isJellyfinStreaming(): Promise<boolean> {
+  const baseUrl = config.jellyfinUrl;
+  const apiKey = config.jellyfinApiKey;
+  if (!baseUrl || !apiKey) return false;
+
+  const url = `${baseUrl.replace(/\/$/, "")}/Sessions`;
+  try {
+    const res = await axios.get(url, {
+      headers: {
+        "X-Emby-Authorization": `MediaBrowser Token="${apiKey}"`,
+        Accept: "application/json",
+      },
+      timeout: 5000,
+    });
+
+    const sessions = Array.isArray(res.data) ? res.data : [];
+    // Check if any session is currently playing media (i.e. has NowPlayingItem)
+    return sessions.some((s: any) => s.NowPlayingItem);
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][jellyfin] Failed to check Jellyfin streaming sessions:`, err?.message || String(err));
+    return false;
+  }
+}
+
