@@ -24,8 +24,8 @@ import express, { type Request, type Response, type NextFunction } from "express
 import http from "http";
 import https from "https";
 import axios from "axios";
-import { config } from "./config";
-import { rateLimiter } from "./rateLimiter";
+import { config } from "../core/config";
+import { rateLimiter } from "../core/rateLimiter";
 
 // ===========================================================================
 // HTTP Client (IPv4 forced — matches realdebrid.ts pattern)
