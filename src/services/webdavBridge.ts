@@ -183,6 +183,50 @@ function sanitiseName(name: string): string {
 }
 
 // ===========================================================================
+// Retry Utility
+// ===========================================================================
+
+/**
+ * Retries an async operation with exponential backoff.
+ * Used to handle transient provider errors (423 Locked, 429 Rate Limit,
+ * 503 Service Unavailable) that would otherwise cascade through rclone
+ * and break FUSE mounts.
+ *
+ * @param fn - The async function to retry.
+ * @param maxRetries - Maximum number of retry attempts.
+ * @param baseDelayMs - Initial delay in milliseconds (doubles each retry).
+ * @param label - Label for log messages.
+ * @returns The result of the function, or null if all retries failed.
+ */
+async function retryWithBackoff<T>(
+  fn: () => Promise<T | null>,
+  maxRetries: number,
+  baseDelayMs: number,
+  label: string,
+): Promise<T | null> {
+  let lastError: string | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await fn();
+      if (result !== null) return result;
+      lastError = "returned null";
+    } catch (err: any) {
+      lastError = err?.message || String(err);
+    }
+
+    if (attempt < maxRetries) {
+      const delay = baseDelayMs * Math.pow(2, attempt);
+      logWarn("retry", `${label} attempt ${attempt + 1}/${maxRetries + 1} failed (${lastError}), retrying in ${delay}ms`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+
+  logError("retry", `${label} failed after ${maxRetries + 1} attempts: ${lastError}`);
+  return null;
+}
+
+// ===========================================================================
 // WebDAV XML Builders
 // ===========================================================================
 
@@ -1095,12 +1139,17 @@ export class WebDAVBridge {
       return;
     }
 
-    // Resolve the download URL (with caching)
+    // Resolve the download URL (with caching + retry)
     const downloadUrl = await this.resolveDownloadUrl(dir, file);
 
     if (!downloadUrl) {
-      logError(this.provider, `Could not resolve download URL for ${dir.name}/${file.name}`);
-      res.status(502).send("Failed to resolve download URL from provider");
+      // Return 503 with Retry-After header instead of 502.
+      // This tells rclone the file is temporarily unavailable and to retry,
+      // rather than treating it as a permanent failure that breaks the mount.
+      // This is the key fix for the "423 Locked" cascade that plagued pd_zurg.
+      logWarn(this.provider, `Temporarily unavailable: ${dir.name}/${file.name} — returning 503 Retry-After`);
+      res.setHeader("Retry-After", "5");
+      res.status(503).send("File temporarily unavailable — provider returned an error. Retry shortly.");
       return;
     }
 
@@ -1165,6 +1214,10 @@ export class WebDAVBridge {
    * Resolves a direct download URL for a file, using the cache when available.
    * On cache miss, calls the provider API to generate a fresh CDN URL.
    *
+   * Includes retry-with-backoff to handle transient provider errors
+   * (423 Locked, 429 Rate Limit, network blips). This is the primary
+   * defence against the cascade failures that plagued pd_zurg.
+   *
    * @param dir - The virtual directory containing the file.
    * @param file - The virtual file to resolve.
    * @returns The download URL, or null on failure.
@@ -1174,17 +1227,24 @@ export class WebDAVBridge {
     const cached = this.cache.getDownloadUrl(cacheKey);
     if (cached) return cached;
 
-    let url: string | null = null;
+    const label = `${this.provider}:${dir.name}/${file.name}`;
 
-    if (this.provider === "realdebrid") {
-      if (typeof file.linkIndex !== "number") {
-        logError(this.provider, `No link index for file ${file.name} in torrent ${dir.name}`);
-        return null;
-      }
-      url = await resolveRDDownloadUrl(dir.id, file.linkIndex);
-    } else {
-      url = await resolveTBDownloadUrl(dir.id, file.id);
-    }
+    const url = await retryWithBackoff(
+      async () => {
+        if (this.provider === "realdebrid") {
+          if (typeof file.linkIndex !== "number") {
+            logError(this.provider, `No link index for file ${file.name} in torrent ${dir.name}`);
+            return null;
+          }
+          return resolveRDDownloadUrl(dir.id, file.linkIndex);
+        } else {
+          return resolveTBDownloadUrl(dir.id, file.id);
+        }
+      },
+      2,    // 3 total attempts (initial + 2 retries)
+      1000, // 1s → 2s → 4s backoff
+      label,
+    );
 
     if (url) {
       this.cache.setDownloadUrl(cacheKey, url);
