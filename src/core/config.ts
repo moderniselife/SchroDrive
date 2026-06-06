@@ -129,6 +129,44 @@ export const config = {
   webdavBridgePortPM: Number(process.env.WEBDAV_BRIDGE_PORT_PM || 9118),
   webdavCacheTtlS: Number(process.env.WEBDAV_CACHE_TTL_S || 30),
   webdavDownloadCacheTtlS: Number(process.env.WEBDAV_DOWNLOAD_CACHE_TTL_S || 1800),
+  // --- Trakt Integration ---
+  traktClientId: process.env.TRAKT_CLIENT_ID || "",
+  traktClientSecret: process.env.TRAKT_CLIENT_SECRET || "",
+  traktAccessToken: process.env.TRAKT_ACCESS_TOKEN || "",
+  traktRefreshToken: process.env.TRAKT_REFRESH_TOKEN || "",
+  traktUsername: process.env.TRAKT_USERNAME || "",
+  // --- Mdblist Integration ---
+  mdblistApiKey: process.env.MDBLIST_API_KEY || "",
+  mdblistListIds: (process.env.MDBLIST_LIST_IDS || "").split(",").map(s => s.trim()).filter(Boolean),
+  // --- Listrr Integration ---
+  listrrApiKey: process.env.LISTRR_API_KEY || "",
+  // --- Stremio Addon Scrapers ---
+  // Scraper mode: 'merge' (combine with indexer results), 'fallback' (only when indexer returns 0)
+  scraperMode: (process.env.SCRAPER_MODE || "merge") as "merge" | "fallback",
+  // Torrentio
+  torrentioUrl: process.env.TORRENTIO_URL || "https://torrentio.strem.fun",
+  torrentioConfig: process.env.TORRENTIO_CONFIG || "",
+  torrentioEnabled: String(process.env.TORRENTIO_ENABLED ?? "false").toLowerCase() === "true",
+  // Comet
+  cometUrl: process.env.COMET_URL || "",
+  cometConfig: process.env.COMET_CONFIG || "",
+  cometEnabled: String(process.env.COMET_ENABLED ?? "false").toLowerCase() === "true",
+  // Zilean (DMM hashlists)
+  zileanUrl: process.env.ZILEAN_URL || "https://zilean.elfhosted.com",
+  zileanEnabled: String(process.env.ZILEAN_ENABLED ?? "false").toLowerCase() === "true",
+  // Mediafusion
+  mediafusionUrl: process.env.MEDIAFUSION_URL || "https://mediafusion.elfhosted.com",
+  mediafusionConfig: process.env.MEDIAFUSION_CONFIG || "",
+  mediafusionEnabled: String(process.env.MEDIAFUSION_ENABLED ?? "false").toLowerCase() === "true",
+  // --- Stremio Addon Server (expose SchröDrive as an addon) ---
+  stremioAddonEnabled: String(process.env.STREMIO_ADDON_ENABLED ?? "false").toLowerCase() === "true",
+  stremioAddonPort: Number(process.env.STREMIO_ADDON_PORT || 7000),
+  // --- Torrent Repair ---
+  enableRepair: String(process.env.ENABLE_REPAIR ?? "true").toLowerCase() !== "false",
+  repairMaxAttempts: Number(process.env.REPAIR_MAX_ATTEMPTS || 3),
+  // Pre-emptive repair: detect stalling torrents before they die
+  preemptiveRepairEnabled: String(process.env.PREEMPTIVE_REPAIR ?? "true").toLowerCase() !== "false",
+  preemptiveRepairStallMinutes: Number(process.env.PREEMPTIVE_REPAIR_STALL_MIN || 30),
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {

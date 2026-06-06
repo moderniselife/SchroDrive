@@ -16,6 +16,9 @@ import { config } from "../core/config";
 import { getPlexWatchlist, extractTmdbId, refreshPlexLibrary, type PlexWatchlistItem } from "../integrations/plex";
 import { getJellyfinWatchlist, refreshJellyfinLibrary, type JellyfinWatchlistItem } from "../integrations/jellyfin";
 import { getEmbyWatchlist, refreshEmbyLibrary, type EmbyWatchlistItem } from "../integrations/emby";
+import { getTraktWatchlist, isTraktConfigured, type TraktWatchlistItem } from "../integrations/trakt";
+import { getMdblistWatchlist, isMdblistConfigured, type MdblistWatchlistItem } from "../integrations/mdblist";
+import { getListrrWatchlist, isListrrConfigured, type ListrrWatchlistItem } from "../integrations/listrr";
 import { searchIndexer, pickBestResult, getMagnet, getMagnetOrResolve, getProviderName, isIndexerConfigured } from "../indexers/index";
 import { registry } from "../providers";
 
@@ -23,12 +26,12 @@ import { registry } from "../providers";
 // Types
 // =============================================================================
 
-/** Normalised watchlist item from any media server. */
+/** Normalised watchlist item from any media server or list service. */
 interface UnifiedWatchlistItem {
   /** Unique key for deduplication (source:id). */
   key: string;
-  /** Source media server. */
-  source: "plex" | "jellyfin" | "emby";
+  /** Source service. */
+  source: "plex" | "jellyfin" | "emby" | "trakt" | "mdblist" | "listrr";
   /** Title of the media item. */
   title: string;
   /** Release year. */
@@ -37,6 +40,8 @@ interface UnifiedWatchlistItem {
   type: "movie" | "show";
   /** TMDB ID if available. */
   tmdbId?: number;
+  /** IMDB ID if available (used for scraper searches). */
+  imdbId?: string;
 }
 
 // =============================================================================
@@ -107,6 +112,65 @@ async function fetchAllWatchlists(): Promise<UnifiedWatchlistItem[]> {
     }
   }
 
+  // Trakt
+  if (isTraktConfigured()) {
+    try {
+      const traktItems = await getTraktWatchlist();
+      for (const item of traktItems) {
+        items.push({
+          key: `trakt:${item.id}`,
+          source: "trakt",
+          title: item.title,
+          year: item.year,
+          type: item.type,
+          tmdbId: item.tmdbId,
+          imdbId: item.imdbId,
+        });
+      }
+    } catch (err: any) {
+      console.error(`[${new Date().toISOString()}][watchlist] Trakt fetch error:`, err?.message || String(err));
+    }
+  }
+
+  // Mdblist
+  if (isMdblistConfigured()) {
+    try {
+      const mdbItems = await getMdblistWatchlist();
+      for (const item of mdbItems) {
+        items.push({
+          key: `mdblist:${item.id}`,
+          source: "mdblist",
+          title: item.title,
+          year: item.year,
+          type: item.type,
+          tmdbId: item.tmdbId,
+          imdbId: item.imdbId,
+        });
+      }
+    } catch (err: any) {
+      console.error(`[${new Date().toISOString()}][watchlist] Mdblist fetch error:`, err?.message || String(err));
+    }
+  }
+
+  // Listrr
+  if (isListrrConfigured()) {
+    try {
+      const listrrItems = await getListrrWatchlist();
+      for (const item of listrrItems) {
+        items.push({
+          key: `listrr:${item.tmdbId || item.id}`,
+          source: "listrr",
+          title: item.title,
+          year: item.year,
+          type: item.type,
+          tmdbId: item.tmdbId,
+        });
+      }
+    } catch (err: any) {
+      console.error(`[${new Date().toISOString()}][watchlist] Listrr fetch error:`, err?.message || String(err));
+    }
+  }
+
   return items;
 }
 
@@ -141,7 +205,7 @@ function categoriesForType(type: "movie" | "show"): string[] {
 /**
  * Refreshes the library for the media server that sourced this item.
  */
-async function refreshSourceLibrary(source: "plex" | "jellyfin" | "emby"): Promise<void> {
+async function refreshSourceLibrary(source: UnifiedWatchlistItem["source"]): Promise<void> {
   switch (source) {
     case "plex":
       await refreshPlexLibrary();
@@ -151,6 +215,11 @@ async function refreshSourceLibrary(source: "plex" | "jellyfin" | "emby"): Promi
       break;
     case "emby":
       await refreshEmbyLibrary();
+      break;
+    case "trakt":
+    case "mdblist":
+    case "listrr":
+      // List services don't have libraries to refresh
       break;
   }
 }
@@ -294,8 +363,14 @@ export function startWatchlistPoller(): void {
     (!!config.jellyfinUrl && !!config.jellyfinApiKey) ||
     (!!config.embyUrl && !!config.embyApiKey);
 
-  if (!hasMediaServer) {
-    console.warn(`[${new Date().toISOString()}][watchlist] No media server configured — watchlist poller disabled`);
+  const hasWatchlistSource =
+    hasMediaServer ||
+    isTraktConfigured() ||
+    isMdblistConfigured() ||
+    isListrrConfigured();
+
+  if (!hasWatchlistSource) {
+    console.warn(`[${new Date().toISOString()}][watchlist] No media server or watchlist source configured — watchlist poller disabled`);
     console.warn(`[${new Date().toISOString()}][watchlist] Set PLEX_TOKEN, JELLYFIN_URL+JELLYFIN_API_KEY, or EMBY_URL+EMBY_API_KEY`);
     return;
   }
@@ -311,6 +386,9 @@ export function startWatchlistPoller(): void {
   if (config.plexToken) servers.push("Plex");
   if (config.jellyfinUrl) servers.push("Jellyfin");
   if (config.embyUrl) servers.push("Emby");
+  if (isTraktConfigured()) servers.push("Trakt");
+  if (isMdblistConfigured()) servers.push("Mdblist");
+  if (isListrrConfigured()) servers.push("Listrr");
 
   console.log(`[${new Date().toISOString()}][watchlist] Starting poller — servers: ${servers.join(", ")}, interval: ${Math.round(intervalMs / 1000)}s`);
 

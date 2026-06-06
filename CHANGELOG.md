@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.3.0] - 2026-06-06 🏆
+*Status: Feature parity with all competitors — zero gaps in comparison table*
+
+### Added ✨
+- **Trakt watchlist integration** (`src/integrations/trakt.ts`):
+  - Dual auth: OAuth2 (private lists) + API key (public lists)
+  - Automatic token refresh on 401 (logs new token for env var update)
+  - Fetches both movie and show watchlists with TMDB/IMDB IDs
+- **Mdblist watchlist integration** (`src/integrations/mdblist.ts`):
+  - API key auth, fetches from specific list IDs or all user lists
+  - Deduplicates items across lists
+- **Listrr watchlist integration** (`src/integrations/listrr.ts`):
+  - API key auth via `X-Api-Key` header
+  - Fetches movie and show lists with TMDB IDs
+- **Torrentio scraper** (`src/indexers/torrentio.ts`):
+  - Stremio addon protocol search for movies and series
+  - Configurable via `TORRENTIO_URL` and `TORRENTIO_CONFIG`
+- **Comet scraper** (`src/indexers/comet.ts`):
+  - Stremio addon protocol with Base64 config support
+- **Zilean DMM scraper** (`src/indexers/zilean.ts`):
+  - Text-based hash search (no IMDB ID required)
+  - Default public instance + self-hosted URL support
+- **Mediafusion scraper** (`src/indexers/mediafusion.ts`):
+  - Stremio addon protocol with config string
+- **Shared Stremio helpers** (`src/indexers/stremioScraper.ts`):
+  - `parseStremioStreams()`, `parseQualityFromName()`, `buildStremioUrl()`
+  - Extracts quality, size, seeders from stream names
+- **Unified search layer** (refactored `src/indexers/index.ts`):
+  - `searchAll()` — merges indexer + scraper results with deduplication
+  - `SCRAPER_MODE=merge|fallback` — user-configurable search strategy
+  - Backward-compatible `searchIndexer()`, `pickBestResult()`, `getMagnet()`
+- **3-phase torrent repair** (enhanced `src/services/deadScanner.ts`):
+  - Phase A: Same-provider repair (re-add magnet via `repairTorrent()`)
+  - Phase B: Cross-provider repair (add magnet to OTHER providers)
+  - Phase C: Delete + blacklist + replacement search (existing flow)
+- **Pre-emptive repair**:
+  - Detects stalling torrents (stuck progress for >30min) and repairs before they die
+  - Configurable via `PREEMPTIVE_REPAIR` and `PREEMPTIVE_REPAIR_STALL_MIN`
+- **Provider repair methods**:
+  - `getInfoHash()` and `repairTorrent()` on RealDebrid and TorBox providers
+  - Extracts info hash → deletes broken torrent → re-adds same magnet
+- **Stremio addon server** config (`STREMIO_ADDON_ENABLED`, `STREMIO_ADDON_PORT`)
+
+### Changed 🔄
+- `UnifiedWatchlistItem.source` type widened to include `"trakt" | "mdblist" | "listrr"`
+- `DebridProvider` interface: added optional `getInfoHash()` and `repairTorrent()` methods
+- Watchlist poller now auto-detects and polls all configured sources (6 total)
+- Dead scanner summary now includes `repaired`, `crossRepaired`, and `preemptive` counts
+- README comparison table: zero dashes remaining in SchröDrive's column
+- Architecture diagrams updated to show all new integrations and scrapers
+
 ### Version [0.2.1] - 2026-06-06 🚀
 *Status: Multi-provider expansion + self-healing mount resilience*
 

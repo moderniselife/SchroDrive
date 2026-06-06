@@ -83,22 +83,123 @@ async function tryReaddViaIndexer(title: string, excludeProvider?: string): Prom
 // ===========================================================================
 
 /**
- * Scans all providers for torrents with dead status and attempts replacement.
+ * Scans all providers for torrents with dead status and attempts
+ * a 3-phase recovery process (repair → cross-provider → replace).
+ *
+ * This is SchröDrive's 1-up on Zurg's `enable_repair`:
+ * - Phase A: Repair on same provider (re-add same magnet)
+ * - Phase B: Cross-provider repair (try adding to a different provider)
+ * - Phase C: Delete, blacklist, and search for replacement (existing flow)
+ *
+ * Pre-emptive repair: Also detects stalling torrents (stuck progress
+ * for longer than the configured stall threshold) and attempts repair
+ * BEFORE they're flagged as dead.
  */
 async function scanProviderDead(): Promise<Record<string, any>> {
-  const summary: Record<string, any> = { scanned: {}, readded: [] };
+  const summary: Record<string, any> = { scanned: {}, repaired: [], crossRepaired: [], readded: [], preemptive: [] };
 
   for (const provider of registry.configured()) {
     try {
       const list = await provider.listTorrents();
       const dead = list.filter(t => provider.isTorrentDead(t));
-      console.log(`[${new Date().toISOString()}][dead-scan] ${provider.displayName}`, { total: list.length, dead: dead.length });
-      summary.scanned[provider.id] = { total: list.length, dead: dead.length };
 
+      // Pre-emptive repair: detect stalling torrents (not dead yet, but stuck)
+      const stalling = config.preemptiveRepairEnabled
+        ? list.filter(t => {
+            if (provider.isTorrentDead(t)) return false;           // Already dead, handled separately
+            if (t.progress >= 100) return false;                   // Completed, not stalling
+            if (t.progress <= 0) return false;                     // Not started yet, normal
+            // Check if added long ago but still not finished (stalling)
+            if (t.addedAt) {
+              const ageMin = (Date.now() - t.addedAt.getTime()) / 60000;
+              return ageMin >= config.preemptiveRepairStallMinutes;
+            }
+            return false;
+          })
+        : [];
+
+      console.log(`[${new Date().toISOString()}][dead-scan] ${provider.displayName}`, {
+        total: list.length,
+        dead: dead.length,
+        stalling: stalling.length,
+      });
+      summary.scanned[provider.id] = { total: list.length, dead: dead.length, stalling: stalling.length };
+
+      // Pre-emptive repair for stalling torrents
+      for (const t of stalling) {
+        const title = torrentTitleLike(t);
+        if (provider.repairTorrent) {
+          try {
+            const repaired = await provider.repairTorrent(t.id);
+            if (repaired) {
+              summary.preemptive.push({ provider: provider.id, title });
+              console.log(`[${new Date().toISOString()}][dead-scan] pre-emptive repair succeeded`, { provider: provider.id, title });
+              continue;
+            }
+          } catch (e: any) {
+            console.warn(`[${new Date().toISOString()}][dead-scan] pre-emptive repair failed`, { provider: provider.id, title, err: e?.message });
+          }
+        }
+      }
+
+      // Process dead torrents with 3-phase recovery
       for (const t of dead) {
         const title = torrentTitleLike(t);
 
-        // Delete the dead torrent from the provider
+        // Phase A: Try repair on the same provider (like Zurg's enable_repair)
+        if (config.enableRepair && provider.repairTorrent) {
+          let repairAttempts = 0;
+          let repaired = false;
+
+          while (repairAttempts < config.repairMaxAttempts && !repaired) {
+            repairAttempts++;
+            try {
+              repaired = await provider.repairTorrent(t.id);
+            } catch (e: any) {
+              console.warn(`[${new Date().toISOString()}][dead-scan] repair attempt ${repairAttempts} failed`, {
+                provider: provider.id, title, err: e?.message,
+              });
+            }
+          }
+
+          if (repaired) {
+            summary.repaired.push({ provider: provider.id, title, attempts: repairAttempts });
+            console.log(`[${new Date().toISOString()}][dead-scan] repaired on same provider`, {
+              provider: provider.id, title, attempts: repairAttempts,
+            });
+            continue; // Skip delete/blacklist/replace — torrent is alive again
+          }
+        }
+
+        // Phase B: Cross-provider repair — try adding the magnet to OTHER providers
+        // This is unique to SchröDrive and goes beyond what Zurg can do
+        let crossRepaired = false;
+        if (config.enableRepair) {
+          let infoHash: string | null = null;
+          if (provider.getInfoHash) {
+            try { infoHash = await provider.getInfoHash(t.id); } catch {}
+          }
+
+          if (infoHash) {
+            const magnet = `magnet:?xt=urn:btih:${infoHash.toUpperCase()}`;
+            const otherProviders = registry.configured().filter(p => p.id !== provider.id);
+
+            for (const other of otherProviders) {
+              try {
+                await other.addMagnet(magnet, title);
+                crossRepaired = true;
+                summary.crossRepaired.push({ from: provider.id, to: other.id, title });
+                console.log(`[${new Date().toISOString()}][dead-scan] cross-provider repair: ${provider.id} → ${other.id}`, { title });
+                break;
+              } catch (e: any) {
+                console.warn(`[${new Date().toISOString()}][dead-scan] cross-provider add to ${other.id} failed`, { title, err: e?.message });
+              }
+            }
+          }
+        }
+
+        // Phase C: Delete, blacklist, and search for replacement
+        // (only if repair and cross-repair both failed)
         try {
           await provider.deleteTorrent(t.id);
           console.log(`[${new Date().toISOString()}][dead-scan] deleted dead torrent from ${provider.id}`, { title, id: t.id });
@@ -106,12 +207,12 @@ async function scanProviderDead(): Promise<Record<string, any>> {
           console.warn(`[${new Date().toISOString()}][dead-scan] failed to delete ${t.id} from ${provider.id}`, { err: e?.message });
         }
 
-        // Blacklist it
-        addToBlacklist(title, `Dead torrent (status: ${t.status})`, provider.id);
-
-        // Try to find a replacement
-        const ok = await tryReaddViaIndexer(title, provider.id);
-        if (ok) summary.readded.push({ from: provider.id, title });
+        if (!crossRepaired) {
+          // Blacklist and search for replacement
+          addToBlacklist(title, `Dead torrent (status: ${t.status})`, provider.id);
+          const ok = await tryReaddViaIndexer(title, provider.id);
+          if (ok) summary.readded.push({ from: provider.id, title });
+        }
       }
     } catch (e: any) {
       console.error(`[${new Date().toISOString()}][dead-scan] ${provider.id} scan failed`, { err: e?.message || String(e) });

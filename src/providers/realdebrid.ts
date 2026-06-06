@@ -406,9 +406,87 @@ export class RealDebridProvider implements DebridProvider {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Download Operations
-  // -------------------------------------------------------------------------
+  /**
+   * Returns the info hash for a torrent, used for repair (re-adding).
+   *
+   * Fetches the torrent info from RealDebrid and returns the hash field.
+   * The hash can be used to construct a magnet URI for re-adding.
+   *
+   * @param torrentId - The RD torrent ID.
+   * @returns The info hash string, or null if not available.
+   */
+  async getInfoHash(torrentId: string): Promise<string | null> {
+    if (rateLimiter.isRateLimited(PROVIDER_NAME)) return null;
+
+    await rateLimiter.throttle(PROVIDER_NAME);
+
+    const base = getBaseUrl();
+    const url = `${base}/torrents/info/${encodeURIComponent(torrentId)}`;
+
+    try {
+      const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 20000 });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+      const hash = res.data?.hash;
+      return typeof hash === 'string' && hash.length >= 32 ? hash : null;
+    } catch (err: any) {
+      this.handleError(err, `get info hash ${torrentId}`);
+      return null;
+    }
+  }
+
+  /**
+   * Attempts to repair a dead torrent by re-adding the same magnet.
+   *
+   * This is SchröDrive's equivalent of Zurg's `enable_repair`. When a
+   * torrent shows as dead/errored, the provider link may have simply
+   * expired. Re-adding the same magnet often restores access instantly
+   * because the debrid service still has the content cached.
+   *
+   * Flow:
+   * 1. Fetch the info hash from the dead torrent
+   * 2. Delete the broken torrent
+   * 3. Re-add the same magnet to this provider
+   * 4. If successful → repaired; if failed → needs replacement
+   *
+   * This goes beyond Zurg by supporting multi-provider repair: if repair
+   * fails on this provider, the dead scanner can try other providers.
+   *
+   * @param torrentId - The RD torrent ID to repair.
+   * @returns `true` if repair succeeded, `false` if the torrent should be replaced.
+   */
+  async repairTorrent(torrentId: string): Promise<boolean> {
+    console.log(`[${new Date().toISOString()}][rd] attempting repair for torrent ${torrentId}`);
+
+    // Step 1: Get the info hash before we delete
+    const infoHash = await this.getInfoHash(torrentId);
+    if (!infoHash) {
+      console.warn(`[${new Date().toISOString()}][rd] repair failed — could not get info hash for ${torrentId}`);
+      return false;
+    }
+
+    // Step 2: Delete the broken torrent
+    try {
+      await this.deleteTorrent(torrentId);
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}][rd] repair delete failed for ${torrentId}`, { err: err?.message });
+      // If we can't delete, we can't repair
+      return false;
+    }
+
+    // Step 3: Re-add the same magnet
+    const magnet = `magnet:?xt=urn:btih:${infoHash.toUpperCase()}`;
+    try {
+      const result = await this.addMagnet(magnet);
+      if (result.id) {
+        console.log(`[${new Date().toISOString()}][rd] repair successful — re-added as ${result.id}`, { hash: infoHash });
+        return true;
+      }
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}][rd] repair re-add failed`, { hash: infoHash, err: err?.message });
+    }
+
+    return false;
+  }
 
   /**
    * Fetches the complete list of downloads from RealDebrid, paginating
