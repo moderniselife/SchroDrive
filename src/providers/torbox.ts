@@ -19,6 +19,7 @@ import http from 'http';
 import https from 'https';
 import { config, requireEnv } from '../core/config';
 import { rateLimiter } from '../core/rateLimiter';
+import { rateLimitStore } from '../core/rateLimitStore';
 import type {
   DebridProvider,
   TorrentInfo,
@@ -724,6 +725,9 @@ export class TorBoxProvider implements DebridProvider {
    */
   private handleError(err: any, operation: string): void {
     const errorMsg = err?.message || String(err);
+    const responseData = err?.response?.data;
+    const responseStatus = err?.response?.status;
+    const responseHeaders = err?.response?.headers;
     const isNetworkError =
       err?.code === 'ECONNREFUSED' ||
       err?.code === 'ENOTFOUND' ||
@@ -734,17 +738,69 @@ export class TorBoxProvider implements DebridProvider {
 
     checkPlanError(err);
 
-    if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
+    // Detect rate limiting — TorBox may return 429 or include rate limit info in body
+    const isRateLimit = rateLimiter.isRateLimitError(err) || responseStatus === 429;
+
+    if (isRateLimit) {
+      // Try to extract specific rate limit details from TorBox's response
+      // TorBox often returns messages like "Rate limit: 60 per hour" or similar
+      let retryAfterS: number | undefined;
+      const bodyStr = typeof responseData === 'string'
+        ? responseData
+        : typeof responseData?.detail === 'string'
+          ? responseData.detail
+          : typeof responseData?.error === 'string'
+            ? responseData.error
+            : JSON.stringify(responseData || '');
+
+      // Parse "X per hour/minute/second" patterns from TorBox responses
+      const perTimeMatch = bodyStr.match(/(\d+)\s*per\s*(hour|minute|second)/i);
+      if (perTimeMatch) {
+        const limit = parseInt(perTimeMatch[1], 10);
+        const unit = perTimeMatch[2].toLowerCase();
+        let windowSeconds = 3600; // default hour
+        if (unit === 'minute') windowSeconds = 60;
+        else if (unit === 'second') windowSeconds = 1;
+
+        // Calculate optimal retry delay: window / limit with 20% safety margin
+        retryAfterS = Math.ceil((windowSeconds / limit) * 1.2);
+        console.warn(
+          `[${new Date().toISOString()}][torbox] Detected rate limit: ${limit} per ${unit} ` +
+          `→ calculated retry delay: ${retryAfterS}s`
+        );
+
+        // Update the global throttle delay to match learned limit
+        const newDelayMs = Math.ceil((windowSeconds / limit) * 1000 * 1.2);
+        rateLimiter.setThrottleDelay(PROVIDER_NAME, newDelayMs);
+        console.log(
+          `[${new Date().toISOString()}][torbox] Updated throttle delay to ${newDelayMs}ms ` +
+          `(${limit} req/${unit})`
+        );
+      }
+
+      // Also check Retry-After header (standard HTTP)
+      if (!retryAfterS && responseHeaders) {
+        const retryHeader = responseHeaders['retry-after'] || responseHeaders['Retry-After'];
+        if (retryHeader) {
+          const parsed = rateLimitStore.parseRetryAfter(String(retryHeader));
+          if (parsed) retryAfterS = parsed;
+        }
+      }
+
       rateLimiter.recordRateLimit(PROVIDER_NAME, errorMsg);
+
+      // Feed into the learning store for long-term adaptation
+      rateLimitStore.recordRateLimit(PROVIDER_NAME, operation, retryAfterS);
     }
 
     console.error(`[${new Date().toISOString()}][torbox] ${operation} failed`, {
       error: errorMsg,
       code: err?.code,
-      status: err?.response?.status,
+      status: responseStatus,
       statusText: err?.response?.statusText,
       isNetworkError,
       rateLimited: rateLimiter.isRateLimited(PROVIDER_NAME),
+      responseDetail: typeof responseData === 'object' ? responseData?.detail || responseData?.error : undefined,
     });
   }
 }
