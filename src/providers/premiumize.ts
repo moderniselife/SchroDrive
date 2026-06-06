@@ -247,6 +247,53 @@ export class PremiumizeProvider implements DebridProvider {
   }
 
   /**
+   * Uploads a .torrent file buffer to Premiumize.
+   *
+   * Uses `POST /transfer/create` with multipart form data.
+   * The file is sent as a `src` field (Premiumize accepts both magnets
+   * and .torrent files via this same endpoint).
+   *
+   * @param fileBuffer - The raw .torrent file contents.
+   * @param name - Optional human-readable name for logging.
+   * @returns An object containing the transfer ID.
+   * @throws {Error} If rate-limited or the request fails.
+   */
+  async addTorrentFile(fileBuffer: Buffer, name?: string): Promise<AddMagnetResult> {
+    if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+      const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+      throw new Error(`Premiumize rate limited, retry in ${waitTime}s`);
+    }
+
+    await rateLimiter.throttle(PROVIDER_NAME);
+
+    const base = getBaseUrl();
+    const url = `${base}/transfer/create`;
+    console.log(`[${new Date().toISOString()}][premiumize] Uploading .torrent file${name ? `: ${name}` : ''}`);
+    const started = Date.now();
+
+    try {
+      const formData = new FormData();
+      formData.append('src', new Blob([new Uint8Array(fileBuffer)], { type: 'application/x-bittorrent' }), name || 'upload.torrent');
+
+      const res = await axiosIPv4.post(url, formData, {
+        headers: premiumizeHeaders(),
+        timeout: 30000,
+      });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+      console.log(`[${new Date().toISOString()}][premiumize] createTransfer (file) done`, { ms: Date.now() - started });
+
+      const data = res?.data;
+      const transferId = String(data?.id || '');
+      if (!transferId) throw new Error('Premiumize transfer/create returned no ID');
+
+      return { id: transferId };
+    } catch (err: any) {
+      this.handleError(err, 'add torrent file');
+      throw err;
+    }
+  }
+
+  /**
    * Checks whether a transfer with a matching title already exists in Premiumize.
    *
    * Fetches the current transfer list and performs a case-insensitive

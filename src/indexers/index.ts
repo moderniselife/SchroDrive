@@ -39,6 +39,11 @@ export type IndexerResult = ProwlarrResult | JackettResult;
 
 export type IndexerProvider = "prowlarr" | "jackett";
 
+/** Discriminated union for magnet URIs vs .torrent file URLs. */
+export type MagnetOrTorrent =
+  | { type: 'magnet'; value: string }
+  | { type: 'torrentUrl'; value: string };
+
 export interface SearchOptions {
   categories?: string[];
   indexerIds?: string[];
@@ -361,6 +366,25 @@ export function getMagnet(r: IndexerResult | ScraperResult | undefined): string 
   return getMagnetProwlarr(r as ProwlarrResult);
 }
 
+/**
+ * Extracts a magnet URI or .torrent download URL from an indexer result.
+ * Returns undefined if neither is available.
+ */
+export function getMagnetOrTorrent(r: IndexerResult | ScraperResult | undefined): MagnetOrTorrent | undefined {
+  if (!r) return undefined;
+
+  // Try direct magnet first (synchronous)
+  const magnet = getMagnet(r);
+  if (magnet) {
+    // Check if it's actually a torrent: prefixed URL from getMagnetOrResolve
+    if (magnet.startsWith('torrent:')) {
+      return { type: 'torrentUrl', value: magnet.slice('torrent:'.length) };
+    }
+    return { type: 'magnet', value: magnet };
+  }
+  return undefined;
+}
+
 export async function getMagnetOrResolve(r: IndexerResult | ScraperResult | undefined): Promise<string | undefined> {
   if (!r) return undefined;
 
@@ -371,11 +395,33 @@ export async function getMagnetOrResolve(r: IndexerResult | ScraperResult | unde
 
   const provider = getActiveProvider();
 
+  let result: string | undefined;
   if (provider === "jackett") {
-    return getMagnetOrResolveJackett(r as JackettResult);
+    result = await getMagnetOrResolveJackett(r as JackettResult);
+  } else {
+    result = await getMagnetOrResolveProwlarr(r as ProwlarrResult);
   }
 
-  return getMagnetOrResolveProwlarr(r as ProwlarrResult);
+  // Pass through torrent:-prefixed URLs — callers can detect and handle them
+  return result;
+}
+
+/**
+ * Async variant of getMagnetOrTorrent that also follows redirects to resolve
+ * magnet URIs or .torrent download URLs.
+ */
+export async function getMagnetOrTorrentResolved(
+  r: IndexerResult | ScraperResult | undefined,
+): Promise<MagnetOrTorrent | undefined> {
+  if (!r) return undefined;
+
+  const resolved = await getMagnetOrResolve(r);
+  if (!resolved) return undefined;
+
+  if (resolved.startsWith('torrent:')) {
+    return { type: 'torrentUrl', value: resolved.slice('torrent:'.length) };
+  }
+  return { type: 'magnet', value: resolved };
 }
 
 export function getProviderName(): string {

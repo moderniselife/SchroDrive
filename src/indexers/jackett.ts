@@ -333,14 +333,14 @@ export async function getMagnetOrResolve(r: JackettResult | undefined): Promise<
       }
       url = absoluteUrl(location, base);
       if (url.endsWith('.torrent')) {
-        console.log(`[${new Date().toISOString()}][jackett] resolveMagnet redirect->torrent`, { hops, url });
-        return undefined;
+        console.log(`[${new Date().toISOString()}][jackett] Captured .torrent URL: ${url}`);
+        return `torrent:${url}`;  // Return with prefix for caller to detect
       }
       continue;
     }
     if (ctype.includes('bittorrent') || url.endsWith('.torrent')) {
-      console.log(`[${new Date().toISOString()}][jackett] resolveMagnet content-type torrent`, { url });
-      return undefined;
+      console.log(`[${new Date().toISOString()}][jackett] Captured .torrent URL: ${url}`);
+      return `torrent:${url}`;  // Return with prefix for caller to detect
     }
     break;
   }

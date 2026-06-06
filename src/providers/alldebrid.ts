@@ -320,6 +320,58 @@ export class AllDebridProvider implements DebridProvider {
   }
 
   /**
+   * Uploads a .torrent file buffer to AllDebrid.
+   *
+   * Uses `POST /v4/magnet/upload/file` with multipart form data.
+   * The file is sent as a `files[]` field in the form.
+   * Automatically selects all files after upload (same as addMagnet).
+   *
+   * @param fileBuffer - The raw .torrent file contents.
+   * @param name - Optional human-readable name for logging.
+   * @returns An object containing the magnet `id` from the AllDebrid response.
+   * @throws {Error} If the provider is rate-limited or the request fails.
+   */
+  async addTorrentFile(fileBuffer: Buffer, name?: string): Promise<AddMagnetResult> {
+    if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+      const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+      throw new Error(`AllDebrid rate limited, retry in ${waitTime}s`);
+    }
+
+    await rateLimiter.throttle(PROVIDER_NAME);
+
+    try {
+      const url = buildUrl('/magnet/upload/file');
+      console.log(`[${new Date().toISOString()}][ad] Uploading .torrent file${name ? `: ${name}` : ''}`);
+
+      const formData = new FormData();
+      formData.append('files[]', new Blob([new Uint8Array(fileBuffer)], { type: 'application/x-bittorrent' }), name || 'upload.torrent');
+
+      const uploadRes = await axiosIPv4.post(url, formData, {
+        timeout: 30000,
+      });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+
+      const uploadData = unwrapResponse(uploadRes, 'upload torrent file');
+      // AllDebrid returns { files: [{ id, ... }] } or { magnets: [{ id, ... }] }
+      const magnetId = String(
+        uploadData?.files?.[0]?.id || uploadData?.magnets?.[0]?.id || '',
+      );
+
+      if (!magnetId) {
+        throw new Error('AllDebrid upload/file returned no magnet ID');
+      }
+
+      // Select all files
+      await this.selectAllFiles(magnetId);
+
+      return { id: magnetId };
+    } catch (err: any) {
+      this.handleError(err, 'add torrent file');
+      throw err;
+    }
+  }
+
+  /**
    * Selects all files within an AllDebrid magnet for download.
    *
    * Called internally after adding a magnet to ensure all files in the
