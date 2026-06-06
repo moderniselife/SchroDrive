@@ -762,25 +762,33 @@ export class RealDebridProvider implements DebridProvider {
       rateLimiter.recordSuccess(PROVIDER_NAME);
 
       const files: any[] = Array.isArray(res?.data?.files) ? res.data.files : [];
+      const links: string[] = Array.isArray(res?.data?.links) ? res.data.links : [];
 
       // Build the virtual file list from selected files
       // The links[] array maps 1:1 to selected files (files with selected === 1)
+      // IMPORTANT: Only include files that have a corresponding link.
       const selectedFiles = files.filter((f) => f.selected === 1);
       let linkIdx = 0;
 
-      return selectedFiles.map((f) => {
+      const result: VirtualFile[] = [];
+      for (const f of selectedFiles) {
+        if (linkIdx >= links.length) {
+          console.warn(`[${new Date().toISOString()}][rd] Torrent ${torrentId}: ${selectedFiles.length} selected files but only ${links.length} link(s) — skipping ${selectedFiles.length - linkIdx} file(s)`);
+          break;
+        }
+
         const pathParts = String(f.path || '').split('/').filter(Boolean);
         const fileName = pathParts[pathParts.length - 1] || `file_${f.id}`;
 
-        const vf: VirtualFile = {
+        result.push({
           id: String(f.id),
           name: sanitiseName(fileName),
           size: typeof f.bytes === 'number' ? f.bytes : 0,
           linkIndex: linkIdx,
-        };
+        });
         linkIdx++;
-        return vf;
-      });
+      }
+      return result;
     } catch (err: any) {
       this.handleError(err, `fetch files for torrent ${torrentId}`);
       return [];
@@ -822,7 +830,9 @@ export class RealDebridProvider implements DebridProvider {
 
       const links: string[] = Array.isArray(infoRes?.data?.links) ? infoRes.data.links : [];
       if (linkIndex < 0 || linkIndex >= links.length) {
-        throw new UnplayableTorrentError(`Link index ${linkIndex} out of range (${links.length} links) for torrent ${torrentId}`);
+        // Per-file issue (stale mapping) — don't kill the entire torrent
+        console.warn(`[${new Date().toISOString()}][rd] Link index ${linkIndex} out of range (${links.length} links) for torrent ${torrentId} — skipping file`);
+        return null;
       }
 
       const link = links[linkIndex];

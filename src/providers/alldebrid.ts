@@ -661,7 +661,9 @@ export class AllDebridProvider implements DebridProvider {
 
       const fileIndex = parseInt(fileId, 10);
       if (isNaN(fileIndex) || fileIndex < 0 || fileIndex >= rawLinks.length) {
-        throw new UnplayableTorrentError(`File index ${fileId} out of range (${rawLinks.length} links) for magnet ${torrentId}`);
+        // Per-file issue (stale mapping) — don't kill the entire torrent
+        console.warn(`[${new Date().toISOString()}][ad] File index ${fileId} out of range (${rawLinks.length} links) for magnet ${torrentId} — skipping file`);
+        return null;
       }
 
       const fileLink = rawLinks[fileIndex]?.link || rawLinks[fileIndex]?.l;
