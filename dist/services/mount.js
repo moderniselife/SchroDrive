@@ -56,6 +56,7 @@ exports.getBridgeStatuses = getBridgeStatuses;
 exports.refreshBridges = refreshBridges;
 exports.getActiveBridges = getActiveBridges;
 exports.mountVirtualDrive = mountVirtualDrive;
+exports.unmountAll = unmountAll;
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
@@ -737,6 +738,33 @@ async function mountVirtualDrive() {
     console.log(`[${new Date().toISOString()}][mount] mounts initiated at ${base}`);
     // Start the mount health monitor to detect and recover from IO errors
     startMountHealthMonitor(mounts, cfg, base);
+}
+/**
+ * Forcefully unmounts all configured FUSE mount points.
+ * Called during graceful shutdown (SIGTERM/SIGINT) or auto-update exits
+ * to prevent orphaned rclone processes from locking host mount points.
+ */
+function unmountAll() {
+    const ps = (0, config_1.providersSet)();
+    const base = config_1.config.mountBase;
+    const mounts = [];
+    if (ps.has("realdebrid"))
+        mounts.push(path.join(base, "realdebrid"));
+    if (ps.has("torbox"))
+        mounts.push(path.join(base, "torbox"));
+    if (ps.has("alldebrid"))
+        mounts.push(path.join(base, "alldebrid"));
+    if (ps.has("premiumize"))
+        mounts.push(path.join(base, "premiumize"));
+    console.log(`[${new Date().toISOString()}][mount] Cleaning up and unmounting all FUSE mount points...`);
+    for (const m of mounts) {
+        try {
+            if (fs.existsSync(m)) {
+                cleanupMountPath(m);
+            }
+        }
+        catch { }
+    }
 }
 // ===========================================================================
 // Mount Health Monitor

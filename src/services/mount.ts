@@ -744,6 +744,30 @@ export async function mountVirtualDrive(): Promise<void> {
   startMountHealthMonitor(mounts, cfg, base);
 }
 
+/**
+ * Forcefully unmounts all configured FUSE mount points.
+ * Called during graceful shutdown (SIGTERM/SIGINT) or auto-update exits
+ * to prevent orphaned rclone processes from locking host mount points.
+ */
+export function unmountAll(): void {
+  const ps = providersSet();
+  const base = config.mountBase;
+  const mounts: string[] = [];
+  if (ps.has("realdebrid")) mounts.push(path.join(base, "realdebrid"));
+  if (ps.has("torbox")) mounts.push(path.join(base, "torbox"));
+  if (ps.has("alldebrid")) mounts.push(path.join(base, "alldebrid"));
+  if (ps.has("premiumize")) mounts.push(path.join(base, "premiumize"));
+
+  console.log(`[${new Date().toISOString()}][mount] Cleaning up and unmounting all FUSE mount points...`);
+  for (const m of mounts) {
+    try {
+      if (fs.existsSync(m)) {
+        cleanupMountPath(m);
+      }
+    } catch {}
+  }
+}
+
 // ===========================================================================
 // Mount Health Monitor
 // ===========================================================================

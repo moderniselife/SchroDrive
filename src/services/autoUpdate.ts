@@ -1,6 +1,7 @@
 import axios from "axios";
 import { exec } from "child_process";
 import { config } from "../core/config";
+import { unmountAll } from "./mount";
 // Importing JSON is supported by tsconfig (resolveJsonModule)
 // This resolves at runtime to projectRoot/package.json from dist
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -45,7 +46,12 @@ async function getLatestTag(owner: string, repo: string): Promise<string | undef
 }
 
 function doExitRestart(reason: string) {
-  console.log(`[${new Date().toISOString()}][auto-update] ${reason} -> exiting for supervisor/docker to restart`);
+  console.log(`[${new Date().toISOString()}][auto-update] ${reason} -> unmounting FUSE drives and exiting for supervisor/docker to restart`);
+  try {
+    unmountAll();
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}][auto-update] FUSE unmount failed (non-fatal): ${err?.message}`);
+  }
   setTimeout(() => process.exit(0), 500);
 }
 

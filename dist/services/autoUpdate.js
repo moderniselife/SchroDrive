@@ -7,6 +7,7 @@ exports.startAutoUpdater = startAutoUpdater;
 const axios_1 = __importDefault(require("axios"));
 const child_process_1 = require("child_process");
 const config_1 = require("../core/config");
+const mount_1 = require("./mount");
 // Importing JSON is supported by tsconfig (resolveJsonModule)
 // This resolves at runtime to projectRoot/package.json from dist
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -50,7 +51,13 @@ async function getLatestTag(owner, repo) {
     }
 }
 function doExitRestart(reason) {
-    console.log(`[${new Date().toISOString()}][auto-update] ${reason} -> exiting for supervisor/docker to restart`);
+    console.log(`[${new Date().toISOString()}][auto-update] ${reason} -> unmounting FUSE drives and exiting for supervisor/docker to restart`);
+    try {
+        (0, mount_1.unmountAll)();
+    }
+    catch (err) {
+        console.error(`[${new Date().toISOString()}][auto-update] FUSE unmount failed (non-fatal): ${err?.message}`);
+    }
     setTimeout(() => process.exit(0), 500);
 }
 function tryGitPullAndExit() {
