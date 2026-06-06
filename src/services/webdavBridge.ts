@@ -675,23 +675,31 @@ async function fetchRDTorrentFiles(torrentId: string): Promise<VirtualFile[]> {
 
     // Build the virtual file list from selected files
     // The links[] array maps 1:1 to selected files (files with selected === 1)
+    // IMPORTANT: Only include files that have a corresponding link.
+    // If links.length < selectedFiles.length, RD didn't cache all files.
     const selectedFiles = files.filter((f) => f.selected === 1);
     let linkIdx = 0;
 
-    return selectedFiles.map((f) => {
-      // Extract just the filename from the path (RD paths look like "/dirname/file.mkv")
-      const pathParts = String(f.path || "").split("/").filter(Boolean);
+    const result: VirtualFile[] = [];
+    for (const f of selectedFiles) {
+      if (linkIdx >= links.length) {
+        // No more links available — remaining files can't be downloaded
+        logWarn(providerName, `Torrent ${torrentId}: ${selectedFiles.length} selected files but only ${links.length} link(s) — skipping ${selectedFiles.length - linkIdx} file(s)`);
+        break;
+      }
+
+      const pathParts = String(f.path || '').split('/').filter(Boolean);
       const fileName = pathParts[pathParts.length - 1] || `file_${f.id}`;
 
-      const vf: VirtualFile = {
+      result.push({
         id: String(f.id),
         name: sanitiseName(fileName),
-        size: typeof f.bytes === "number" ? f.bytes : 0,
+        size: typeof f.bytes === 'number' ? f.bytes : 0,
         linkIndex: linkIdx,
-      };
+      });
       linkIdx++;
-      return vf;
-    });
+    }
+    return result;
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
     if (rateLimiter.isRateLimitError(err) || err?.response?.status === 429) {
@@ -1706,7 +1714,17 @@ export class WebDAVBridge {
       }
     } catch (err: any) {
       if (err instanceof UnplayableTorrentError || err?.name === "UnplayableTorrentError") {
-        this.flagTorrentAsDead(dir, err.message || "Unplayable torrent");
+        // Distinguish between per-file issues and whole-torrent issues.
+        // Link index out-of-range is a per-file problem (stale link mapping) —
+        // don't kill the entire torrent because of one bad file in a 200-file pack.
+        const isLinkIndexError = err.message?.includes('out of range');
+        if (isLinkIndexError) {
+          logWarn(this.provider, `Per-file error (not flagging torrent as dead): ${err.message}`);
+          // Return null for THIS file — it'll serve the error video.
+          // But the rest of the torrent's files remain playable.
+        } else {
+          this.flagTorrentAsDead(dir, err.message || 'Unplayable torrent');
+        }
         return null;
       }
       logError(this.provider, `Unexpected error during download URL resolution: ${err?.message || String(err)}`);
