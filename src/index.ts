@@ -10,6 +10,7 @@ import { startStremioAddonServer } from "./services/stremioAddon";
 import { config } from "./core/config";
 import { getDb, closeDb, pruneOldEntries, pruneExpiredStrmCodes } from "./core/db";
 import { startStrmServer, stopStrmServer } from "./services/strmService";
+import { startCloudLinksBridge, stopCloudLinksBridge } from "./services/cloudLinks/bridge";
 
 const program = new Command();
 program
@@ -39,6 +40,7 @@ program
 
       console.log(`[${new Date().toISOString()}][serve] Waiting 3 seconds for FUSE mounts to clear...`);
       stopStrmServer().catch(() => {});
+      stopCloudLinksBridge().catch(() => {});
       setTimeout(() => {
         console.log(`[${new Date().toISOString()}][serve] Closing database and exiting...`);
         closeDb();
@@ -64,6 +66,15 @@ program
     
     if (config.runMount) {
       console.log("[serve] Starting virtual drive mount (RUN_MOUNT=true)");
+
+      // Start cloud links bridge BEFORE mount so rclone can connect to it
+      if (config.cloudLinksEnabled) {
+        console.log("[serve] Starting Cloud Links WebDAV bridge (CLOUD_LINKS_ENABLED=true)");
+        await startCloudLinksBridge().catch((err: any) => {
+          console.error(`[serve] Cloud Links bridge failed to start (non-fatal): ${err?.message}`);
+        });
+      }
+
       promises.push(mountVirtualDrive());
     }
     
