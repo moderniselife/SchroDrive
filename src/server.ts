@@ -12,6 +12,7 @@ import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDock
 import { logBuffer } from "./logger";
 import { rateLimiter } from "./rateLimiter";
 import { getBlocklist, getBlocklistInfo, addBlocked, removeBlocked, checkBlocked } from "./infringementList";
+import { rateLimitStore } from "./rateLimitStore";
 
 export function startServer() {
   const app = express();
@@ -918,6 +919,50 @@ export function startServer() {
       }
       const blocked = checkBlocked(name, provider);
       res.json({ ok: true, blocked: !!blocked, entry: blocked });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // =========================================================================
+  // Dynamic Rate Limit Learning API
+  // =========================================================================
+
+  /** GET /api/rate-limits — view all learned rate limit stats. */
+  app.get("/api/rate-limits", (_req, res) => {
+    try {
+      const stats = rateLimitStore.getAllStats();
+      const currentLimits = rateLimiter.getStatus();
+      res.json({ ok: true, learned: stats, current: currentLimits });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  /** GET /api/rate-limits/:provider — view learned stats for one provider. */
+  app.get("/api/rate-limits/:provider", (req, res) => {
+    try {
+      const provider = req.params.provider;
+      const endpoints = rateLimitStore.getProviderStats(provider);
+      const currentDelay = rateLimitStore.getProviderDelay(provider);
+      const currentLimit = rateLimiter.getStatus()[provider];
+      res.json({ ok: true, provider, currentDelay, currentLimit, endpoints });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  /** POST /api/rate-limits/reset — reset all learned data. */
+  app.post("/api/rate-limits/reset", (req, res) => {
+    try {
+      const provider = req.body?.provider;
+      if (provider) {
+        rateLimitStore.resetProvider(provider);
+        res.json({ ok: true, message: `Reset learned data for ${provider}` });
+      } else {
+        rateLimitStore.resetAll();
+        res.json({ ok: true, message: "Reset all learned rate limit data" });
+      }
     } catch (err: any) {
       res.status(500).json({ ok: false, error: err.message });
     }
