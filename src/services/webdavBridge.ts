@@ -35,6 +35,14 @@ import {
   getDeadTorrent,
 } from "../core/db";
 import { UnplayableTorrentError } from "../core/errors";
+import {
+  classifyTorrent,
+  isMediaView,
+  MEDIA_VIEWS,
+  onlyBiggestFile,
+  type MediaCategory,
+  type MediaView,
+} from "../core/mediaClassifier";
 
 // ===========================================================================
 // HTTP Client (IPv4 forced — matches realdebrid.ts pattern)
@@ -1140,10 +1148,11 @@ export class WebDAVBridge {
    * Handles PROPFIND requests — the core of WebDAV directory listing.
    * rclone uses Depth: 0 for stat and Depth: 1 for listing children.
    *
-   * Routes:
-   * - `/` → list all torrent directories
-   * - `/{torrentName}/` → list files in a torrent
-   * - `/{torrentName}/{fileName}` → stat a single file
+   * Routes (Zurg-compatible organised layout):
+   * - `/` → list category directories (__all__, anime, shows, movies)
+   * - `/{category}/` → list torrents in that category
+   * - `/{category}/{torrentName}/` → list files in a torrent
+   * - `/{category}/{torrentName}/{fileName}` → stat a single file
    */
   private async handlePropfind(req: Request, res: Response): Promise<void> {
     const path = decodeURIComponent(req.path).replace(/\/+$/, "") || "/";
@@ -1152,19 +1161,18 @@ export class WebDAVBridge {
 
     log(this.provider, `PROPFIND ${path} (depth: ${depth})`);
 
-    // Root directory
+    // Root directory — list category directories
     if (path === "/" || path === "") {
-      const dirs = await this.getDirectories();
       const responses: string[] = [];
 
       // Always include the root collection itself
       responses.push(buildCollectionResponse("/", ""));
 
-      // If depth > 0, include children (torrent directories)
+      // If depth > 0, include category directories
       if (depth !== "0") {
-        for (const dir of dirs) {
-          const href = `/${encodeURIComponent(dir.name)}/`;
-          responses.push(buildCollectionResponse(href, dir.name));
+        for (const view of MEDIA_VIEWS) {
+          const href = `/${encodeURIComponent(view)}/`;
+          responses.push(buildCollectionResponse(href, view));
         }
       }
 
@@ -1174,9 +1182,98 @@ export class WebDAVBridge {
       return;
     }
 
-    // Parse path segments: /{torrentName} or /{torrentName}/{fileName}
+    // Parse path segments
     const segments = path.split("/").filter(Boolean);
-    const torrentName = segments[0];
+    const firstSegment = segments[0];
+
+    // Check if the first segment is a media view (category or __all__)
+    if (isMediaView(firstSegment)) {
+      const view = firstSegment as MediaView;
+      const torrentName = segments.length > 1 ? segments[1] : null;
+      const fileName = segments.length > 2 ? segments.slice(2).join("/") : null;
+
+      // Category directory listing — show filtered torrents
+      if (!torrentName) {
+        const dirs = await this.getDirectories();
+        const filteredDirs = this.filterDirectoriesByView(dirs, view);
+        const responses: string[] = [];
+
+        // Include the category directory itself
+        const categoryHref = `/${encodeURIComponent(view)}/`;
+        responses.push(buildCollectionResponse(categoryHref, view));
+
+        // If depth > 0, include torrent directories
+        if (depth !== "0") {
+          for (const dir of filteredDirs) {
+            const href = `/${encodeURIComponent(view)}/${encodeURIComponent(dir.name)}/`;
+            responses.push(buildCollectionResponse(href, dir.name));
+          }
+        }
+
+        res.status(207);
+        res.setHeader("Content-Type", "application/xml; charset=utf-8");
+        res.send(buildMultistatus(responses));
+        return;
+      }
+
+      // Torrent directory within a category — list files
+      const dirs = await this.getDirectories();
+      const dir = dirs.find((d) => d.name === torrentName);
+
+      if (!dir) {
+        res.status(404).end();
+        return;
+      }
+
+      if (!fileName) {
+        let files = await this.getFilesForTorrent(dir);
+
+        // Apply "only show biggest file" for movies category
+        if (view === 'movies' && files.length > 1) {
+          files = onlyBiggestFile(files);
+        }
+
+        const responses: string[] = [];
+
+        // Include the directory itself
+        const dirHref = `/${encodeURIComponent(view)}/${encodeURIComponent(dir.name)}/`;
+        responses.push(buildCollectionResponse(dirHref, dir.name));
+
+        // If depth > 0, include files
+        if (depth !== "0") {
+          for (const file of files) {
+            const fileHref = `/${encodeURIComponent(view)}/${encodeURIComponent(dir.name)}/${encodeURIComponent(file.name)}`;
+            responses.push(buildFileResponse(fileHref, file.name, file.size, lastModified));
+          }
+        }
+
+        res.status(207);
+        res.setHeader("Content-Type", "application/xml; charset=utf-8");
+        res.send(buildMultistatus(responses));
+        return;
+      }
+
+      // Single file stat within a category/torrent
+      const files = await this.getFilesForTorrent(dir);
+      const file = files.find((f) => f.name === fileName);
+
+      if (!file) {
+        res.status(404).end();
+        return;
+      }
+
+      const fileHref = `/${encodeURIComponent(view)}/${encodeURIComponent(dir.name)}/${encodeURIComponent(file.name)}`;
+      const responses = [buildFileResponse(fileHref, file.name, file.size, lastModified)];
+
+      res.status(207);
+      res.setHeader("Content-Type", "application/xml; charset=utf-8");
+      res.send(buildMultistatus(responses));
+      return;
+    }
+
+    // Legacy fallback: direct torrent access without category prefix
+    // Supports existing rclone configs that don't use category directories
+    const torrentName = firstSegment;
     const fileName = segments.length > 1 ? segments.slice(1).join("/") : null;
 
     const dirs = await this.getDirectories();
@@ -1187,7 +1284,7 @@ export class WebDAVBridge {
       return;
     }
 
-    // Torrent directory listing
+    // Torrent directory listing (legacy)
     if (!fileName) {
       const files = await this.getFilesForTorrent(dir);
       const responses: string[] = [];
@@ -1210,7 +1307,7 @@ export class WebDAVBridge {
       return;
     }
 
-    // Single file stat
+    // Single file stat (legacy)
     const files = await this.getFilesForTorrent(dir);
     const file = files.find((f) => f.name === fileName);
 
@@ -1228,8 +1325,23 @@ export class WebDAVBridge {
   }
 
   /**
+   * Filters directories by media view.
+   * - `__all__` returns all directories (unfiltered).
+   * - Category views filter using the media classifier.
+   */
+  private filterDirectoriesByView(dirs: VirtualDirectory[], view: MediaView): VirtualDirectory[] {
+    if (view === '__all__') return dirs;
+    return dirs.filter((d) => {
+      const fileNames = d.files?.map((f) => f.name);
+      return classifyTorrent(d.originalName || d.name, fileNames) === view;
+    });
+  }
+
+  /**
    * Handles HEAD requests — returns file metadata without the body.
    * Used by rclone to check file existence and size before downloading.
+   * Supports both categorised paths (/{category}/{torrent}/{file}) and
+   * legacy flat paths (/{torrent}/{file}).
    */
   private async handleHead(req: Request, res: Response): Promise<void> {
     const path = decodeURIComponent(req.path).replace(/\/+$/, "") || "/";
@@ -1241,8 +1353,23 @@ export class WebDAVBridge {
       return;
     }
 
-    const torrentName = segments[0];
-    const fileName = segments.slice(1).join("/");
+    // Determine if first segment is a category view
+    let torrentName: string;
+    let fileName: string;
+
+    if (isMediaView(segments[0])) {
+      // Categorised path: /{category}/{torrent}/{file}
+      if (segments.length < 3) {
+        res.status(200).end(); // Category or torrent directory HEAD
+        return;
+      }
+      torrentName = segments[1];
+      fileName = segments.slice(2).join("/");
+    } else {
+      // Legacy flat path: /{torrent}/{file}
+      torrentName = segments[0];
+      fileName = segments.slice(1).join("/");
+    }
 
     const dirs = await this.getDirectories();
     const dir = dirs.find((d) => d.name === torrentName);
@@ -1270,6 +1397,8 @@ export class WebDAVBridge {
    * Handles GET requests — resolves the download URL from the provider
    * and returns a 302 redirect to the CDN. This keeps file content
    * off the local machine entirely.
+   * Supports both categorised paths (/{category}/{torrent}/{file}) and
+   * legacy flat paths (/{torrent}/{file}).
    */
   private async handleGet(req: Request, res: Response): Promise<void> {
     const path = decodeURIComponent(req.path).replace(/\/+$/, "") || "/";
@@ -1281,8 +1410,23 @@ export class WebDAVBridge {
       return;
     }
 
-    const torrentName = segments[0];
-    const fileName = segments.slice(1).join("/");
+    // Determine if first segment is a category view
+    let torrentName: string;
+    let fileName: string;
+
+    if (isMediaView(segments[0])) {
+      // Categorised path: /{category}/{torrent}/{file}
+      if (segments.length < 3) {
+        res.status(404).end(); // Can't GET a category or torrent directory
+        return;
+      }
+      torrentName = segments[1];
+      fileName = segments.slice(2).join("/");
+    } else {
+      // Legacy flat path: /{torrent}/{file}
+      torrentName = segments[0];
+      fileName = segments.slice(1).join("/");
+    }
 
     const dirs = await this.getDirectories();
     const dir = dirs.find((d) => d.name === torrentName);
