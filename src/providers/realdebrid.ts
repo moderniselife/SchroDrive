@@ -313,14 +313,27 @@ export class RealDebridProvider implements DebridProvider {
     const params = new URLSearchParams();
     params.set('files', 'all');
 
-    try {
-      await axiosIPv4.post(url, params, {
-        headers: { ...rdHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 20000,
-      });
-      rateLimiter.recordSuccess(PROVIDER_NAME);
-    } catch (err: any) {
-      this.handleError(err, `select all files for torrent ${id}`);
+    let attempts = 0;
+    const maxAttempts = 3;
+    while (attempts < maxAttempts) {
+      try {
+        await axiosIPv4.post(url, params, {
+          headers: { ...rdHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
+          timeout: 20000,
+        });
+        rateLimiter.recordSuccess(PROVIDER_NAME);
+        return;
+      } catch (err: any) {
+        attempts++;
+        const status = err?.response?.status || err?.status;
+        if (status === 404 && attempts < maxAttempts) {
+          console.warn(`[${new Date().toISOString()}][rd] select files got 404 for torrent ${id}, retrying in 1s (attempt ${attempts}/${maxAttempts})`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
+        }
+        this.handleError(err, `select all files for torrent ${id}`);
+        break;
+      }
     }
   }
 
