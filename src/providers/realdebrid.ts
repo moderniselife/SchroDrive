@@ -374,6 +374,16 @@ export class RealDebridProvider implements DebridProvider {
     const s = String(torrent?.status || '').toLowerCase();
     // Completed torrents are never dead, regardless of status string
     if (typeof torrent?.progress === 'number' && torrent.progress >= 100) return false;
+
+    // RealDebrid dead/failed statuses:
+    // - magnet_error: invalid or broken magnet link
+    // - error: generic torrent error
+    // - virus: file flagged as containing a virus
+    // - dead: no seeders / torrent is fully dead
+    // - compressing_error: RD-side compression failure
+    const deadStatuses = ['magnet_error', 'error', 'virus', 'dead', 'compressing_error'];
+    if (deadStatuses.includes(s)) return true;
+    // Fallback: catch any status containing 'error' or 'dead'
     if (s.includes('error') || s.includes('dead')) return true;
     return false;
   }
@@ -482,7 +492,13 @@ export class RealDebridProvider implements DebridProvider {
         return true;
       }
     } catch (err: any) {
-      console.warn(`[${new Date().toISOString()}][rd] repair re-add failed`, { hash: infoHash, err: err?.message });
+      const status = err?.response?.status || err?.status;
+      if (status === 451) {
+        console.warn(`[${new Date().toISOString()}][rd] ⚖️ repair blocked — 451 Unavailable For Legal Reasons`, { hash: infoHash });
+        // Don't blacklist here — the dead scanner will handle it in Phase C
+      } else {
+        console.warn(`[${new Date().toISOString()}][rd] repair re-add failed`, { hash: infoHash, err: err?.message });
+      }
     }
 
     return false;
