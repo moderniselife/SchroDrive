@@ -56,7 +56,7 @@ COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 # Expose ports: 8978 for backend API, 3000 for web GUI
-EXPOSE 8978 3000
+EXPOSE 8978 3000 7000
 
 # Environment variable to control web GUI
 ENV RUN_WEB_GUI=false

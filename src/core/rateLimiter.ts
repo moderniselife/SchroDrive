@@ -16,6 +16,14 @@
  * @module rateLimiter
  */
 
+import {
+  saveRateLimitState,
+  loadAllRateLimitStates,
+  setCacheEntry,
+  getCacheEntry,
+  type RateLimitStateRecord,
+} from './db';
+
 // ===========================================================================
 // Types
 // ===========================================================================
@@ -55,6 +63,9 @@ interface RateLimitState {
 class RateLimiter {
   /** Per-provider rate limit state. */
   private states: Map<string, RateLimitState> = new Map();
+
+  /** Whether the initial DB restore has been performed. */
+  private _dbRestored = false;
   
   /** Base backoff duration: 60 seconds, doubles with each consecutive error. */
   private baseBackoffMs = 60 * 1000;
@@ -105,6 +116,11 @@ class RateLimiter {
    * @returns The mutable rate limit state object.
    */
   private getState(provider: string): RateLimitState {
+    // Restore all states from DB on first access
+    if (!this._dbRestored) {
+      this.restoreFromDb();
+    }
+
     if (!this.states.has(provider)) {
       this.states.set(provider, {
         isLimited: false,
@@ -118,6 +134,60 @@ class RateLimiter {
   }
 
   /**
+   * Restores rate limit states from the SQLite database.
+   * Called once on first access to rehydrate backoff timers across restarts.
+   */
+  private restoreFromDb(): void {
+    this._dbRestored = true;
+    try {
+      const saved = loadAllRateLimitStates();
+      for (const [provider, record] of saved) {
+        // Only restore if the backoff hasn't expired
+        const state: RateLimitState = {
+          isLimited: record.isLimited && record.limitedUntil > Date.now(),
+          limitedUntil: record.limitedUntil,
+          consecutiveErrors: record.consecutiveErrors,
+          lastError: record.lastError,
+          lastRequestTime: record.lastRequest,
+        };
+        this.states.set(provider, state);
+
+        // Restore custom throttle delays
+        if (record.throttleMs !== null && record.throttleMs !== undefined) {
+          this.minRequestDelayMs.set(provider, record.throttleMs);
+        }
+      }
+      if (saved.size > 0) {
+        console.log(`[${new Date().toISOString()}][rate-limiter] Restored state for ${saved.size} provider(s) from database`);
+      }
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}][rate-limiter] Failed to restore from database: ${err?.message}`);
+    }
+  }
+
+  /**
+   * Persists the current state for a provider to the database.
+   *
+   * @param provider - The provider identifier.
+   */
+  private persistState(provider: string): void {
+    try {
+      const state = this.states.get(provider);
+      if (!state) return;
+      saveRateLimitState(provider, {
+        isLimited: state.isLimited,
+        limitedUntil: state.limitedUntil,
+        consecutiveErrors: state.consecutiveErrors,
+        lastError: state.lastError,
+        lastRequest: state.lastRequestTime,
+        throttleMs: this.minRequestDelayMs.get(provider) ?? null,
+      });
+    } catch (err: any) {
+      console.error(`[${new Date().toISOString()}][rate-limiter] Failed to persist state: ${err?.message}`);
+    }
+  }
+
+  /**
    * Sets a custom throttle delay for a provider, overriding the default.
    *
    * @param provider - The provider identifier.
@@ -125,6 +195,7 @@ class RateLimiter {
    */
   setThrottleDelay(provider: string, delayMs: number): void {
     this.minRequestDelayMs.set(provider, delayMs);
+    this.persistState(provider);
   }
 
   // ---------------------------------------------------------------------------
@@ -323,6 +394,8 @@ class RateLimiter {
       `[${new Date().toISOString()}][rate-limiter] ${provider} rate limited, ` +
       `backing off for ${waitSeconds}s (attempt ${state.consecutiveErrors})`
     );
+
+    this.persistState(provider);
   }
 
   /**
@@ -339,6 +412,8 @@ class RateLimiter {
     state.consecutiveErrors = 0;
     state.lastError = null;
     state.isLimited = false;
+
+    this.persistState(provider);
   }
 
   /**
@@ -372,6 +447,15 @@ class RateLimiter {
    */
   setCache(key: string, data: any): void {
     this.cache.set(key, { data, timestamp: Date.now() });
+
+    // Write through to SQLite for persistence across restarts
+    try {
+      const expiresAt = Date.now() + this.cacheTtlMs;
+      setCacheEntry(key, JSON.stringify(data), expiresAt);
+    } catch (err: any) {
+      // Non-critical — in-memory cache still works
+      console.error(`[${new Date().toISOString()}][rate-limiter] Cache write-through failed: ${err?.message}`);
+    }
   }
 
   /**
@@ -384,12 +468,28 @@ class RateLimiter {
    */
   getCache<T>(key: string): T | null {
     const cached = this.cache.get(key);
-    if (!cached) return null;
-    if (Date.now() - cached.timestamp > this.cacheTtlMs) {
-      this.cache.delete(key);
-      return null;
+    if (cached) {
+      if (Date.now() - cached.timestamp > this.cacheTtlMs) {
+        this.cache.delete(key);
+      } else {
+        return cached.data as T;
+      }
     }
-    return cached.data as T;
+
+    // In-memory miss — check SQLite as fallback
+    try {
+      const dbData = getCacheEntry(key);
+      if (dbData) {
+        const parsed = JSON.parse(dbData) as T;
+        // Re-populate in-memory cache
+        this.cache.set(key, { data: parsed, timestamp: Date.now() });
+        return parsed;
+      }
+    } catch (err: any) {
+      // Non-critical — return null gracefully
+    }
+
+    return null;
   }
 
   // ---------------------------------------------------------------------------
