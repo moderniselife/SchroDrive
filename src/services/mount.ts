@@ -797,15 +797,22 @@ const HEALTH_CHECK_FAILURE_THRESHOLD = 5;
 /** Interval between health checks in milliseconds. */
 const HEALTH_CHECK_INTERVAL_MS = 60_000; // 1 minute
 
-/** Error patterns that indicate a problematic mount. */
+/**
+ * Error patterns that indicate a genuinely problematic mount.
+ *
+ * NOTE: 502 Bad Gateway and 503 Service Unavailable are intentionally EXCLUDED.
+ * The WebDAV bridge returns 503 Retry-After for dead/temporarily-unavailable
+ * torrents by design. rclone logs these at INFO level and retries automatically.
+ * Counting them as mount errors caused unnecessary remounts every ~5 minutes,
+ * which killed active Plex streams. See: webdavBridge.ts lines 1306-1314.
+ */
 const MOUNT_ERROR_PATTERNS = [
-  "423 Locked",
   "IO error",
   "transport connection broken",
   "connection reset by peer",
-  "502 Bad Gateway",
-  "503 Service Unavailable",
   "vfs cache: failed to open",
+  "mount helper error",
+  "mount failed",
 ];
 
 interface MountTarget {
@@ -838,9 +845,12 @@ function startMountHealthMonitor(
       const remoteName = m.remote.replace(":", "");
       const logFile = path.join(tmpDir, `rclone-${remoteName}.log`);
 
-      let hasErrors = false;
+      let logHasErrors = false;
+      let mountInaccessible = false;
 
-      // 1. Check rclone log for new errors since last read
+      // 1. Check rclone log for new errors since last read (INFORMATIONAL ONLY)
+      // Log errors alone do NOT trigger a remount — the mount can be healthy
+      // even with transient 503/423 errors from dead/unavailable torrents.
       try {
         const stat = fs.statSync(logFile);
         if (stat.size > logPositions[m.remote]) {
@@ -857,9 +867,9 @@ function startMountHealthMonitor(
           );
 
           if (errorLines.length > 0) {
-            hasErrors = true;
+            logHasErrors = true;
             console.warn(
-              `[${new Date().toISOString()}][mount-health] ${m.remote} detected ${errorLines.length} error(s) in rclone log`
+              `[${new Date().toISOString()}][mount-health] ${m.remote} detected ${errorLines.length} rclone error(s) (informational — not triggering remount)`
             );
           }
         }
@@ -867,28 +877,33 @@ function startMountHealthMonitor(
         // Log file might not exist yet — that's fine
       }
 
-      // 2. Check FUSE mount accessibility (non-blocking)
+      // 2. Check FUSE mount accessibility — THIS is the primary health signal.
+      // Only mount inaccessibility (readdir failure/timeout/empty) counts as
+      // a genuine failure. This prevents the old bug where expected 503
+      // responses from dead torrents triggered unnecessary remounts.
       try {
         const items = await Promise.race([
           fs.promises.readdir(m.path),
           sleep(5000).then(() => { throw new Error("readdir timed out"); }),
         ]);
         if ((items as string[]).length === 0) {
-          hasErrors = true;
+          mountInaccessible = true;
           console.warn(`[${new Date().toISOString()}][mount-health] ${m.remote} mount at ${m.path} is empty`);
         }
       } catch (e: any) {
-        hasErrors = true;
+        mountInaccessible = true;
         console.warn(
           `[${new Date().toISOString()}][mount-health] ${m.remote} mount at ${m.path} inaccessible: ${e?.message}`
         );
       }
 
-      // 3. Update failure counter and trigger remount if needed
-      if (hasErrors) {
-        failureCounts[m.remote]++;
+      // 3. Update failure counter — only on mount inaccessibility
+      // Log errors alone are informational and do NOT affect the counter.
+      // If both log errors AND mount inaccessible, escalate faster (2x increment).
+      if (mountInaccessible) {
+        failureCounts[m.remote] += logHasErrors ? 2 : 1;
         console.warn(
-          `[${new Date().toISOString()}][mount-health] ${m.remote} failure streak: ${failureCounts[m.remote]}/${HEALTH_CHECK_FAILURE_THRESHOLD}`
+          `[${new Date().toISOString()}][mount-health] ${m.remote} failure streak: ${failureCounts[m.remote]}/${HEALTH_CHECK_FAILURE_THRESHOLD}${logHasErrors ? ' (escalated — log errors + mount inaccessible)' : ''}`
         );
 
         if (failureCounts[m.remote] >= HEALTH_CHECK_FAILURE_THRESHOLD) {
@@ -900,7 +915,7 @@ function startMountHealthMonitor(
           logPositions[m.remote] = 0; // Reset log position after remount
         }
       } else {
-        // Reset counter on successful check
+        // Mount is accessible — reset the failure counter
         if (failureCounts[m.remote] > 0) {
           console.log(`[${new Date().toISOString()}][mount-health] ${m.remote} recovered — resetting failure counter`);
         }
