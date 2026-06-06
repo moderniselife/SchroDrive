@@ -37,6 +37,18 @@ and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.
   - WebDAV bridge on port 9121 (configurable via `CLOUD_LINKS_PORT`)
   - Config via JSON file (`/config/cloud_links.json`) and/or `CLOUD_LINKS` env var
   - 5-minute folder listing cache to respect rate limits
+- **HTTP directory listing adapter** (`src/services/cloudLinks/httpAdapter.ts`):
+  - Mount any open directory (Nginx autoindex, Apache mod_autoindex, RD HTTP folder)
+  - Auto-detects listing format (`<pre>`, `<table>`, or generic link extraction)
+  - 302 redirects to direct download URLs (no stream proxying)
+  - 10-minute folder listing cache for rate-limited servers
+  - Optional custom headers for auth-protected directories
+
+### Fixed 🐛
+- **TV season packs classified as movies** (`src/core/mediaClassifier.ts`):
+  - Season-only packs (e.g. `S01.1080p`, `S02.TVShows`) now correctly detected as shows
+  - Added `\bS\d{1,3}\b` pattern with negative lookahead to avoid false positives
+  - Added `TVShows` and `Season Pack` keyword patterns
 
 ### Changed 🔄
 - **Organiser mount awareness** (`src/services/organizer.ts`):
