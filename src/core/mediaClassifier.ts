@@ -118,14 +118,17 @@ const EPISODE_PATTERNS: RegExp[] = [
   /S\d{1,3}E\d{1,3}/i,           // S01E01, S1E1
   /\bS\d{1,3}\b(?!ub|pecial|ample|cene|creens|eries)/i, // S01, S1 (season pack — excludes Sub, Special, Sample, etc.)
   /S\d{1,3}\s*[-–]\s*S\d{1,3}/i, // S01-S03 (multi-season packs)
-  /Season\s*\d+/i,                 // Season 01, Season 1
-  /Seasons?\s*\d+\s*[-–&]\s*\d+/i, // Seasons 1-5, Season 1 & 2
+  /\bSeason[\s.]*\d+/i,           // Season 01, Season.1, Season1
+  /\bSeasons?\s*\d+\s*[-–&]\s*\d+/i, // Seasons 1-5, Season 1 & 2
+  /\bSeasons?\s*\d+\s+(?:to|and|&)\s*\d+/i, // Seasons 1 to 5, Seasons 6 and 7
   /\b\d{1,2}x\d{2,3}\b/i,         // 1x01, 12x05
   /\bE(?:p|pisode)?\s*\d+/i,      // E01, Ep01, Episode 01
-  /Complete\s*Series/i,            // Complete Series
+  /Complete\s*(?:Series|Season)/i, // Complete Series, Complete Season
+  /Season\s*\d+\s*Complete/i,      // Season 1 Complete
   /\bMini[- ]?Series\b/i,         // Mini-Series, Miniseries
   /\bTVShows?\b/i,                 // TVShows, TVShow
   /\bSeason\s*Pack\b/i,            // Season Pack
+  /\bS\d{1,3}[.-]S\d{1,3}\b/i,    // S01.S05 or S01-S05 (dot/dash multi-season)
 ];
 
 /**
