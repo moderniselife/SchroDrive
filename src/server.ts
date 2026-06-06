@@ -361,77 +361,97 @@ export function startServer() {
    */
   app.get("/api/downloads", async (_req, res) => {
     try {
+      // Fetch downloads from all providers in parallel for speed
+      const providerResults = await Promise.allSettled(
+        registry.configured().map(async (provider) => {
+          const downloads: any[] = [];
+
+          // Fetch all download types for this provider in parallel
+          const [dlResult, webResult, usenetResult] = await Promise.allSettled([
+            // Standard downloads (RealDebrid's unrestricted files)
+            provider.listDownloads
+              ? provider.listDownloads().catch((err: any) => {
+                  console.error(`[api/downloads] ${provider.id} downloads error:`, err.message);
+                  return [] as any[];
+                })
+              : Promise.resolve([] as any[]),
+            // Web downloads (TorBox only)
+            provider.listWebDownloads
+              ? provider.listWebDownloads().catch((err: any) => {
+                  console.error(`[api/downloads] ${provider.id} web downloads error:`, err.message);
+                  return [] as any[];
+                })
+              : Promise.resolve([] as any[]),
+            // Usenet downloads (TorBox only)
+            provider.listUsenetDownloads
+              ? provider.listUsenetDownloads().catch((err: any) => {
+                  console.error(`[api/downloads] ${provider.id} usenet downloads error:`, err.message);
+                  return [] as any[];
+                })
+              : Promise.resolve([] as any[]),
+          ]);
+
+          // Process standard downloads
+          const stdDownloads = dlResult.status === 'fulfilled' ? dlResult.value : [];
+          for (const d of stdDownloads) {
+            downloads.push({
+              id: d.id,
+              name: d.name,
+              type: d.type || "download",
+              status: d.status || "downloaded",
+              progress: typeof d.progress === "number" ? d.progress : 100,
+              size: d.size || 0,
+              provider: provider.id,
+              addedAt: d.raw?.generated || d.raw?.created_at || d.raw?.added,
+              downloadUrl: d.url || d.raw?.download,
+              host: d.raw?.host,
+              link: d.raw?.link,
+              streamable: d.raw?.streamable,
+              mimeType: d.raw?.mimeType,
+            });
+          }
+
+          // Process web downloads
+          const webDownloads = webResult.status === 'fulfilled' ? webResult.value : [];
+          for (const d of webDownloads) {
+            downloads.push({
+              id: d.id,
+              name: d.name,
+              type: "web",
+              status: d.status || "unknown",
+              progress: typeof d.progress === "number" ? d.progress : 100,
+              size: d.size || 0,
+              provider: provider.id,
+              addedAt: d.raw?.created_at || d.raw?.added,
+              downloadSpeed: d.raw?.download_speed || 0,
+            });
+          }
+
+          // Process usenet downloads
+          const usenetDownloads = usenetResult.status === 'fulfilled' ? usenetResult.value : [];
+          for (const d of usenetDownloads) {
+            downloads.push({
+              id: d.id,
+              name: d.name,
+              type: "usenet",
+              status: d.status || "unknown",
+              progress: typeof d.progress === "number" ? d.progress : 100,
+              size: d.size || 0,
+              provider: provider.id,
+              addedAt: d.raw?.created_at || d.raw?.added,
+              downloadSpeed: d.raw?.download_speed || 0,
+            });
+          }
+
+          return downloads;
+        })
+      );
+
+      // Flatten all provider results
       const allDownloads: any[] = [];
-
-      for (const provider of registry.configured()) {
-        // Standard downloads (RealDebrid's unrestricted files)
-        if (provider.listDownloads) {
-          try {
-            const downloads = await provider.listDownloads();
-            for (const d of downloads) {
-              allDownloads.push({
-                id: d.id,
-                name: d.name,
-                type: d.type || "download",
-                status: d.status || "downloaded",
-                progress: typeof d.progress === "number" ? d.progress : 100,
-                size: d.size || 0,
-                provider: provider.id,
-                addedAt: d.raw?.generated || d.raw?.created_at || d.raw?.added,
-                downloadUrl: d.url || d.raw?.download,
-                host: d.raw?.host,
-                link: d.raw?.link,
-                streamable: d.raw?.streamable,
-                mimeType: d.raw?.mimeType,
-              });
-            }
-          } catch (err: any) {
-            console.error(`[api/downloads] ${provider.id} downloads error:`, err.message);
-          }
-        }
-
-        // Web downloads (TorBox only)
-        if (provider.listWebDownloads) {
-          try {
-            const webDownloads = await provider.listWebDownloads();
-            for (const d of webDownloads) {
-              allDownloads.push({
-                id: d.id,
-                name: d.name,
-                type: "web",
-                status: d.status || "unknown",
-                progress: typeof d.progress === "number" ? d.progress : 100,
-                size: d.size || 0,
-                provider: provider.id,
-                addedAt: d.raw?.created_at || d.raw?.added,
-                downloadSpeed: d.raw?.download_speed || 0,
-              });
-            }
-          } catch (err: any) {
-            console.error(`[api/downloads] ${provider.id} web downloads error:`, err.message);
-          }
-        }
-
-        // Usenet downloads (TorBox only)
-        if (provider.listUsenetDownloads) {
-          try {
-            const usenetDownloads = await provider.listUsenetDownloads();
-            for (const d of usenetDownloads) {
-              allDownloads.push({
-                id: d.id,
-                name: d.name,
-                type: "usenet",
-                status: d.status || "unknown",
-                progress: typeof d.progress === "number" ? d.progress : 100,
-                size: d.size || 0,
-                provider: provider.id,
-                addedAt: d.raw?.created_at || d.raw?.added,
-                downloadSpeed: d.raw?.download_speed || 0,
-              });
-            }
-          } catch (err: any) {
-            console.error(`[api/downloads] ${provider.id} usenet downloads error:`, err.message);
-          }
+      for (const result of providerResults) {
+        if (result.status === 'fulfilled') {
+          allDownloads.push(...result.value);
         }
       }
 
