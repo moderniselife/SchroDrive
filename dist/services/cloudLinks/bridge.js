@@ -525,10 +525,10 @@ async function startCloudLinksBridge() {
     console.log(`${LOG_PREFIX} Initialising ${links.length} cloud link adapter(s)...`);
     // Create and initialise adapters
     for (const link of links) {
-        const adapter = createAdapter(link);
-        if (!adapter)
-            continue;
         try {
+            const adapter = createAdapter(link);
+            if (!adapter)
+                continue;
             await adapter.init();
             if (!adaptersByProvider.has(link.type)) {
                 adaptersByProvider.set(link.type, new Map());

@@ -624,10 +624,10 @@ export async function startCloudLinksBridge(): Promise<void> {
 
   // Create and initialise adapters
   for (const link of links) {
-    const adapter = createAdapter(link);
-    if (!adapter) continue;
-
     try {
+      const adapter = createAdapter(link);
+      if (!adapter) continue;
+
       await adapter.init();
 
       if (!adaptersByProvider.has(link.type)) {

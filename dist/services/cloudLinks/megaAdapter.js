@@ -22,6 +22,7 @@ const megajs_1 = require("megajs");
 class MegaAdapter {
     /**
      * Creates a new MEGA adapter for a public shared folder link.
+     * The MEGA URL is validated and loaded lazily during {@link init}.
      *
      * @param url - MEGA public folder URL (e.g. https://mega.nz/folder/ID#KEY)
      * @param name - Display name for the mount directory.
@@ -31,16 +32,20 @@ class MegaAdapter {
         this.loaded = false;
         this.fileMap = new Map();
         this.name = name;
-        this.folder = megajs_1.File.fromURL(url);
+        this.url = url;
+        // Defer File.fromURL() to init() so invalid URLs don't crash the constructor
+        this.folder = null;
     }
     /**
      * Load the folder's attribute tree from MEGA.
-     * This fetches the full directory structure in one API call.
+     * This validates the URL and fetches the full directory structure in one API call.
      */
     async init() {
         if (this.loaded)
             return;
         console.log(`[${new Date().toISOString()}][cloud-links][mega] Loading attributes for "${this.name}"...`);
+        // Parse the MEGA URL — throws if the URL has no hash/decryption key
+        this.folder = megajs_1.File.fromURL(this.url);
         await this.folder.loadAttributes();
         this.loaded = true;
         // Build flat file map for fast ID-based lookups
