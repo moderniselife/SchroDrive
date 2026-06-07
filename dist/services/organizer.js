@@ -3,9 +3,9 @@
  * SchroDrive — Media Organiser
  *
  * Scans mounted debrid provider directories for video files, parses filenames
- * to classify content as TV shows or movies, looks up canonical metadata via
- * TMDB, TVMaze, and iTunes APIs, and creates a symlink-based organised library
- * structure under `Movies/` and `TV/` folders.
+ * to classify content as TV shows, movies, or anime, looks up canonical metadata
+ * via TMDB, TVMaze, and iTunes APIs, and creates a symlink-based organised library
+ * structure under `Movies/`, `TV/`, and `Anime/` folders.
  *
  * Supports filename patterns including:
  * - TV: `S01E02`, `1x02`, and anime absolute numbering (e.g. `Show - 637`)
@@ -58,6 +58,15 @@ const fsp = __importStar(require("fs/promises"));
 const path = __importStar(require("path"));
 const axios_1 = __importDefault(require("axios"));
 const config_1 = require("../core/config");
+const mediaClassifier_1 = require("../core/mediaClassifier");
+// ===========================================================================
+// Types & Constants
+// ===========================================================================
+/** Directory names that should never be treated as show/movie titles by path walkers. */
+const MOUNT_STOP_WORDS = new Set([
+    "links", "__all__", "anime", "shows", "movies", "cloud",
+    ...config_1.config.providers.map((p) => p.toLowerCase()),
+]);
 /** Set of recognised video file extensions (lowercase, including dot). */
 const VIDEO_EXTS = new Set([
     ".mkv",
@@ -118,6 +127,8 @@ function isLikelyTvContext(fullPath) {
         const b = path.basename(cur);
         if (!b || b === "/" || b === ".")
             break;
+        if (MOUNT_STOP_WORDS.has(b.toLowerCase()))
+            break;
         segs.push(b);
         const next = path.dirname(cur);
         if (next === cur)
@@ -136,7 +147,6 @@ function isLikelyTvContext(fullPath) {
  * @returns A guessed title string, or `undefined` if no suitable candidate found.
  */
 function pickCandidateTitleFromPath(fullPath) {
-    const stop = new Set(["links"]);
     const bad = [/^_?more_\d+$/i, /^\d+$/, /^-+$/];
     let cur = path.dirname(fullPath);
     for (let i = 0; i < 5; i++) {
@@ -144,8 +154,11 @@ function pickCandidateTitleFromPath(fullPath) {
         if (!name || name === "/" || name === ".")
             break;
         const lower = name.toLowerCase();
+        // Use shared mount stop-words set
+        if (MOUNT_STOP_WORDS.has(lower))
+            break;
         const isBad = bad.some((r) => r.test(name));
-        if (!stop.has(lower) && !isBad && name.length > 2) {
+        if (!isBad && name.length > 2) {
             return guessTitleFromFilename(name);
         }
         const next = path.dirname(cur);
@@ -216,7 +229,7 @@ function findShowHintFromPath(fullPath) {
     let cur = path.dirname(fullPath);
     for (let i = 0; i < 4; i++) {
         const name = path.basename(cur);
-        if (!name || name === "/" || name === "." || name.toLowerCase() === "realdebrid" || name.toLowerCase() === "torbox" || name.toLowerCase() === "links")
+        if (!name || name === "/" || name === "." || MOUNT_STOP_WORDS.has(name.toLowerCase()))
             break;
         // Skip generic season folders
         if (/^\bseason\s*\d+\b$/i.test(name) || /^\bs\d{1,2}$/i.test(name)) {
@@ -476,15 +489,17 @@ async function itunesMovieSearch(title, year) {
  *
  * Output structure:
  * - Movies: `<organizedBase>/Movies/<Title> (<Year>)/<Title> (<Year>).ext`
+ * - Anime (TV): `<organizedBase>/Anime/<Show> (<Year>)/Season <SS>/<Show> S<SS>E<EE>.ext`
  * - TV (S/E): `<organizedBase>/TV/<Show> (<Year>)/Season <SS>/<Show> S<SS>E<EE>.ext`
  * - TV (absolute): `<organizedBase>/TV/<Show> (<Year>)/<Show> - <NNNN>.ext`
  * - TV (no episode): `<organizedBase>/TV/<Show> (<Year>)/<Show>.ext`
  *
  * @param p - The parsed metadata from {@link parseFilename}.
  * @param srcBaseName - The original filename (used as fallback for titles).
+ * @param srcFullPath - The full path to the source file (used for torrent dir classification).
  * @returns The absolute target path, or `null` if type is unknown.
  */
-function computeTarget(p, srcBaseName) {
+function computeTarget(p, srcBaseName, srcFullPath) {
     const orgBase = config_1.config.organizedBase;
     if (p.type === "movie") {
         const title = p.title ? sanitize(p.title) : sanitize(path.parse(srcBaseName).name);
@@ -494,22 +509,46 @@ function computeTarget(p, srcBaseName) {
         return path.join(dstDir, dstName);
     }
     if (p.type === "tv") {
+        // Check if the content is anime using the media classifier.
+        // Extract the torrent directory name — the directory immediately under __all__/ or links/.
+        let torrentDirName;
+        if (srcFullPath) {
+            const segments = srcFullPath.split(path.sep);
+            const allIdx = segments.lastIndexOf("__all__");
+            const linksIdx = segments.lastIndexOf("links");
+            const rootIdx = Math.max(allIdx, linksIdx);
+            if (rootIdx >= 0 && rootIdx + 1 < segments.length) {
+                torrentDirName = segments[rootIdx + 1];
+            }
+        }
+        const classifyInput = torrentDirName || p.show || srcBaseName;
+        const mediaCategory = (0, mediaClassifier_1.classifyTorrent)(classifyInput);
         const show = p.show ? sanitize(p.show) : sanitize(path.parse(srcBaseName).name);
+        const showDir = p.year ? `${show} (${p.year})` : show;
+        if (mediaCategory === 'anime') {
+            // Output to Anime/ instead of TV/
+            if (typeof p.season === "number" && typeof p.episode === "number") {
+                const seasonDir = `Season ${pad2(p.season)}`;
+                const epStr = `${show} S${pad2(p.season)}E${pad2(p.episode)}`;
+                return path.join(orgBase, "Anime", showDir, seasonDir, `${epStr}${p.ext}`);
+            }
+            if (typeof p.absolute === "number") {
+                return path.join(orgBase, "Anime", showDir, `${show} - ${pad4(p.absolute)}${p.ext}`);
+            }
+            return path.join(orgBase, "Anime", showDir, `${show}${p.ext}`);
+        }
         if (typeof p.season === "number" && typeof p.episode === "number") {
             const seasonDir = `Season ${pad2(p.season)}`;
-            const showDir = p.year ? `${show} (${p.year})` : show;
             const dstDir = path.join(orgBase, "TV", showDir, seasonDir);
             const fileName = `${show} S${pad2(p.season)}E${pad2(p.episode)}${p.ext}`;
             return path.join(dstDir, fileName);
         }
         if (typeof p.absolute === "number") {
-            const showDir = p.year ? `${show} (${p.year})` : show;
             const dstDir = path.join(orgBase, "TV", showDir);
             const fileName = `${show} - ${pad4(p.absolute)}${p.ext}`;
             return path.join(dstDir, fileName);
         }
         // TV with no episode info — place directly in the show directory
-        const showDir = p.year ? `${show} (${p.year})` : show;
         const dstDir = path.join(orgBase, "TV", showDir);
         const fileName = `${show}${p.ext}`;
         return path.join(dstDir, fileName);
@@ -694,9 +733,10 @@ async function organizeOnce(opts) {
     const orgBase = config_1.config.organizedBase;
     const movieDir = path.join(orgBase, "Movies");
     const tvDir = path.join(orgBase, "TV");
+    const animeDir = path.join(orgBase, "Anime");
     let totalRemovedLinks = 0;
     let totalRemovedDirs = 0;
-    for (const dir of [movieDir, tvDir]) {
+    for (const dir of [movieDir, tvDir, animeDir]) {
         try {
             const st = await fsp.stat(dir);
             if (st.isDirectory()) {
@@ -717,18 +757,20 @@ async function organizeOnce(opts) {
     const providerBases = config_1.config.providers.map((p) => path.join(config_1.config.mountBase, p));
     const roots = [];
     for (const b of providerBases) {
-        try {
-            // Prefer the "links" subdirectory if it exists (used by some providers)
-            const linksDir = path.join(b, "links");
-            const st = await fsp.stat(linksDir).catch(() => null);
-            if (st && st.isDirectory()) {
-                roots.push(linksDir);
-            }
-            else {
-                roots.push(b);
-            }
+        // Check for Zurg-style organised category layout (__all__/anime/shows/movies)
+        const allDir = path.join(b, "__all__");
+        const allStat = await fsp.stat(allDir).catch(() => null);
+        if (allStat?.isDirectory()) {
+            roots.push(allDir); // Scan __all__ only — it's the superset, avoids duplicates
+            continue;
         }
-        catch (_) {
+        // Legacy layout: check for links/ subdirectory
+        const linksDir = path.join(b, "links");
+        const linksStat = await fsp.stat(linksDir).catch(() => null);
+        if (linksStat?.isDirectory()) {
+            roots.push(linksDir);
+        }
+        else {
             roots.push(b);
         }
     }
@@ -821,7 +863,7 @@ async function organizeOnce(opts) {
             if (unknownSamples.length < 10)
                 unknownSamples.push(src);
         }
-        const dst = computeTarget(parsed, base);
+        const dst = computeTarget(parsed, base, src);
         if (!dst)
             continue;
         await makeSymlink(src, dst, dryRun);

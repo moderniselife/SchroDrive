@@ -23,7 +23,9 @@ exports.searchScrapers = searchScrapers;
 exports.searchAll = searchAll;
 exports.pickBestResult = pickBestResult;
 exports.getMagnet = getMagnet;
+exports.getMagnetOrTorrent = getMagnetOrTorrent;
 exports.getMagnetOrResolve = getMagnetOrResolve;
+exports.getMagnetOrTorrentResolved = getMagnetOrTorrentResolved;
 exports.getProviderName = getProviderName;
 exports.isIndexerConfigured = isIndexerConfigured;
 exports.isAnySearchConfigured = isAnySearchConfigured;
@@ -287,6 +289,24 @@ function getMagnet(r) {
     }
     return (0, prowlarr_1.getMagnet)(r);
 }
+/**
+ * Extracts a magnet URI or .torrent download URL from an indexer result.
+ * Returns undefined if neither is available.
+ */
+function getMagnetOrTorrent(r) {
+    if (!r)
+        return undefined;
+    // Try direct magnet first (synchronous)
+    const magnet = getMagnet(r);
+    if (magnet) {
+        // Check if it's actually a torrent: prefixed URL from getMagnetOrResolve
+        if (magnet.startsWith('torrent:')) {
+            return { type: 'torrentUrl', value: magnet.slice('torrent:'.length) };
+        }
+        return { type: 'magnet', value: magnet };
+    }
+    return undefined;
+}
 async function getMagnetOrResolve(r) {
     if (!r)
         return undefined;
@@ -295,10 +315,30 @@ async function getMagnetOrResolve(r) {
         return r.magnetUrl;
     }
     const provider = getActiveProvider();
+    let result;
     if (provider === "jackett") {
-        return (0, jackett_1.getMagnetOrResolve)(r);
+        result = await (0, jackett_1.getMagnetOrResolve)(r);
     }
-    return (0, prowlarr_1.getMagnetOrResolve)(r);
+    else {
+        result = await (0, prowlarr_1.getMagnetOrResolve)(r);
+    }
+    // Pass through torrent:-prefixed URLs — callers can detect and handle them
+    return result;
+}
+/**
+ * Async variant of getMagnetOrTorrent that also follows redirects to resolve
+ * magnet URIs or .torrent download URLs.
+ */
+async function getMagnetOrTorrentResolved(r) {
+    if (!r)
+        return undefined;
+    const resolved = await getMagnetOrResolve(r);
+    if (!resolved)
+        return undefined;
+    if (resolved.startsWith('torrent:')) {
+        return { type: 'torrentUrl', value: resolved.slice('torrent:'.length) };
+    }
+    return { type: 'magnet', value: resolved };
 }
 function getProviderName() {
     const provider = getActiveProvider();

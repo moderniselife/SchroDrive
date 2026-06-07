@@ -27,7 +27,6 @@ const http_1 = __importDefault(require("http"));
 const config_1 = require("../core/config");
 const rateLimiter_1 = require("../core/rateLimiter");
 const tokenRotator_1 = require("../core/tokenRotator");
-const errors_1 = require("../core/errors");
 // ===========================================================================
 // Constants & HTTP Configuration
 // ===========================================================================
@@ -281,6 +280,48 @@ class AllDebridProvider {
         }
         catch (err) {
             this.handleError(err, 'add magnet');
+            throw err;
+        }
+    }
+    /**
+     * Uploads a .torrent file buffer to AllDebrid.
+     *
+     * Uses `POST /v4/magnet/upload/file` with multipart form data.
+     * The file is sent as a `files[]` field in the form.
+     * Automatically selects all files after upload (same as addMagnet).
+     *
+     * @param fileBuffer - The raw .torrent file contents.
+     * @param name - Optional human-readable name for logging.
+     * @returns An object containing the magnet `id` from the AllDebrid response.
+     * @throws {Error} If the provider is rate-limited or the request fails.
+     */
+    async addTorrentFile(fileBuffer, name) {
+        if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
+            const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+            throw new Error(`AllDebrid rate limited, retry in ${waitTime}s`);
+        }
+        await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
+        try {
+            const url = buildUrl('/magnet/upload/file');
+            console.log(`[${new Date().toISOString()}][ad] Uploading .torrent file${name ? `: ${name}` : ''}`);
+            const formData = new FormData();
+            formData.append('files[]', new Blob([new Uint8Array(fileBuffer)], { type: 'application/x-bittorrent' }), name || 'upload.torrent');
+            const uploadRes = await axiosIPv4.post(url, formData, {
+                timeout: 30000,
+            });
+            rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
+            const uploadData = unwrapResponse(uploadRes, 'upload torrent file');
+            // AllDebrid returns { files: [{ id, ... }] } or { magnets: [{ id, ... }] }
+            const magnetId = String(uploadData?.files?.[0]?.id || uploadData?.magnets?.[0]?.id || '');
+            if (!magnetId) {
+                throw new Error('AllDebrid upload/file returned no magnet ID');
+            }
+            // Select all files
+            await this.selectAllFiles(magnetId);
+            return { id: magnetId };
+        }
+        catch (err) {
+            this.handleError(err, 'add torrent file');
             throw err;
         }
     }
@@ -552,7 +593,9 @@ class AllDebridProvider {
             const rawLinks = Array.isArray(magnet?.links) ? magnet.links : [];
             const fileIndex = parseInt(fileId, 10);
             if (isNaN(fileIndex) || fileIndex < 0 || fileIndex >= rawLinks.length) {
-                throw new errors_1.UnplayableTorrentError(`File index ${fileId} out of range (${rawLinks.length} links) for magnet ${torrentId}`);
+                // Per-file issue (stale mapping) — don't kill the entire torrent
+                console.warn(`[${new Date().toISOString()}][ad] File index ${fileId} out of range (${rawLinks.length} links) for magnet ${torrentId} — skipping file`);
+                return null;
             }
             const fileLink = rawLinks[fileIndex]?.link || rawLinks[fileIndex]?.l;
             if (!fileLink) {

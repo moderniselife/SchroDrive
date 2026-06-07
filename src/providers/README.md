@@ -1,36 +1,74 @@
 # SchroDrive — Provider Abstraction Layer
 
 This directory contains the **debrid provider abstraction layer** — the standard
-interface all debrid services implement, plus the registry that manages them.
+interface all debrid services implement, the registry that manages them, and all
+11 provider implementations.
 
-## Architecture
+## Directory Contents (14 Files)
 
 ```
 providers/
-├── index.ts        # DebridProvider interface, types, ProviderRegistry
+├── index.ts        # DebridProvider interface, types, re-exports registry, auto-imports all providers
+├── registry.ts     # ProviderRegistry singleton (register, get, configured, ordered, checkExistingAcrossAll, addMagnetWithStrategy, addTorrentFileFromUrl)
 ├── realdebrid.ts   # RealDebrid implementation
 ├── torbox.ts       # TorBox implementation
+├── alldebrid.ts    # AllDebrid implementation
+├── premiumize.ts   # Premiumize implementation
+├── debridlink.ts   # Debrid-Link implementation
+├── deepbrid.ts     # Deepbrid implementation
+├── offcloud.ts     # Offcloud implementation
+├── putio.ts        # Put.io implementation
+├── megadebrid.ts   # MegaDebrid implementation (no WebDAV)
+├── seedr.ts        # Seedr implementation
+├── pikpak.ts       # PikPak implementation (JWT auth)
 └── README.md       # This file
 ```
+
+## Architecture
 
 ### How It Works
 
 1. **`index.ts`** exports the `DebridProvider` interface, shared types
-   (`TorrentInfo`, `VirtualDirectory`, etc.), and a singleton `registry`.
-2. Each provider file (e.g. `realdebrid.ts`) defines a class implementing
-   `DebridProvider` and **self-registers** at module level.
-3. `index.ts` imports each provider file at the bottom, triggering
+   (`TorrentInfo`, `VirtualDirectory`, `AddStrategy`, etc.), and re-exports
+   the `registry` singleton from `./registry`.
+2. **`registry.ts`** defines the `ProviderRegistry` class and exports the
+   singleton `registry` instance. It does **not** import any provider files.
+3. Each provider file (e.g. `debridlink.ts`) imports types from `'./index'`
+   and imports `{ registry }` from `'./registry'` — this avoids circular
+   dependency issues.
+4. Each provider **self-registers** at module level by calling
+   `registry.register(new XxxProvider())` and
+   `tokenRotator.registerProvider(...)`.
+5. `index.ts` imports each provider file at the bottom, triggering
    registration on first load.
 
 ```
-index.ts defines registry
+index.ts defines types + re-exports { registry } from './registry'
   └─→ imports './realdebrid'
-        └─→ realdebrid.ts imports { registry } from './index' (already defined)
+        └─→ realdebrid.ts imports types from './index'
+        └─→ realdebrid.ts imports { registry } from './registry'
         └─→ calls registry.register(new RealDebridProvider())
+        └─→ calls tokenRotator.registerProvider('realdebrid', ...)
   └─→ imports './torbox'
-        └─→ torbox.ts imports { registry } from './index' (already defined)
-        └─→ calls registry.register(new TorBoxProvider())
+        └─→ (same pattern)
+  └─→ imports './alldebrid'
+  └─→ imports './premiumize'
+  └─→ imports './debridlink'
+  └─→ imports './deepbrid'
+  └─→ imports './offcloud'
+  └─→ imports './putio'
+  └─→ imports './megadebrid'
+  └─→ imports './seedr'
+  └─→ imports './pikpak'
 ```
+
+### Why the Split?
+
+Provider files import `{ registry }` from `'./registry'` (not `'./index'`)
+to avoid circular imports. If a provider imported from `'./index'`, it would
+trigger `index.ts` to run, which in turn tries to import *all* provider files
+— including the one that started the cycle. Importing from `'./registry'`
+breaks the cycle because `registry.ts` is a leaf node with no provider imports.
 
 ## DebridProvider Interface
 
@@ -45,6 +83,7 @@ index.ts defines registry
 | `addMagnet(magnet, name?)` | Add a magnet link for downloading |
 | `checkExisting(title)` | Check if a similar torrent already exists |
 | `isTorrentDead(torrent)` | Detect dead/failed torrents |
+| `deleteTorrent(torrentId)` | Delete a torrent from the provider |
 | `fetchDirectories()` | Get virtual directories for the WebDAV bridge |
 | `resolveDownloadUrl(torrentId, fileId, linkIndex?)` | Resolve a direct download URL |
 | `hasDirectWebDAV()` | Whether native WebDAV credentials are configured |
@@ -57,110 +96,82 @@ index.ts defines registry
 | Method | Description |
 |---|---|
 | `listTorrentsStream()` | Async generator for SSE streaming |
+| `addTorrentFile(fileBuffer, name?)` | Upload a `.torrent` file buffer |
+| `getInfoHash(torrentId)` | Returns infohash/magnet URI for repair |
+| `repairTorrent(torrentId)` | Re-add a dead torrent's magnet to the same provider |
 | `listDownloads()` | List completed/unrestricted downloads |
 | `listDownloadsStream()` | Async generator for download streaming |
 | `listWebDownloads()` | List web downloads (TorBox only) |
 | `listUsenetDownloads()` | List Usenet downloads (TorBox only) |
 | `fetchTorrentFiles(torrentId)` | Fetch file details for a single torrent (RD only) |
 
+## ProviderRegistry (registry.ts)
+
+The `ProviderRegistry` class is a singleton exported as `registry`. It provides:
+
+| Method | Description |
+|---|---|
+| `register(provider)` | Register a provider instance (called at module level) |
+| `get(id)` | Look up a specific provider by ID |
+| `all()` | All registered providers (configured or not) |
+| `configured()` | Only providers with valid API credentials |
+| `ordered()` | Configured providers in user-preferred order (`PROVIDERS` env) |
+| `checkExistingAcrossAll(title)` | Check for existing torrents across all providers |
+| `addMagnetWithStrategy(magnet, name?, strategy?)` | Add a magnet with distribution strategy |
+| `addTorrentFileFromUrl(url, name, strategy?)` | Download a `.torrent` file and upload to providers |
+
 ## How to Add a New Provider
 
-Follow these steps to add support for a new debrid service (e.g. AllDebrid):
+Use `debridlink.ts` as the reference template. The pattern is:
 
 ### 1. Create the provider file
 
-Create `src/providers/alldebrid.ts`:
+Create `src/providers/yourprovider.ts`:
 
 ```typescript
+import axios from 'axios';
+import https from 'https';
+import http from 'http';
 import { config } from '../core/config';
 import { rateLimiter } from '../core/rateLimiter';
+import { tokenRotator } from '../core/tokenRotator';
+import { UnplayableTorrentError } from '../core/errors';
 import type {
   DebridProvider,
   TorrentInfo,
+  TorrentFile,
   AddMagnetResult,
   VirtualDirectory,
   VirtualFile,
 } from './index';
+import { registry } from './registry';
 
-const PROVIDER_NAME = 'alldebrid';
+const PROVIDER_NAME = 'yourprovider';
 
-export class AllDebridProvider implements DebridProvider {
-  readonly id = 'alldebrid' as const;
-  readonly displayName = 'AllDebrid';
+const httpAgent = new http.Agent({ family: 4 });
+const httpsAgent = new https.Agent({ family: 4 });
+const axiosIPv4 = axios.create({ httpAgent, httpsAgent });
 
-  // --- Status ---
-  isConfigured(): boolean {
-    // TODO: Check config.alldebridApiKey
-    return false;
-  }
+export class YourProvider implements DebridProvider {
+  readonly id = 'yourprovider' as const;
+  readonly displayName = 'YourProvider';
 
-  isRateLimited(): boolean {
-    return rateLimiter.isRateLimited(PROVIDER_NAME);
-  }
-
-  getWaitTime(): number {
-    return rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
-  }
-
-  // --- Torrent Operations ---
-  async listTorrents(): Promise<TorrentInfo[]> {
-    // TODO: Implement AllDebrid torrent listing
-    return [];
-  }
-
-  async addMagnet(magnet: string, name?: string): Promise<AddMagnetResult> {
-    // TODO: Implement AllDebrid magnet addition
-    throw new Error('Not implemented');
-  }
-
-  async checkExisting(title: string): Promise<boolean> {
-    // TODO: Implement duplicate checking
-    return false;
-  }
-
-  isTorrentDead(torrent: TorrentInfo): boolean {
-    // TODO: Implement dead torrent detection
-    return false;
-  }
-
-  // --- WebDAV Bridge Support ---
-  async fetchDirectories(): Promise<VirtualDirectory[]> {
-    // TODO: Implement directory fetching
-    return [];
-  }
-
-  async resolveDownloadUrl(
-    torrentId: string,
-    fileId: string,
-    linkIndex?: number,
-  ): Promise<string | null> {
-    // TODO: Implement URL resolution
-    return null;
-  }
-
-  // --- Mount Configuration ---
-  hasDirectWebDAV(): boolean {
-    return false; // AllDebrid doesn't offer native WebDAV
-  }
-
-  hasApiKey(): boolean {
-    // TODO: Check config.alldebridApiKey
-    return false;
-  }
-
-  getWebDAVConfig(): { url: string; username: string; password: string } | null {
-    return null;
-  }
-
-  getBridgePort(): number {
-    // TODO: Add WEBDAV_BRIDGE_PORT_AD to config
-    return 9117;
-  }
+  // Implement all required DebridProvider methods...
+  // See debridlink.ts for the full pattern including:
+  //   - Rate-limit-aware API calls
+  //   - Response caching during backoff
+  //   - Error handling with handleError()
+  //   - Torrent normalisation
 }
 
-// Self-register
-import { registry } from './index';
-registry.register(new AllDebridProvider());
+// ---------------------------------------------------------------------------
+// Self-Registration
+// ---------------------------------------------------------------------------
+
+registry.register(new YourProvider());
+
+// Register with token rotator for download token cycling
+tokenRotator.registerProvider(PROVIDER_NAME, config.yourproviderApiKey, config.yourproviderDownloadTokens);
 ```
 
 ### 2. Add configuration
@@ -168,25 +179,27 @@ registry.register(new AllDebridProvider());
 In `src/core/config.ts`, add the required environment variables:
 
 ```typescript
-// AllDebrid
-alldebridApiKey: process.env.ALLDEBRID_API_KEY || '',
-webdavBridgePortAD: Number(process.env.WEBDAV_BRIDGE_PORT_AD || 9117),
+// YourProvider
+yourproviderApiKey: process.env.YOURPROVIDER_API_KEY || '',
+yourproviderApiBase: process.env.YOURPROVIDER_API_BASE || 'https://api.yourprovider.com',
+webdavBridgePortYP: Number(process.env.WEBDAV_BRIDGE_PORT_YP || 9130),
+yourproviderDownloadTokens: (process.env.YP_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
 ```
 
 ### 3. Register the provider
 
-In `src/providers/index.ts`, add the import at the bottom:
+In `src/providers/index.ts`, add the import at the bottom (alongside the other providers):
 
 ```typescript
-import './alldebrid';
+import './yourprovider';
 ```
 
 ### 4. Update the PROVIDERS environment variable
 
-Add `alldebrid` to the `PROVIDERS` env var to include it in the provider order:
+Add `yourprovider` to the `PROVIDERS` env var to include it in the provider order:
 
 ```
-PROVIDERS=torbox,realdebrid,alldebrid
+PROVIDERS=torbox,realdebrid,yourprovider
 ```
 
 ## Using the Registry
@@ -211,6 +224,13 @@ const { results } = await registry.addMagnetWithStrategy(
   magnetUri,
   'Movie Title',
   'failover', // Try first provider, fall back on failure
+);
+
+// Upload a .torrent file from URL
+const { results: fileResults } = await registry.addTorrentFileFromUrl(
+  'https://example.com/file.torrent',
+  'Movie Title',
+  'all',
 );
 ```
 

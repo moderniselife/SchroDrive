@@ -11,6 +11,9 @@ const mediaServerWatchlist_1 = require("./services/mediaServerWatchlist");
 const stremioAddon_1 = require("./services/stremioAddon");
 const config_1 = require("./core/config");
 const db_1 = require("./core/db");
+const strmService_1 = require("./services/strmService");
+const bridge_1 = require("./services/cloudLinks/bridge");
+const arrBridge_1 = require("./services/arrBridge");
 const program = new commander_1.Command();
 program
     .name("schrodrive")
@@ -37,6 +40,9 @@ program
             console.error(`[${new Date().toISOString()}][serve] Error during FUSE unmount (non-fatal): ${err?.message}`);
         }
         console.log(`[${new Date().toISOString()}][serve] Waiting 3 seconds for FUSE mounts to clear...`);
+        (0, strmService_1.stopStrmServer)().catch(() => { });
+        (0, bridge_1.stopCloudLinksBridge)().catch(() => { });
+        (0, arrBridge_1.stopArrBridge)().catch(() => { });
         setTimeout(() => {
             console.log(`[${new Date().toISOString()}][serve] Closing database and exiting...`);
             (0, db_1.closeDb)();
@@ -50,6 +56,7 @@ program
     setInterval(() => {
         try {
             (0, db_1.pruneOldEntries)();
+            (0, db_1.pruneExpiredStrmCodes)();
         }
         catch (err) {
             console.error(`[${new Date().toISOString()}][serve] Scheduled prune failed: ${err?.message}`);
@@ -59,6 +66,13 @@ program
     const promises = [];
     if (config_1.config.runMount) {
         console.log("[serve] Starting virtual drive mount (RUN_MOUNT=true)");
+        // Start cloud links bridge BEFORE mount so rclone can connect to it
+        if (config_1.config.cloudLinksEnabled) {
+            console.log("[serve] Starting Cloud Links WebDAV bridge (CLOUD_LINKS_ENABLED=true)");
+            await (0, bridge_1.startCloudLinksBridge)().catch((err) => {
+                console.error(`[serve] Cloud Links bridge failed to start (non-fatal): ${err?.message}`);
+            });
+        }
         promises.push((0, mount_1.mountVirtualDrive)());
     }
     if (config_1.config.runDeadScannerWatch) {
@@ -81,6 +95,17 @@ program
     (0, server_1.startServer)();
     // Start Stremio addon server (separate port)
     (0, stremioAddon_1.startStremioAddonServer)();
+    // Start STRM short-code service (port 9120)
+    (0, strmService_1.startStrmServer)().catch((err) => {
+        console.error(`[serve] Failed to start STRM service (non-fatal): ${err?.message}`);
+    });
+    // Start *arr bridge (fake qBittorrent API for Radarr/Sonarr)
+    if (config_1.config.arrBridgeEnabled) {
+        console.log("[serve] Starting *arr bridge (ARR_BRIDGE_ENABLED=true)");
+        (0, arrBridge_1.startArrBridge)().catch((err) => {
+            console.error(`[serve] Failed to start *arr bridge (non-fatal): ${err?.message}`);
+        });
+    }
     // If additional services are running, handle their errors
     if (promises.length > 0) {
         Promise.allSettled(promises).then(results => {
