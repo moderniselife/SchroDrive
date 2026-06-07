@@ -45,7 +45,7 @@
 SchröDrive seamlessly connects your media request system ([Overseerr](https://overseerr.dev/)) with torrent indexers ([Prowlarr](https://prowlarr.com/) / [Jackett](https://github.com/Jackett/Jackett)) and delivers content to your preferred debrid services — then mounts everything as a virtual drive for your media server.
 
 ```
-Overseerr → SchröDrive → Prowlarr/Jackett → TorBox / RealDebrid / AllDebrid / Premiumize → rclone Mount → Plex/Jellyfin/Emby
+Overseerr → SchröDrive → Prowlarr/Jackett → 11 Debrid Providers → rclone Mount → Plex/Jellyfin/Emby
 ```
 
 **Provider-agnostic by design.** Adding a new debrid provider is a single file — zero changes needed elsewhere.
@@ -97,17 +97,24 @@ curl http://localhost:8978/health
 
 ## ✨ Features
 
-### 📺 Multi-Provider Debrid Support
+### 📺 Multi-Provider Debrid Support (11 Providers)
 
 | Provider | Torrents | Web Downloads | Usenet | WebDAV Mount | Bridge | Status |
 |----------|:--------:|:------------:|:------:|:------------:|:------:|--------|
 | **TorBox** | ✅ | ✅ | ✅ | ✅ | ✅ | Fully supported |
 | **RealDebrid** | ✅ | — | — | ✅ | ✅ | Fully supported |
-| **AllDebrid** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
+| **AllDebrid** | ✅ | — | — | ✅ | ✅ | In-testing 🧪 |
 | **Premiumize** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
+| **Debrid-Link** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
+| **Deepbrid** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
+| **Offcloud** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
+| **Put.io** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
+| **MegaDebrid** | ✅ | — | — | — | ✅ | Untested ⚠️ |
+| **Seedr** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
+| **PikPak** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
 
 > [!NOTE]
-> **AllDebrid and Premiumize** providers are fully implemented but have not been tested with live accounts yet. If you have an account and want to help test, please open an issue with your findings. We will be testing them ourselves as soon as we get accounts set up.
+> **AllDebrid** is currently in-testing with live accounts. **Premiumize, Debrid-Link, Deepbrid, Offcloud, Put.io, MegaDebrid, Seedr, and PikPak** are fully implemented but have not been tested with live accounts yet. If you have an account and want to help test, please open an issue with your findings.
 
 **Add strategies** — control how content is distributed across providers:
 
@@ -126,7 +133,7 @@ Set via `ADD_STRATEGY` environment variable.
 - **Auto-detection** — configure one or both; SchröDrive picks the active one
 - Intelligent result ranking by seeders (fallback by size)
 - Automatic magnet resolution with redirect-following fallback
-- **`.torrent` File Support** — indexer results that return `.torrent` download URLs are now supported alongside magnet URIs. All 4 debrid providers (RealDebrid, TorBox, AllDebrid, Premiumize) support torrent file upload.
+- **`.torrent` File Support** — indexer results that return `.torrent` download URLs are now supported alongside magnet URIs. All 11 debrid providers support torrent file upload.
 
 ### 🗂️ Virtual Drive (rclone WebDAV Mounts)
 
@@ -303,7 +310,7 @@ Inspired by [Zurg's](https://github.com/debridmediamanager/zurg-testing) `downlo
 - When a download token hits bandwidth limits (HTTP 503) or rate limits (HTTP 429), SchröDrive automatically **marks that token as limited** (for 24 hours on 503, or 1 hour on 429) and **rotates** to the next available token
 - **Cool rate-limit bypass trick**: Since download tokens represent separate accounts/subscriptions, a 429/rate-limit error on a rotated download token **does not** trigger global provider rate limiting. This allows SchröDrive to immediately switch to another healthy token/account to continue serving streams without interruption!
 - All tokens **auto-reset daily at midnight** (configurable timezone)
-- Works with **ALL providers**: RealDebrid, TorBox, AllDebrid, and Premiumize
+- Works with **ALL 11 providers**: RealDebrid, TorBox, AllDebrid, Premiumize, Debrid-Link, Deepbrid, Offcloud, Put.io, MegaDebrid, Seedr, and PikPak
 
 **Environment variables:**
 
@@ -381,8 +388,15 @@ SchröDrive proactively detects and recovers from dead torrents through a **3-ph
 |----------|:----------:|:-------:|:----:|:-----:|
 | **RealDebrid** | ✅ | ✅ | ✅ | ✅ |
 | **TorBox** | ✅ | — | — | ✅ |
-| **AllDebrid** | ✅ ⚠️ | ✅ | — | ✅ |
+| **AllDebrid** | ✅ 🧪 | ✅ | — | ✅ |
 | **Premiumize** | ✅ ⚠️ | — | — | — |
+| **Debrid-Link** | ✅ ⚠️ | — | — | — |
+| **Deepbrid** | ✅ ⚠️ | — | — | — |
+| **Offcloud** | ✅ ⚠️ | — | — | — |
+| **Put.io** | ✅ ⚠️ | — | — | — |
+| **MegaDebrid** | ✅ ⚠️ | — | — | — |
+| **Seedr** | ✅ ⚠️ | — | — | — |
+| **PikPak** | ✅ ⚠️ | — | — | — |
 | **Provider redundancy** | ✅ All/Failover/Single | — | — | — |
 
 ### Integrations
@@ -420,7 +434,7 @@ SchröDrive proactively detects and recovers from dead torrents through a **3-ph
 
 ### What Each Project Does Best
 
-- **SchröDrive** — All-in-one with 4-provider redundancy, 3-phase torrent repair, 4 Stremio scrapers, 6 watchlist sources, native Radarr/Sonarr bridge (no external containers), embedded SQLite persistence, a full Next.js management dashboard, and the simplest deployment (single container). Also exposes itself as a Stremio addon.
+- **SchröDrive** — All-in-one with 11-provider redundancy, 3-phase torrent repair, 4 Stremio scrapers, 6 watchlist sources, native Radarr/Sonarr bridge (no external containers), embedded SQLite persistence, a full Next.js management dashboard, and the simplest deployment (single container). Also exposes itself as a Stremio addon.
 - **pd_zurg** — *Deprecated (Jan 2026).* Was the original all-in-one Docker solution. Successor is [DUMB](https://github.com/I-am-PUID-0/DUMB).
 - **Zurg** — Purpose-built, high-performance WebDAV server for RealDebrid. Excellent at what it does (serving files), but needs additional tools for automation.
 - **Riven** — Feature-rich with 7+ scrapers, Trakt/Mdblist integration, built-in VFS, and a settings UI. However, requires multi-container deployment (App + PostgreSQL + Redis).
@@ -472,12 +486,19 @@ What SchröDrive persists in SQLite:
 
 ```
 src/
-├── providers/                # Debrid provider abstraction layer
+├── providers/                # Debrid provider abstraction layer (11 providers)
 │   ├── index.ts              #   DebridProvider interface + ProviderRegistry
 │   ├── realdebrid.ts         #   RealDebrid implementation
 │   ├── torbox.ts             #   TorBox implementation
 │   ├── alldebrid.ts          #   AllDebrid implementation
 │   ├── premiumize.ts         #   Premiumize implementation
+│   ├── debridlink.ts         #   Debrid-Link implementation
+│   ├── deepbrid.ts           #   Deepbrid implementation
+│   ├── offcloud.ts           #   Offcloud implementation
+│   ├── putio.ts              #   Put.io implementation
+│   ├── megadebrid.ts         #   MegaDebrid implementation
+│   ├── seedr.ts              #   Seedr implementation
+│   ├── pikpak.ts             #   PikPak implementation (JWT auth)
 │   └── README.md             #   How to add a new provider
 ├── services/                 # Business logic
 │   ├── overseerr.ts          #   Overseerr webhook + poller
@@ -535,10 +556,14 @@ graph LR
     B -->|Add Magnet| F[RealDebrid]
     B -->|Add Magnet| G2[AllDebrid]
     B -->|Add Magnet| G3[Premiumize]
+    B -->|Add Magnet| G4[Debrid-Link / Deepbrid / Offcloud]
+    B -->|Add Magnet| G5[Put.io / MegaDebrid / Seedr / PikPak]
     E -->|WebDAV / Bridge| G[rclone Mount]
     F -->|WebDAV / Bridge| G
     G2 -->|WebDAV / Bridge| G
     G3 -->|WebDAV / Bridge| G
+    G4 -->|WebDAV / Bridge| G
+    G5 -->|WebDAV / Bridge| G
     G -->|Symlinks| S[Organised Library]
     S -->|Media Files| C
     R -->|Imports + Renames| S
@@ -598,7 +623,7 @@ All configuration is done via environment variables. Below is the complete refer
 | `RD_WEBDAV_USERNAME` | — | WebDAV username |
 | `RD_WEBDAV_PASSWORD` | — | WebDAV password |
 
-#### AllDebrid ⚠️ Untested
+#### AllDebrid 🧪 In-testing
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -619,6 +644,80 @@ All configuration is done via environment variables. Below is the complete refer
 | `PREMIUMIZE_WEBDAV_USERNAME` | — | WebDAV username (customer ID) |
 | `PREMIUMIZE_WEBDAV_PASSWORD` | — | WebDAV password (API key) |
 
+#### Debrid-Link ⚠️ Untested
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEBRIDLINK_API_KEY` | — | **Required.** Debrid-Link API key |
+| `DEBRIDLINK_API_BASE` | `https://debrid-link.com/api/v2` | API base URL |
+| `DEBRIDLINK_WEBDAV_URL` | `https://webdav.debrid.link` | Native WebDAV URL |
+| `DEBRIDLINK_WEBDAV_USERNAME` | — | WebDAV username |
+| `DEBRIDLINK_WEBDAV_PASSWORD` | — | WebDAV password |
+
+#### Deepbrid ⚠️ Untested
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEEPBRID_API_KEY` | — | **Required.** Deepbrid API key |
+| `DEEPBRID_API_BASE` | `https://www.deepbrid.com/api` | API base URL |
+| `DEEPBRID_WEBDAV_URL` | — | WebDAV URL (if available) |
+| `DEEPBRID_WEBDAV_USERNAME` | — | WebDAV username |
+| `DEEPBRID_WEBDAV_PASSWORD` | — | WebDAV password |
+
+#### Offcloud ⚠️ Untested
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OFFCLOUD_API_KEY` | — | **Required.** Offcloud API key |
+| `OFFCLOUD_API_BASE` | `https://offcloud.com/api` | API base URL |
+| `OFFCLOUD_WEBDAV_URL` | — | WebDAV URL (if available) |
+| `OFFCLOUD_WEBDAV_USERNAME` | — | WebDAV username |
+| `OFFCLOUD_WEBDAV_PASSWORD` | — | WebDAV password |
+
+#### Put.io ⚠️ Untested
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PUTIO_OAUTH_TOKEN` | — | **Required.** Put.io OAuth2 token |
+| `PUTIO_API_BASE` | `https://api.put.io/v2` | API base URL |
+| `PUTIO_WEBDAV_URL` | `https://webdav.put.io` | Native WebDAV URL |
+| `PUTIO_WEBDAV_USERNAME` | — | WebDAV username |
+| `PUTIO_WEBDAV_PASSWORD` | — | WebDAV password |
+
+#### MegaDebrid ⚠️ Untested
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MEGADEBRID_API_KEY` | — | **Required.** MegaDebrid API token |
+| `MEGADEBRID_API_BASE` | `https://www.mega-debrid.eu` | API base URL |
+
+> [!NOTE]
+> MegaDebrid does not support native WebDAV — use the built-in WebDAV bridge instead.
+
+#### Seedr ⚠️ Untested
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SEEDR_API_KEY` | — | **Required.** Seedr OAuth2 Bearer token |
+| `SEEDR_API_BASE` | `https://www.seedr.cc/rest` | API base URL |
+| `SEEDR_WEBDAV_URL` | `https://dav.seedr.cc` | Native WebDAV URL (Master plan+) |
+| `SEEDR_WEBDAV_USERNAME` | — | WebDAV username |
+| `SEEDR_WEBDAV_PASSWORD` | — | WebDAV password |
+
+#### PikPak ⚠️ Untested
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PIKPAK_USERNAME` | — | **Required.** PikPak account email |
+| `PIKPAK_PASSWORD` | — | **Required.** PikPak account password |
+| `PIKPAK_API_BASE` | `https://api-drive.mypikpak.com` | API base URL |
+| `PIKPAK_WEBDAV_URL` | — | WebDAV URL (experimental) |
+| `PIKPAK_WEBDAV_USERNAME` | — | WebDAV username |
+| `PIKPAK_WEBDAV_PASSWORD` | — | WebDAV password |
+
+> [!NOTE]
+> PikPak uses username/password authentication (no API key). SchröDrive automatically handles JWT token login and refresh.
+
 #### Download Tokens (Multi-Account Bypass)
 
 | Variable | Default | Description |
@@ -627,6 +726,13 @@ All configuration is done via environment variables. Below is the complete refer
 | `TORBOX_DOWNLOAD_TOKENS` | — | Comma-separated additional TorBox keys for download rotation |
 | `AD_DOWNLOAD_TOKENS` | — | Comma-separated additional AllDebrid keys for download rotation |
 | `PM_DOWNLOAD_TOKENS` | — | Comma-separated additional Premiumize keys for download rotation |
+| `DL_DOWNLOAD_TOKENS` | — | Comma-separated additional Debrid-Link keys for download rotation |
+| `DB_DOWNLOAD_TOKENS` | — | Comma-separated additional Deepbrid keys for download rotation |
+| `OC_DOWNLOAD_TOKENS` | — | Comma-separated additional Offcloud keys for download rotation |
+| `PUTIO_DOWNLOAD_TOKENS` | — | Comma-separated additional Put.io tokens for download rotation |
+| `MD_DOWNLOAD_TOKENS` | — | Comma-separated additional MegaDebrid keys for download rotation |
+| `SEEDR_DOWNLOAD_TOKENS` | — | Comma-separated additional Seedr tokens for download rotation |
+| `PIKPAK_DOWNLOAD_TOKENS` | — | Comma-separated additional PikPak tokens for download rotation |
 | `TOKEN_RESET_TIMEZONE` | `Australia/Sydney` | Timezone for daily token reset (midnight) |
 
 ### 🔍 Indexers
@@ -747,6 +853,13 @@ All configuration is done via environment variables. Below is the complete refer
 | `WEBDAV_BRIDGE_PORT_TB` | `9116` | TorBox bridge port |
 | `WEBDAV_BRIDGE_PORT_AD` | `9117` | AllDebrid bridge port |
 | `WEBDAV_BRIDGE_PORT_PM` | `9118` | Premiumize bridge port |
+| `WEBDAV_BRIDGE_PORT_DL` | `9119` | Debrid-Link bridge port |
+| `WEBDAV_BRIDGE_PORT_DB` | `9122` | Deepbrid bridge port |
+| `WEBDAV_BRIDGE_PORT_OC` | `9123` | Offcloud bridge port |
+| `WEBDAV_BRIDGE_PORT_PUTIO` | `9124` | Put.io bridge port |
+| `WEBDAV_BRIDGE_PORT_MD` | `9125` | MegaDebrid bridge port |
+| `WEBDAV_BRIDGE_PORT_SEEDR` | `9126` | Seedr bridge port |
+| `WEBDAV_BRIDGE_PORT_PIKPAK` | `9127` | PikPak bridge port |
 | `WEBDAV_CACHE_TTL_S` | `30` | Directory listing cache TTL |
 | `WEBDAV_DOWNLOAD_CACHE_TTL_S` | `14400` | Download URL cache TTL (4 hours — CDN URLs live hours) |
 
@@ -1399,7 +1512,7 @@ Two CI workflows:
 - Duplicate detection uses bi-directional case-insensitive substring matching across ALL configured providers
 - The WebDAV bridge enables mounting without native WebDAV credentials — only an API key is needed
 - The webhook handler responds immediately with `202 Accepted` and processes in the background to avoid Overseerr's 20-second timeout
-- AllDebrid and Premiumize providers are fully implemented but untested — community testing welcome!
+- AllDebrid is currently in-testing with live accounts. Premiumize, Debrid-Link, Deepbrid, Offcloud, Put.io, MegaDebrid, Seedr, and PikPak are fully implemented but untested — community testing welcome!
 
 ---
 
