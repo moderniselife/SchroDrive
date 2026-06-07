@@ -1408,5 +1408,5 @@ Two CI workflows:
 This project is licenced under the terms specified in the [LICENCE](LICENSE) file.
 
 <p align="center">
-  <sub>Built with ☕ and quantum uncertainty by <a href="https://github.com/moderniselife">moderniselife</a></sub>
+  <sub>Built with ☕, AI and quantum uncertainty by <a href="https://github.com/moderniselife">moderniselife</a></sub>
 </p>
