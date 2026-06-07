@@ -37,6 +37,32 @@ import { HttpAdapter } from './httpAdapter';
 
 const LOG_PREFIX = '[cloud-links]';
 
+/** Cache entry is considered fresh for 5 minutes — served without revalidation (dynamic providers). */
+const PROPFIND_FRESH_TTL_MS = 5 * 60 * 1000;
+
+/** Cache entry is considered stale after 1 hour — must be refetched (dynamic providers). */
+const PROPFIND_STALE_TTL_MS = 60 * 60 * 1000;
+
+/** HTTP open directories are insanely static — 12-hour fresh TTL. */
+const PROPFIND_HTTP_FRESH_TTL_MS = 12 * 60 * 60 * 1000;
+
+/** HTTP open directories — 7-day stale TTL before a hard refetch is required. */
+const PROPFIND_HTTP_STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Background re-crawl interval to keep the cache warm (6 hours). */
+const RECRAWL_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Returns the appropriate fresh/stale TTLs for a given provider type.
+ * HTTP directories are extremely static so they get much longer cache windows.
+ */
+function getTtlsForProvider(provider: string): { freshMs: number; staleMs: number } {
+  if (provider === 'http') {
+    return { freshMs: PROPFIND_HTTP_FRESH_TTL_MS, staleMs: PROPFIND_HTTP_STALE_TTL_MS };
+  }
+  return { freshMs: PROPFIND_FRESH_TTL_MS, staleMs: PROPFIND_STALE_TTL_MS };
+}
+
 // ===========================================================================
 // Configuration Loading
 // ===========================================================================
@@ -153,6 +179,88 @@ const adaptersByProvider = new Map<CloudLinkProvider, Map<string, CloudLinkAdapt
 
 /** HTTP server instance. */
 let server: http.Server | null = null;
+
+/** Handle for the periodic re-crawl timer so we can cancel on shutdown. */
+let recrawlTimer: ReturnType<typeof setInterval> | null = null;
+
+// ===========================================================================
+// PROPFIND Cache (stale-while-revalidate)
+// ===========================================================================
+
+/** Cached PROPFIND result keyed by full request path. */
+interface PropfindCacheEntry {
+  /** Pre-rendered WebDAV XML response — avoids re-rendering on cache hits. */
+  xml: string;
+  /** Raw file list so GET/HEAD lookups can resolve files without a new adapter call. */
+  files: CloudFile[];
+  /** Epoch millis when this entry was fetched from the adapter. */
+  fetchedAt: number;
+}
+
+/** In-memory cache mapping request path → rendered PROPFIND response. */
+const propfindCache = new Map<string, PropfindCacheEntry>();
+
+/** Paths currently undergoing a background refresh — prevents duplicate refreshes. */
+const refreshingPaths = new Set<string>();
+
+/**
+ * Triggers a background (fire-and-forget) refresh of a single cache entry.
+ * Deduplicated via `refreshingPaths` — concurrent calls for the same path
+ * are silently dropped.
+ */
+function backgroundRefresh(
+  cacheKey: string,
+  adapter: CloudLinkAdapter,
+  subPath: string | undefined,
+  providerType: string,
+  linkName: string,
+  basePath: string,
+): void {
+  if (refreshingPaths.has(cacheKey)) return;
+  refreshingPaths.add(cacheKey);
+
+  console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Background refresh started for ${cacheKey}`);
+
+  adapter
+    .listFolder(subPath)
+    .then((files) => {
+      const entries = files.map((f: CloudFile) => ({
+        href: `${basePath}/${f.name}`,
+        isDirectory: f.isDirectory,
+        size: f.size,
+        name: f.name,
+      }));
+      const xml = generatePropfindResponse(basePath, entries);
+
+      propfindCache.set(cacheKey, { xml, files, fetchedAt: Date.now() });
+      console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Background refresh complete for ${cacheKey} (${files.length} entries)`);
+    })
+    .catch((err: any) => {
+      console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Background refresh failed for ${cacheKey}: ${err?.message}`);
+    })
+    .finally(() => {
+      refreshingPaths.delete(cacheKey);
+    });
+}
+
+/**
+ * Looks up cached CloudFile[] for a given adapter path.
+ * Returns the cached file array if the entry exists and is not expired
+ * (within the stale TTL for the provider). Returns null otherwise.
+ */
+function getCachedFiles(cacheKey: string): CloudFile[] | null {
+  const entry = propfindCache.get(cacheKey);
+  if (!entry) return null;
+
+  // Derive provider from the cache key (first path segment)
+  const provider = cacheKey.split('/').filter(Boolean)[0] || '';
+  const { staleMs } = getTtlsForProvider(provider);
+
+  const age = Date.now() - entry.fetchedAt;
+  if (age > staleMs) return null;
+
+  return entry.files;
+}
 
 // ===========================================================================
 // WebDAV Response Helpers
@@ -297,9 +405,42 @@ async function handlePropfind(req: Request, res: Response): Promise<void> {
     }
 
     const subPath = segments.slice(2).join('/');
+    const basePath = `/${providerType}/${linkName}${subPath ? '/' + subPath : ''}`;
+    const cacheKey = reqPath;
+    const now = Date.now();
+
+    // ----- Cache lookup -----
+    const cached = propfindCache.get(cacheKey);
+    if (cached) {
+      const age = now - cached.fetchedAt;
+      const { freshMs, staleMs } = getTtlsForProvider(providerType);
+
+      if (age < freshMs) {
+        // Fresh — serve straight from cache, no adapter call
+        console.log(`[${new Date().toISOString()}]${LOG_PREFIX} PROPFIND cache HIT (fresh) for ${cacheKey}`);
+        res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+        res.status(207).send(cached.xml);
+        return;
+      }
+
+      if (age < staleMs) {
+        // Stale-while-revalidate — serve cached XML, kick off background refresh
+        console.log(`[${new Date().toISOString()}]${LOG_PREFIX} PROPFIND cache HIT (stale, revalidating) for ${cacheKey}`);
+        backgroundRefresh(cacheKey, adapter, subPath || undefined, providerType, linkName, basePath);
+        res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+        res.status(207).send(cached.xml);
+        return;
+      }
+
+      // Expired — fall through to fresh fetch below
+      console.log(`[${new Date().toISOString()}]${LOG_PREFIX} PROPFIND cache EXPIRED for ${cacheKey}`);
+    } else {
+      console.log(`[${new Date().toISOString()}]${LOG_PREFIX} PROPFIND cache MISS for ${cacheKey}`);
+    }
+
+    // ----- Fresh fetch from adapter -----
     const files = await adapter.listFolder(subPath || undefined);
 
-    const basePath = `/${providerType}/${linkName}${subPath ? '/' + subPath : ''}`;
     const entries = files.map((f: CloudFile) => ({
       href: `${basePath}/${f.name}`,
       isDirectory: f.isDirectory,
@@ -307,8 +448,11 @@ async function handlePropfind(req: Request, res: Response): Promise<void> {
       name: f.name,
     }));
 
+    const xml = generatePropfindResponse(basePath, entries);
+    propfindCache.set(cacheKey, { xml, files, fetchedAt: Date.now() });
+
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-    res.status(207).send(generatePropfindResponse(basePath, entries));
+    res.status(207).send(xml);
   } catch (err: any) {
     console.error(`${LOG_PREFIX} PROPFIND error for ${reqPath}: ${err?.message}`);
     res.status(500).send('Internal server error');
@@ -343,10 +487,19 @@ async function handleGet(req: Request, res: Response): Promise<void> {
   }
 
   try {
-    // Find the file in the parent directory listing
+    // Find the file in the parent directory listing — try the cache first
     const parentPath = segments.slice(2, -1).join('/');
     const fileName = segments[segments.length - 1];
-    const parentFiles = await adapter.listFolder(parentPath || undefined);
+    const parentCacheKey = `/${providerType}/${linkName}${parentPath ? '/' + parentPath : ''}`;
+
+    let parentFiles = getCachedFiles(parentCacheKey);
+    if (parentFiles) {
+      console.log(`[${new Date().toISOString()}]${LOG_PREFIX} GET parent-listing cache HIT for ${parentCacheKey}`);
+    } else {
+      console.log(`[${new Date().toISOString()}]${LOG_PREFIX} GET parent-listing cache MISS for ${parentCacheKey}`);
+      parentFiles = await adapter.listFolder(parentPath || undefined);
+    }
+
     const file = parentFiles.find((f: CloudFile) => f.name === fileName);
 
     if (!file) {
@@ -427,7 +580,13 @@ async function handleHead(req: Request, res: Response): Promise<void> {
   try {
     const parentPath = segments.slice(2, -1).join('/');
     const fileName = segments[segments.length - 1];
-    const parentFiles = await adapter.listFolder(parentPath || undefined);
+    const parentCacheKey = `/${providerType}/${linkName}${parentPath ? '/' + parentPath : ''}`;
+
+    let parentFiles = getCachedFiles(parentCacheKey);
+    if (!parentFiles) {
+      parentFiles = await adapter.listFolder(parentPath || undefined);
+    }
+
     const file = parentFiles.find((f: CloudFile) => f.name === fileName);
 
     if (!file || file.isDirectory) {
@@ -526,6 +685,45 @@ export async function startCloudLinksBridge(): Promise<void> {
       console.log(`${LOG_PREFIX} Cloud Links WebDAV bridge listening on port ${port}`);
       const totalLinks = [...adaptersByProvider.values()].reduce((sum, m) => sum + m.size, 0);
       console.log(`${LOG_PREFIX} Serving ${totalLinks} cloud link(s) across ${adaptersByProvider.size} provider(s)`);
+
+      // ------ Periodic re-crawl to keep the cache warm ------
+      recrawlTimer = setInterval(() => {
+        const startTime = new Date();
+        console.log(`[${startTime.toISOString()}]${LOG_PREFIX} Periodic re-crawl started (${propfindCache.size} cached paths)`);
+
+        let refreshed = 0;
+        for (const [cachedPath, entry] of propfindCache) {
+          // Parse the cached path to determine provider and resolve TTLs
+          const segs = cachedPath.split('/').filter(Boolean);
+          if (segs.length < 2) continue; // Root / provider-level paths aren't adapter calls
+
+          const pType = segs[0] as CloudLinkProvider;
+          const lName = segs[1];
+
+          // Skip entries that are still fresh for their provider
+          const { freshMs } = getTtlsForProvider(pType);
+          const age = Date.now() - entry.fetchedAt;
+          if (age < freshMs) continue;
+
+          const subP = segs.slice(2).join('/') || undefined;
+          const bPath = `/${pType}/${lName}${subP ? '/' + subP : ''}`;
+
+          const pMap = adaptersByProvider.get(pType);
+          const adpt = pMap?.get(lName);
+          if (!adpt) continue;
+
+          backgroundRefresh(cachedPath, adpt, subP, pType, lName, bPath);
+          refreshed++;
+        }
+
+        console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Periodic re-crawl queued ${refreshed} refresh(es)`);
+      }, RECRAWL_INTERVAL_MS);
+
+      // Ensure the timer doesn't prevent process exit
+      if (recrawlTimer && typeof recrawlTimer === 'object' && 'unref' in recrawlTimer) {
+        (recrawlTimer as NodeJS.Timeout).unref();
+      }
+
       resolve();
     });
 
@@ -541,6 +739,16 @@ export async function startCloudLinksBridge(): Promise<void> {
  */
 export function stopCloudLinksBridge(): Promise<void> {
   return new Promise((resolve) => {
+    // Cancel the re-crawl timer if active
+    if (recrawlTimer) {
+      clearInterval(recrawlTimer);
+      recrawlTimer = null;
+    }
+
+    // Clear the PROPFIND cache
+    propfindCache.clear();
+    refreshingPaths.clear();
+
     if (!server) {
       resolve();
       return;
