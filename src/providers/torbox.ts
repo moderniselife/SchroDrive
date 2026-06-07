@@ -299,6 +299,60 @@ export class TorBoxProvider implements DebridProvider {
   }
 
   /**
+   * Uploads a .torrent file buffer to TorBox.
+   *
+   * Uses `POST /v1/api/torrents/createtorrent` with multipart form data.
+   * The file is sent as a `file` field in the form.
+   *
+   * @param fileBuffer - The raw .torrent file contents.
+   * @param name - Optional human-readable name for the torrent.
+   * @returns An object containing the torrent ID.
+   * @throws {Error} If the API is disabled, rate-limited, or the request fails.
+   */
+  async addTorrentFile(fileBuffer: Buffer, name?: string): Promise<AddMagnetResult> {
+    if (apiDisabled) {
+      throw new Error(apiDisabledReason);
+    }
+
+    if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+      const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+      throw new Error(`TorBox rate limited, retry in ${waitTime}s`);
+    }
+
+    await rateLimiter.throttle(PROVIDER_NAME);
+
+    const base = getBaseUrl();
+    const url = `${base}/v1/api/torrents/createtorrent`;
+    console.log(`[${new Date().toISOString()}][torbox] Uploading .torrent file${name ? `: ${name}` : ''}`);
+    const started = Date.now();
+
+    try {
+      const formData = new FormData();
+      formData.append('file', new Blob([new Uint8Array(fileBuffer)], { type: 'application/x-bittorrent' }), name || 'upload.torrent');
+      if (name) formData.append('name', name);
+
+      const res = await axiosIPv4.post(url, formData, {
+        headers: {
+          Authorization: `Bearer ${config.torboxApiKey}`,
+        },
+        timeout: 30000,
+      });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+      console.log(`[${new Date().toISOString()}][torbox] createTorrent (file) done`, { ms: Date.now() - started });
+
+      const data = res?.data?.data as any;
+      const torrentId = String(data?.torrent_id || data?.hash || data?.id || '');
+      if (!torrentId) throw new Error('TorBox createTorrent returned no ID');
+
+      return { id: torrentId };
+    } catch (err: any) {
+      checkPlanError(err);
+      this.handleError(err, 'add torrent file');
+      throw err;
+    }
+  }
+
+  /**
    * Checks whether a torrent with a matching title already exists in TorBox.
    *
    * Fetches the current torrent list and performs a case-insensitive

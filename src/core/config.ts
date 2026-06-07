@@ -23,10 +23,11 @@ export const config = {
   indexerProvider: (process.env.INDEXER_PROVIDER || "auto") as "prowlarr" | "jackett" | "auto",
   torboxApiKey: process.env.TORBOX_API_KEY || "",
   torboxBaseUrl: process.env.TORBOX_BASE_URL || "https://api.torbox.app",
-  overseerrAuth: process.env.OVERSEERR_AUTH || "",
-  // Overseerr API (poller) configuration
-  overseerrUrl: process.env.OVERSEERR_URL || "",
-  overseerrApiKey: process.env.OVERSEERR_API_KEY || "",
+  overseerrAuth: process.env.OVERSEERR_AUTH || process.env.JELLYSEERR_AUTH || "",
+  // Overseerr / Jellyseerr API (poller) configuration
+  // Jellyseerr is API-compatible with Overseerr — either set of env vars works
+  overseerrUrl: process.env.OVERSEERR_URL || process.env.JELLYSEERR_URL || "",
+  overseerrApiKey: process.env.OVERSEERR_API_KEY || process.env.JELLYSEERR_API_KEY || "",
   pollIntervalSeconds: Number(process.env.POLL_INTERVAL_S || 30),
   // Runtime toggles
   runWebhook: String(process.env.RUN_WEBHOOK ?? "true").toLowerCase() !== "false",
@@ -166,6 +167,9 @@ export const config = {
   mediafusionUrl: process.env.MEDIAFUSION_URL || "https://mediafusion.elfhosted.com",
   mediafusionConfig: process.env.MEDIAFUSION_CONFIG || "",
   mediafusionEnabled: String(process.env.MEDIAFUSION_ENABLED ?? "false").toLowerCase() === "true",
+  // --- *arr Bridge (fake qBittorrent API for Radarr/Sonarr) ---
+  arrBridgeEnabled: String(process.env.ARR_BRIDGE_ENABLED ?? "false").toLowerCase() === "true",
+  arrBridgePort: Number(process.env.ARR_BRIDGE_PORT || 8282),
   // --- Stremio Addon Server (expose SchröDrive as an addon) ---
   stremioAddonEnabled: String(process.env.STREMIO_ADDON_ENABLED ?? "false").toLowerCase() === "true",
   stremioAddonPort: Number(process.env.STREMIO_ADDON_PORT || 7000),
@@ -178,6 +182,49 @@ export const config = {
   // --- Data Directory & Database ---
   dataDir: process.env.DATA_DIR || './data',
   dbPath: process.env.DB_PATH || path.join(process.env.DATA_DIR || './data', 'schrodrive.db'),
+
+  // =========================================================================
+  // Cloud Storage Mounts
+  // =========================================================================
+
+  /** Enable cloud storage mounting via rclone (Mega, Dropbox, GDrive, OneDrive). */
+  cloudMountsEnabled: String(process.env.CLOUD_MOUNTS_ENABLED ?? 'false').toLowerCase() === 'true',
+  /** Mount cloud storage as read-only (default: true — safer). */
+  cloudMountReadOnly: String(process.env.CLOUD_MOUNT_READ_ONLY ?? 'true').toLowerCase() !== 'false',
+
+  // MEGA (fully headless — email + password, no OAuth)
+  megaEmail: process.env.MEGA_EMAIL || '',
+  megaPassword: process.env.MEGA_PASSWORD || '',
+
+  // Dropbox (OAuth — needs pre-generated token via `rclone authorize "dropbox"`)
+  dropboxToken: process.env.DROPBOX_TOKEN || '',
+  dropboxClientId: process.env.DROPBOX_CLIENT_ID || '',
+  dropboxClientSecret: process.env.DROPBOX_CLIENT_SECRET || '',
+
+  // Google Drive (service account recommended for headless)
+  gdriveServiceAccountFile: process.env.GDRIVE_SERVICE_ACCOUNT_FILE || '',
+  gdriveToken: process.env.GDRIVE_TOKEN || '',
+  gdriveRootFolderId: process.env.GDRIVE_ROOT_FOLDER_ID || '',
+
+  // OneDrive (OAuth — needs pre-generated token via `rclone authorize "onedrive"`)
+  onedriveToken: process.env.ONEDRIVE_TOKEN || '',
+  onedriveDriveId: process.env.ONEDRIVE_DRIVE_ID || '',
+  onedriveDriveType: process.env.ONEDRIVE_DRIVE_TYPE || 'personal',
+
+  // =========================================================================
+  // Cloud Link Manager — Public Shared Folder Mounting
+  // =========================================================================
+
+  /** Enable the Cloud Link Manager (mounts public shared folder links). */
+  cloudLinksEnabled: String(process.env.CLOUD_LINKS_ENABLED ?? 'false').toLowerCase() === 'true',
+  /** Path to JSON file containing cloud link configurations. */
+  cloudLinksFile: process.env.CLOUD_LINKS_FILE || '/config/cloud_links.json',
+  /** Inline JSON array of cloud link configs (fallback if file not found). */
+  cloudLinksJson: process.env.CLOUD_LINKS || '',
+  /** Google Drive API key (for public folder access — no OAuth needed). */
+  gdriveApiKey: process.env.GDRIVE_API_KEY || '',
+  /** Port for the Cloud Links WebDAV bridge. */
+  cloudLinksBridgePort: Number(process.env.CLOUD_LINKS_PORT || 9121),
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {

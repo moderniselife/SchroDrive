@@ -21,6 +21,8 @@ services:
           propagation: rshared
       # Persistent data directory (SQLite DB, blacklist, rate limit store)
       - schrodrive_data:/data
+      # Config directory (cloud_links.json, etc.)
+      - /config:/config:ro
     devices:
       - /dev/fuse:/dev/fuse:rwm
     cap_add:
@@ -123,6 +125,13 @@ services:
       # ===== General App Config =====
       - PORT=8978
       - DATA_DIR=/data
+      
+      # ===== Cloud Link Manager (Public Shared Folder Mounting) =====
+      - CLOUD_LINKS_ENABLED=${CLOUD_LINKS_ENABLED:-false}
+      - CLOUD_LINKS_FILE=${CLOUD_LINKS_FILE:-/config/cloud_links.json}
+      # - CLOUD_LINKS=${CLOUD_LINKS:-}       # Inline JSON fallback
+      # - GDRIVE_API_KEY=${GDRIVE_API_KEY:-}  # For public GDrive folders
+      # - CLOUD_LINKS_PORT=${CLOUD_LINKS_PORT:-9121}
       
       # ===== Stremio Addon Server =====
       - STREMIO_ADDON_ENABLED=true
