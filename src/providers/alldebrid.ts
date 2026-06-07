@@ -2,7 +2,7 @@
  * SchroDrive — AllDebrid Provider Implementation
  *
  * Implements the {@link DebridProvider} interface for the AllDebrid
- * debrid service. Wraps the AllDebrid v4 API (magnet listing, upload,
+ * debrid service. Wraps the AllDebrid v4/v4.1 API (magnet listing, upload,
  * file selection, link unlocking) and adds WebDAV bridge support methods
  * (directory fetching, URL resolution).
  *
@@ -10,8 +10,13 @@
  * with automatic caching of successful responses to serve during backoff periods.
  * HTTP agents are forced to IPv4 to avoid IPv6 timeout issues in Docker containers.
  *
- * AllDebrid authenticates via `apikey` and `agent` query parameters on every request.
+ * AllDebrid authenticates via `Authorization: Bearer <apikey>` header.
  * Rate limits: 12 req/s, 600 req/min.
+ *
+ * API version notes (Oct 2024+):
+ * - /v4/magnet/status is DEPRECATED — use /v4.1/magnet/status (POST)
+ * - /v4/magnet/upload, /v4/magnet/delete, /v4/link/unlock remain v4
+ * - Auth: Bearer header (query param `apikey` removed)
  *
  * @module providers/alldebrid
  */
@@ -51,30 +56,36 @@ const TORRENT_LIST_CACHE_KEY = 'alldebrid_torrents';
 // ===========================================================================
 
 /**
- * Maps AllDebrid magnet status codes to human-readable strings.
+ * Maps AllDebrid magnet status codes (v4.1) to human-readable strings.
  *
- * - 0: Processing — queued for processing
- * - 1: Uploading — uploading the magnet to AllDebrid
- * - 2: Downloading — actively downloading from peers
- * - 3: Compressing — compressing downloaded files
- * - 4: Finished — fully downloaded and available
- * - 5: Upload error — failed during upload
- * - 6: Download error — failed during download
- * - 7: Internal error — AllDebrid internal failure
+ * - 0: In Queue — queued for processing
+ * - 1: Downloading — actively downloading from peers
+ * - 2: Compressing / Moving
+ * - 3: Uploading
+ * - 4: Ready — fully downloaded and available
+ * - 5: Upload fail
+ * - 6: Internal error on unpacking
+ * - 7: Not downloaded in 20 min
+ * - 8: File too big
+ * - 9: Internal error
+ * - 10: Download took more than 72h
  */
 const STATUS_MAP: Record<number, string> = {
   0: 'processing',
-  1: 'uploading',
-  2: 'downloading',
-  3: 'compressing',
+  1: 'downloading',
+  2: 'compressing',
+  3: 'uploading',
   4: 'finished',
   5: 'upload_error',
-  6: 'download_error',
-  7: 'internal_error',
+  6: 'unpack_error',
+  7: 'timeout_20min',
+  8: 'file_too_big',
+  9: 'internal_error',
+  10: 'timeout_72h',
 };
 
 /** Status codes that indicate an error / dead torrent. */
-const ERROR_STATUS_CODES = new Set([5, 6, 7]);
+const ERROR_STATUS_CODES = new Set([5, 6, 7, 8, 9, 10]);
 
 /** Status code that indicates a fully completed torrent. */
 const FINISHED_STATUS_CODE = 4;
@@ -84,40 +95,48 @@ const FINISHED_STATUS_CODE = 4;
 // ===========================================================================
 
 /**
- * Returns the AllDebrid API base URL, stripping any trailing slash.
+ * Returns the AllDebrid API base URL (no version suffix), stripping any trailing slash.
  *
  * @returns The normalised base URL.
  */
 function getBaseUrl(): string {
-  return (config.alldebridApiBase || 'https://api.alldebrid.com/v4').replace(/\/$/, '');
+  return (config.alldebridApiBase || 'https://api.alldebrid.com').replace(/\/v4\.?\d*\/?$/, '').replace(/\/$/, '');
 }
 
 /**
- * Builds the common query parameters required for AllDebrid API requests
- * (authentication via `apikey` + `agent`).
- *
- * @returns An object containing the `apikey` and `agent` parameters.
+ * Returns the API key to use for the current request.
  */
-function authParams(overrideApiKey?: string): Record<string, string> {
+function getApiKey(overrideApiKey?: string): string {
+  return overrideApiKey || config.alldebridApiKey;
+}
+
+/**
+ * Builds common headers for AllDebrid API requests.
+ * Uses `Authorization: Bearer <apikey>` header (v4.1+ auth method).
+ *
+ * @param overrideApiKey - Optional API key override for token rotation.
+ * @returns Headers object with Authorization and agent.
+ */
+function authHeaders(overrideApiKey?: string): Record<string, string> {
   return {
-    apikey: overrideApiKey || config.alldebridApiKey,
-    agent: config.alldebridAgent || 'schrodrive',
+    'Authorization': `Bearer ${getApiKey(overrideApiKey)}`,
   };
 }
 
 /**
- * Constructs a URL with AllDebrid auth query parameters appended.
+ * Constructs a URL for AllDebrid API requests.
+ * The path should include the version prefix (e.g. `/v4/magnet/upload` or `/v4.1/magnet/status`).
  *
- * @param path - The API path (e.g. `/v4/magnet/status`).
+ * @param path - The API path with version prefix (e.g. `/v4.1/magnet/status`).
  * @param extra - Additional query parameters to include.
- * @param overrideApiKey - Optional API key override for token rotation.
  * @returns The fully-qualified URL string.
  */
-function buildUrl(path: string, extra: Record<string, string> = {}, overrideApiKey?: string): string {
+function buildUrl(path: string, extra: Record<string, string> = {}): string {
   const base = getBaseUrl();
   const url = new URL(path.startsWith('http') ? path : `${base}${path}`);
-  const params = { ...authParams(overrideApiKey), ...extra };
-  for (const [key, value] of Object.entries(params)) {
+  // Add agent parameter (still supported as query param)
+  url.searchParams.set('agent', config.alldebridAgent || 'schrodrive');
+  for (const [key, value] of Object.entries(extra)) {
     url.searchParams.set(key, value);
   }
   return url.toString();
@@ -243,8 +262,8 @@ export class AllDebridProvider implements DebridProvider {
     await rateLimiter.throttle(PROVIDER_NAME);
 
     try {
-      const url = buildUrl('/magnet/status');
-      const res = await axiosIPv4.get(url, { timeout: 30000 });
+      const url = buildUrl('/v4.1/magnet/status');
+      const res = await axiosIPv4.post(url, null, { headers: authHeaders(), timeout: 30000 });
       rateLimiter.recordSuccess(PROVIDER_NAME);
 
       const data = unwrapResponse(res, 'list magnets');
@@ -289,12 +308,12 @@ export class AllDebridProvider implements DebridProvider {
 
     try {
       // Step 1: Upload the magnet
-      const uploadUrl = buildUrl('/magnet/upload');
+      const uploadUrl = buildUrl('/v4/magnet/upload');
       const params = new URLSearchParams();
       params.set('magnets[]', magnet);
 
       const uploadRes = await axiosIPv4.post(uploadUrl, params, {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
         timeout: 20000,
       });
       rateLimiter.recordSuccess(PROVIDER_NAME);
@@ -340,13 +359,14 @@ export class AllDebridProvider implements DebridProvider {
     await rateLimiter.throttle(PROVIDER_NAME);
 
     try {
-      const url = buildUrl('/magnet/upload/file');
+      const url = buildUrl('/v4/magnet/upload/file');
       console.log(`[${new Date().toISOString()}][ad] Uploading .torrent file${name ? `: ${name}` : ''}`);
 
       const formData = new FormData();
       formData.append('files[]', new Blob([new Uint8Array(fileBuffer)], { type: 'application/x-bittorrent' }), name || 'upload.torrent');
 
       const uploadRes = await axiosIPv4.post(url, formData, {
+        headers: { ...authHeaders() },
         timeout: 30000,
       });
       rateLimiter.recordSuccess(PROVIDER_NAME);
@@ -393,13 +413,13 @@ export class AllDebridProvider implements DebridProvider {
     await rateLimiter.throttle(PROVIDER_NAME);
 
     try {
-      const url = buildUrl('/magnet/selectFiles');
-      const params = new URLSearchParams();
-      params.set('id', id);
-      params.set('files[]', 'all');
+      const url = buildUrl('/v4/magnet/selectFiles');
+      const selectParams = new URLSearchParams();
+      selectParams.set('id', id);
+      selectParams.set('files[]', 'all');
 
-      await axiosIPv4.post(url, params, {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      await axiosIPv4.post(url, selectParams, {
+        headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
         timeout: 20000,
       });
       rateLimiter.recordSuccess(PROVIDER_NAME);
@@ -469,8 +489,8 @@ export class AllDebridProvider implements DebridProvider {
     await rateLimiter.throttle(PROVIDER_NAME);
 
     try {
-      const url = buildUrl('/magnet/delete', { id: torrentId });
-      await axiosIPv4.get(url, { timeout: 20000 });
+      const url = buildUrl('/v4/magnet/delete', { id: torrentId });
+      await axiosIPv4.post(url, null, { headers: authHeaders(), timeout: 20000 });
       rateLimiter.recordSuccess(PROVIDER_NAME);
       console.log(`[${new Date().toISOString()}][ad] deleted magnet ${torrentId}`);
     } catch (err: any) {
@@ -501,8 +521,8 @@ export class AllDebridProvider implements DebridProvider {
     await rateLimiter.throttle(PROVIDER_NAME);
 
     try {
-      const url = buildUrl('/magnet/status', { id: torrentId });
-      const res = await axiosIPv4.get(url, { timeout: 20000 });
+      const url = buildUrl('/v4.1/magnet/status', { id: torrentId });
+      const res = await axiosIPv4.post(url, null, { headers: authHeaders(), timeout: 20000 });
       rateLimiter.recordSuccess(PROVIDER_NAME);
 
       const data = unwrapResponse(res, 'get magnet info');
@@ -587,8 +607,8 @@ export class AllDebridProvider implements DebridProvider {
     await rateLimiter.throttle(PROVIDER_NAME);
 
     try {
-      const url = buildUrl('/magnet/status');
-      const res = await axiosIPv4.get(url, { timeout: 30000 });
+      const url = buildUrl('/v4.1/magnet/status');
+      const res = await axiosIPv4.post(url, null, { headers: authHeaders(), timeout: 30000 });
       rateLimiter.recordSuccess(PROVIDER_NAME);
 
       const data = unwrapResponse(res, 'fetch directories');
@@ -650,8 +670,8 @@ export class AllDebridProvider implements DebridProvider {
 
     try {
       // Fetch the magnet info to retrieve the file link
-      const infoUrl = buildUrl('/magnet/status', { id: torrentId }, downloadToken);
-      const infoRes = await axiosIPv4.get(infoUrl, { timeout: 30000 });
+      const infoUrl = buildUrl('/v4.1/magnet/status', { id: torrentId });
+      const infoRes = await axiosIPv4.post(infoUrl, null, { headers: authHeaders(downloadToken), timeout: 30000 });
       rateLimiter.recordSuccess(PROVIDER_NAME);
 
       const infoData = unwrapResponse(infoRes, 'magnet info');
@@ -674,12 +694,12 @@ export class AllDebridProvider implements DebridProvider {
 
       // Unlock the link to get the direct download URL
       await rateLimiter.throttle(PROVIDER_NAME);
-      const unlockUrl = buildUrl('/link/unlock', {}, downloadToken);
+      const unlockUrl = buildUrl('/v4/link/unlock');
       const params = new URLSearchParams();
       params.set('link', fileLink);
 
       const unlockRes = await axiosIPv4.post(unlockUrl, params, {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { ...authHeaders(downloadToken), 'Content-Type': 'application/x-www-form-urlencoded' },
         timeout: 20000,
       });
       rateLimiter.recordSuccess(PROVIDER_NAME);
