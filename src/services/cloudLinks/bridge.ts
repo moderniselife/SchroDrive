@@ -773,14 +773,16 @@ async function preWarmCache(): Promise<void> {
    * Recursively walks a single adapter's directory tree, building
    * PROPFIND cache entries for each directory encountered.
    */
-  async function walkAdapter(
+  /**
+   * Processes a single directory path: fetches listing (with rate-limit
+   * throttling for uncached paths), builds PROPFIND XML cache entry,
+   * and returns the subdirectory children for the BFS queue.
+   */
+  async function processPath(
     adapter: CloudLinkAdapter,
     linkName: string,
     subPath: string,
-    depth: number,
-  ): Promise<void> {
-    if (depth > PREWARM_MAX_DEPTH) return;
-
+  ): Promise<Array<{ subPath: string }>> {
     const cacheKey = `/http/${linkName}${subPath ? '/' + subPath : ''}`;
     const basePath = cacheKey;
 
@@ -790,16 +792,11 @@ async function preWarmCache(): Promise<void> {
       const { freshMs } = getTtlsForProvider('http');
       const age = Date.now() - existing.fetchedAt;
       if (age < freshMs) {
-        // Already fresh — still recurse into subdirectories using
-        // the cached file list (no adapter call needed).
-        // Process SEQUENTIALLY to avoid parallel fan-out hammering rate-limited servers.
         totalSkipped++;
-        const subdirs = existing.files.filter((f: CloudFile) => f.isDirectory);
-        for (const dir of subdirs) {
-          const childSubPath = subPath ? `${subPath}/${dir.name}` : dir.name;
-          await walkAdapter(adapter, linkName, childSubPath, depth + 1);
-        }
-        return;
+        // Return subdirectories for BFS queue even though we skipped fetching
+        return existing.files
+          .filter((f: CloudFile) => f.isDirectory)
+          .map(dir => ({ subPath: subPath ? `${subPath}/${dir.name}` : dir.name }));
       }
     }
 
@@ -819,7 +816,7 @@ async function preWarmCache(): Promise<void> {
         `[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: failed to list ${cacheKey}: ${err?.message}`
       );
       releaseSemaphore();
-      return;
+      return [];
     }
     releaseSemaphore();
 
@@ -841,21 +838,46 @@ async function preWarmCache(): Promise<void> {
       );
     }
 
-    // Recurse into subdirectories SEQUENTIALLY to respect rate limits.
-    // Parallel fan-out (Promise.all) caused thousands of concurrent requests
-    // that bypassed the adapter's rateLimitMs (e.g. 3500ms for a.111477.xyz).
-    const subdirs = files.filter((f: CloudFile) => f.isDirectory);
-    for (const dir of subdirs) {
-      const childSubPath = subPath ? `${subPath}/${dir.name}` : dir.name;
-      await walkAdapter(adapter, linkName, childSubPath, depth + 1);
+    // Return subdirectories for BFS queue
+    return files
+      .filter((f: CloudFile) => f.isDirectory)
+      .map(dir => ({ subPath: subPath ? `${subPath}/${dir.name}` : dir.name }));
+  }
+
+  /**
+   * Breadth-first walk of a single adapter's directory tree.
+   * Processes ALL directories at depth N before moving to depth N+1.
+   * This ensures top-level folders (movies, tvs, etc.) are cached first,
+   * before diving into thousands of subdirectories.
+   */
+  async function walkAdapterBFS(
+    adapter: CloudLinkAdapter,
+    linkName: string,
+  ): Promise<void> {
+    // Start with the root
+    let currentLevel: Array<{ subPath: string }> = [{ subPath: '' }];
+
+    for (let depth = 0; depth <= PREWARM_MAX_DEPTH && currentLevel.length > 0; depth++) {
+      console.log(
+        `[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: http/${linkName} depth=${depth}, ${currentLevel.length} dir(s) to process`
+      );
+
+      const nextLevel: Array<{ subPath: string }> = [];
+
+      for (const item of currentLevel) {
+        const children = await processPath(adapter, linkName, item.subPath);
+        nextLevel.push(...children);
+      }
+
+      currentLevel = nextLevel;
     }
   }
 
-  // Walk each HTTP adapter's tree
+  // Walk each HTTP adapter's tree using breadth-first traversal
   for (const [linkName, adapter] of httpAdapters) {
-    console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: walking http/${linkName}...`);
+    console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: walking http/${linkName} (BFS)...`);
     try {
-      await walkAdapter(adapter, linkName, '', 0);
+      await walkAdapterBFS(adapter, linkName);
     } catch (err: any) {
       console.error(
         `[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: error walking http/${linkName}: ${err?.message}`
