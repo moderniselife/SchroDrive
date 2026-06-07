@@ -50,8 +50,8 @@ const PROPFIND_HTTP_STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const RECRAWL_INTERVAL_MS = 6 * 60 * 60 * 1000;
 /** Maximum concurrent adapter.listFolder() calls during pre-warm. */
 const PREWARM_CONCURRENCY = 3;
-/** Maximum directory depth for pre-warm traversal (root → show → season). */
-const PREWARM_MAX_DEPTH = 3;
+/** Maximum directory depth for pre-warm traversal (supports deeply nested structures). */
+const PREWARM_MAX_DEPTH = 6;
 /**
  * Maximum total entries allowed in a Depth: infinity PROPFIND response.
  * Prevents OOM when a directory tree is massive (e.g. 50k+ files).
@@ -613,7 +613,7 @@ async function handleHead(req, res) {
  * be wasteful (and MEGA has API rate limits).
  *
  * Concurrency is capped at PREWARM_CONCURRENCY (3) to avoid saturating
- * the event loop. Traversal depth is limited to PREWARM_MAX_DEPTH (3)
+ * the event loop. Traversal depth is limited to PREWARM_MAX_DEPTH (6)
  * which covers root → show → season — exactly what Plex needs.
  */
 async function preWarmCache() {
@@ -800,33 +800,17 @@ async function startCloudLinksBridge() {
             console.log(`${LOG_PREFIX} Cloud Links WebDAV bridge listening on port ${port}`);
             const totalLinks = [...adaptersByProvider.values()].reduce((sum, m) => sum + m.size, 0);
             console.log(`${LOG_PREFIX} Serving ${totalLinks} cloud link(s) across ${adaptersByProvider.size} provider(s)`);
-            // ------ Periodic re-crawl to keep the cache warm ------
+            // ------ Periodic re-crawl to keep the ENTIRE cache warm ------
+            // Calls preWarmCache() which recursively discovers and caches all
+            // subdirectories, not just paths that are already in the cache.
             recrawlTimer = setInterval(() => {
                 const startTime = new Date();
-                console.log(`[${startTime.toISOString()}]${LOG_PREFIX} Periodic re-crawl started (${propfindCache.size} cached paths)`);
-                let refreshed = 0;
-                for (const [cachedPath, entry] of propfindCache) {
-                    // Parse the cached path to determine provider and resolve TTLs
-                    const segs = cachedPath.split('/').filter(Boolean);
-                    if (segs.length < 2)
-                        continue; // Root / provider-level paths aren't adapter calls
-                    const pType = segs[0];
-                    const lName = segs[1];
-                    // Skip entries that are still fresh for their provider
-                    const { freshMs } = getTtlsForProvider(pType);
-                    const age = Date.now() - entry.fetchedAt;
-                    if (age < freshMs)
-                        continue;
-                    const subP = segs.slice(2).join('/') || undefined;
-                    const bPath = `/${pType}/${lName}${subP ? '/' + subP : ''}`;
-                    const pMap = adaptersByProvider.get(pType);
-                    const adpt = pMap?.get(lName);
-                    if (!adpt)
-                        continue;
-                    backgroundRefresh(cachedPath, adpt, subP, pType, lName, bPath);
-                    refreshed++;
-                }
-                console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Periodic re-crawl queued ${refreshed} refresh(es)`);
+                console.log(`[${startTime.toISOString()}]${LOG_PREFIX} Periodic re-crawl started — running full preWarmCache()`);
+                preWarmCache().then(() => {
+                    console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Periodic re-crawl complete (${propfindCache.size} cached paths)`);
+                }).catch((err) => {
+                    console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Periodic re-crawl failed: ${err?.message}`);
+                });
             }, RECRAWL_INTERVAL_MS);
             // Ensure the timer doesn't prevent process exit
             if (recrawlTimer && typeof recrawlTimer === 'object' && 'unref' in recrawlTimer) {
