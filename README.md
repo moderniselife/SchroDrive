@@ -486,57 +486,69 @@ What SchröDrive persists in SQLite:
 
 ```
 src/
-├── providers/                # Debrid provider abstraction layer (11 providers)
-│   ├── index.ts              #   DebridProvider interface + ProviderRegistry
-│   ├── realdebrid.ts         #   RealDebrid implementation
-│   ├── torbox.ts             #   TorBox implementation
-│   ├── alldebrid.ts          #   AllDebrid implementation
-│   ├── premiumize.ts         #   Premiumize implementation
-│   ├── debridlink.ts         #   Debrid-Link implementation
-│   ├── deepbrid.ts           #   Deepbrid implementation
-│   ├── offcloud.ts           #   Offcloud implementation
-│   ├── putio.ts              #   Put.io implementation
-│   ├── megadebrid.ts         #   MegaDebrid implementation
-│   ├── seedr.ts              #   Seedr implementation
-│   ├── pikpak.ts             #   PikPak implementation (JWT auth)
-│   └── README.md             #   How to add a new provider
-├── services/                 # Business logic
-│   ├── overseerr.ts          #   Overseerr webhook + poller
-│   ├── deadScanner.ts        #   Dead torrent detection + replacement + blacklisting
-│   ├── mount.ts              #   rclone FUSE mount management
-│   ├── webdavBridge.ts       #   API-to-WebDAV translation layer (provider-agnostic)
-│   ├── arrBridge.ts          #   Fake qBittorrent API for Radarr/Sonarr integration
-│   ├── organizer.ts          #   Media organiser (symlinks + metadata)
-│   ├── mediaServerWatchlist.ts#  Plex/Jellyfin/Emby watchlist polling
-│   ├── stremioAddon.ts       #   Stremio addon server (port 7000)
-│   ├── autoUpdate.ts         #   GitHub release auto-updater
-│   └── infringementList.ts   #   Content filtering
-├── integrations/             # Watchlist sources
-│   ├── plex.ts               #   Plex API client
-│   ├── jellyfin.ts           #   Jellyfin API client
-│   ├── emby.ts               #   Emby API client
-│   ├── trakt.ts              #   Trakt watchlist (OAuth2 + public)
-│   ├── mdblist.ts            #   Mdblist watchlist API
-│   └── listrr.ts             #   Listrr watchlist API
-├── indexers/                 # Search sources
-│   ├── index.ts              #   Unified indexer + scraper routing
-│   ├── prowlarr.ts           #   Prowlarr API client
-│   ├── jackett.ts            #   Jackett API client
-│   ├── stremioScraper.ts     #   Shared Stremio addon helpers
-│   ├── torrentio.ts          #   Torrentio addon scraper
-│   ├── comet.ts              #   Comet addon scraper
-│   ├── zilean.ts             #   Zilean DMM hashlists
-│   └── mediafusion.ts        #   Mediafusion addon scraper
-├── core/                     # Infrastructure
-│   ├── config.ts             #   Environment variable configuration
-│   ├── configApi.ts          #   Runtime config API endpoints
-│   ├── rateLimiter.ts        #   Adaptive rate limiter with caching
-│   ├── rateLimitStore.ts     #   Persistent rate limit state
-│   ├── blacklist.ts          #   Persistent dead torrent blacklist
-│   ├── db.ts                 #   SQLite persistence layer (WAL mode)
-│   └── logger.ts             #   In-memory log buffer
-├── server.ts                 # Express HTTP server + REST API
-└── index.ts                  # CLI entrypoint (Commander)
+├── core/                        # Infrastructure (10 files)
+│   ├── blacklist.ts             #   Persistent dead torrent blacklist
+│   ├── config.ts                #   Environment variable configuration
+│   ├── configApi.ts             #   Runtime config API endpoints
+│   ├── db.ts                    #   SQLite persistence layer (WAL mode)
+│   ├── errors.ts                #   Custom error classes (UnplayableTorrentError)
+│   ├── logger.ts                #   In-memory log buffer
+│   ├── mediaClassifier.ts       #   Anime/shows/movies classification (Zurg-compatible)
+│   ├── rateLimitStore.ts        #   Persistent rate limit state (SQLite-backed)
+│   ├── rateLimiter.ts           #   Adaptive rate limiter with caching
+│   └── tokenRotator.ts          #   Multi-token download rotation manager
+├── providers/                   # Debrid provider abstraction layer (14 files)
+│   ├── index.ts                 #   DebridProvider interface, types, auto-imports providers
+│   ├── registry.ts              #   ProviderRegistry singleton (register, get, ordered, strategies)
+│   ├── realdebrid.ts            #   RealDebrid implementation
+│   ├── torbox.ts                #   TorBox implementation
+│   ├── alldebrid.ts             #   AllDebrid implementation
+│   ├── premiumize.ts            #   Premiumize implementation
+│   ├── debridlink.ts            #   Debrid-Link implementation
+│   ├── deepbrid.ts              #   Deepbrid implementation
+│   ├── offcloud.ts              #   Offcloud implementation
+│   ├── putio.ts                 #   Put.io implementation
+│   ├── megadebrid.ts            #   MegaDebrid implementation (no WebDAV)
+│   ├── seedr.ts                 #   Seedr implementation
+│   ├── pikpak.ts                #   PikPak implementation (JWT auth)
+│   └── README.md                #   How to add a new provider
+├── services/                    # Business logic (12 files + 1 subdirectory)
+│   ├── cloudLinks/              #   Cloud link manager (6 files)
+│   │   ├── bridge.ts            #     WebDAV bridge for public shared folder links
+│   │   ├── dropboxAdapter.ts    #     Dropbox shared link adapter
+│   │   ├── gdriveAdapter.ts     #     Google Drive shared link adapter
+│   │   ├── httpAdapter.ts       #     HTTP/WebDAV folder adapter
+│   │   ├── megaAdapter.ts       #     MEGA shared folder adapter
+│   │   └── types.ts             #     Shared types (CloudLinkAdapter, CloudFile, etc.)
+│   ├── arrBridge.ts             #   Fake qBittorrent API for Radarr/Sonarr integration
+│   ├── autoUpdate.ts            #   GitHub release auto-updater
+│   ├── deadScanner.ts           #   Dead torrent detection + 3-phase repair + blacklisting
+│   ├── infringementList.ts      #   Content filtering
+│   ├── mediaServerWatchlist.ts  #   Plex/Jellyfin/Emby watchlist polling
+│   ├── mount.ts                 #   rclone FUSE mount management + auto-recovery
+│   ├── organizer.ts             #   Media organiser (symlinks + TMDB/TVMaze metadata)
+│   ├── overseerr.ts             #   Overseerr/Jellyseerr webhook + poller
+│   ├── stremioAddon.ts          #   Stremio addon server (port 7000)
+│   ├── strmService.ts           #   STRM short-code redirect service (port 9120)
+│   └── webdavBridge.ts          #   API-to-WebDAV translation layer (provider-agnostic)
+├── indexers/                    # Search sources (8 files)
+│   ├── index.ts                 #   Unified indexer + scraper routing
+│   ├── prowlarr.ts              #   Prowlarr API client
+│   ├── jackett.ts               #   Jackett API client
+│   ├── stremioScraper.ts        #   Shared Stremio addon helpers
+│   ├── torrentio.ts             #   Torrentio addon scraper
+│   ├── comet.ts                 #   Comet addon scraper
+│   ├── zilean.ts                #   Zilean DMM hashlists
+│   └── mediafusion.ts           #   Mediafusion addon scraper
+├── integrations/                # Watchlist sources (6 files)
+│   ├── plex.ts                  #   Plex API client (watchlist + library refresh)
+│   ├── jellyfin.ts              #   Jellyfin API client (watchlist + library refresh)
+│   ├── emby.ts                  #   Emby API client (watchlist + library refresh)
+│   ├── trakt.ts                 #   Trakt watchlist (OAuth2 + public)
+│   ├── mdblist.ts               #   Mdblist watchlist API
+│   └── listrr.ts                #   Listrr watchlist API
+├── index.ts                     # CLI entrypoint (Commander)
+└── server.ts                    # Express HTTP server + REST API
 ```
 
 ### Data Flow
