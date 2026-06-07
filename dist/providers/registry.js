@@ -32,9 +32,21 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registry = void 0;
+const axios_1 = __importDefault(require("axios"));
+const http_1 = __importDefault(require("http"));
+const https_1 = __importDefault(require("https"));
 const config_1 = require("../core/config");
+const db_1 = require("../core/db");
+/** Extracts the infohash from a magnet URI. */
+function extractInfoHash(magnet) {
+    const match = magnet.match(/urn:btih:([a-fA-F0-9]+)/i);
+    return match ? match[1].toUpperCase() : null;
+}
 /**
  * Manages the lifecycle and lookup of registered debrid providers.
  */
@@ -121,12 +133,20 @@ class ProviderRegistry {
         const providers = this.ordered();
         const results = [];
         let legallyBlocked = false;
+        // Infohash-level deduplication — skip if we've already added this exact torrent
+        const infoHash = extractInfoHash(magnet);
+        if (infoHash && (0, db_1.isKnownMagnet)(infoHash)) {
+            console.log(`[${new Date().toISOString()}][registry] Skipping known magnet ${infoHash.slice(0, 8)}... — already added previously`);
+            return { results };
+        }
         for (const p of providers) {
             try {
                 console.log(`[${new Date().toISOString()}][providers] adding magnet to ${p.id}`, { name });
                 const result = await p.addMagnet(magnet, name);
                 console.log(`[${new Date().toISOString()}][providers] ✅ added to ${p.id}`, { id: result.id });
                 results.push({ provider: p.id, success: true, result });
+                if (infoHash)
+                    (0, db_1.addKnownMagnet)(infoHash, name, p.id);
                 if (strategy === 'failover' || strategy === 'single') {
                     break; // Success — don't try more providers
                 }
@@ -152,6 +172,67 @@ class ProviderRegistry {
             if (!isBlacklisted(name)) {
                 addToBlacklist(name, 'HTTP 451 — Unavailable For Legal Reasons', 'auto');
                 console.log(`[${new Date().toISOString()}][providers] ⚖️ auto-blacklisted "${name}" (451 legally blocked)`);
+            }
+        }
+        return { results };
+    }
+    /**
+     * Downloads a .torrent file from a URL and uploads it to debrid providers
+     * using the configured strategy.
+     *
+     * Falls back through ordered providers if a provider doesn't support
+     * `.torrent` file uploads. Logs each step with ISO timestamps.
+     *
+     * @param torrentUrl - The HTTP(S) URL of the .torrent file.
+     * @param name - Human-readable name for the torrent.
+     * @param strategy - The distribution strategy. Defaults to `'all'`.
+     * @returns An object containing per-provider results.
+     */
+    async addTorrentFileFromUrl(torrentUrl, name, strategy = 'all') {
+        const results = [];
+        // Download the .torrent file
+        console.log(`[${new Date().toISOString()}][registry] Downloading .torrent file: ${torrentUrl}`);
+        let fileBuffer;
+        try {
+            const resp = await axios_1.default.get(torrentUrl, {
+                responseType: 'arraybuffer',
+                timeout: 30000,
+                httpAgent: new http_1.default.Agent({ family: 4 }),
+                httpsAgent: new https_1.default.Agent({ family: 4 }),
+            });
+            fileBuffer = Buffer.from(resp.data);
+            console.log(`[${new Date().toISOString()}][registry] Downloaded .torrent file (${fileBuffer.length} bytes)`);
+        }
+        catch (err) {
+            const error = `Failed to download .torrent file: ${err?.message || String(err)}`;
+            console.error(`[${new Date().toISOString()}][registry] ${error}`);
+            return { results: [{ provider: 'registry', success: false, error }] };
+        }
+        // Upload to providers using the same strategy pattern as addMagnetWithStrategy
+        const providers = this.ordered();
+        for (const p of providers) {
+            try {
+                if (p.addTorrentFile) {
+                    console.log(`[${new Date().toISOString()}][registry] Uploading .torrent file to ${p.id}`, { name });
+                    const result = await p.addTorrentFile(fileBuffer, name);
+                    console.log(`[${new Date().toISOString()}][registry] ✅ .torrent file added to ${p.id}`, { id: result.id });
+                    results.push({ provider: p.id, success: true, result });
+                    if (strategy === 'failover' || strategy === 'single') {
+                        break; // Success — don't try more providers
+                    }
+                }
+                else {
+                    console.warn(`[${new Date().toISOString()}][registry] ${p.id} does not support .torrent file upload — skipping`);
+                    results.push({ provider: p.id, success: false, error: 'Provider does not support .torrent file upload' });
+                }
+            }
+            catch (err) {
+                const error = err?.message || String(err);
+                console.error(`[${new Date().toISOString()}][registry] ❌ Failed to upload .torrent to ${p.id}: ${error}`);
+                results.push({ provider: p.id, success: false, error });
+                if (strategy === 'single') {
+                    break; // Only try one
+                }
             }
         }
         return { results };

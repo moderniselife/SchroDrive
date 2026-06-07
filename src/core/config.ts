@@ -23,10 +23,11 @@ export const config = {
   indexerProvider: (process.env.INDEXER_PROVIDER || "auto") as "prowlarr" | "jackett" | "auto",
   torboxApiKey: process.env.TORBOX_API_KEY || "",
   torboxBaseUrl: process.env.TORBOX_BASE_URL || "https://api.torbox.app",
-  overseerrAuth: process.env.OVERSEERR_AUTH || "",
-  // Overseerr API (poller) configuration
-  overseerrUrl: process.env.OVERSEERR_URL || "",
-  overseerrApiKey: process.env.OVERSEERR_API_KEY || "",
+  overseerrAuth: process.env.OVERSEERR_AUTH || process.env.JELLYSEERR_AUTH || "",
+  // Overseerr / Jellyseerr API (poller) configuration
+  // Jellyseerr is API-compatible with Overseerr — either set of env vars works
+  overseerrUrl: process.env.OVERSEERR_URL || process.env.JELLYSEERR_URL || "",
+  overseerrApiKey: process.env.OVERSEERR_API_KEY || process.env.JELLYSEERR_API_KEY || "",
   pollIntervalSeconds: Number(process.env.POLL_INTERVAL_S || 30),
   // Runtime toggles
   runWebhook: String(process.env.RUN_WEBHOOK ?? "true").toLowerCase() !== "false",
@@ -72,6 +73,55 @@ export const config = {
   torboxDownloadTokens: (process.env.TORBOX_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
   alldebridDownloadTokens: (process.env.AD_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
   premiumizeDownloadTokens: (process.env.PM_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  // Debrid-Link API
+  debridlinkApiKey: process.env.DEBRIDLINK_API_KEY || "",
+  debridlinkApiBase: process.env.DEBRIDLINK_API_BASE || "https://debrid-link.com/api/v2",
+  // Debrid-Link WebDAV
+  debridlinkWebdavUrl: process.env.DEBRIDLINK_WEBDAV_URL || "https://webdav.debrid.link",
+  debridlinkWebdavUsername: process.env.DEBRIDLINK_WEBDAV_USERNAME || "",
+  debridlinkWebdavPassword: process.env.DEBRIDLINK_WEBDAV_PASSWORD || "",
+  debridlinkDownloadTokens: (process.env.DL_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  // Deepbrid API
+  deepbridApiKey: process.env.DEEPBRID_API_KEY || "",
+  deepbridApiBase: process.env.DEEPBRID_API_BASE || "https://www.deepbrid.com/api",
+  // Deepbrid WebDAV
+  deepbridWebdavUrl: process.env.DEEPBRID_WEBDAV_URL || "",
+  deepbridWebdavUsername: process.env.DEEPBRID_WEBDAV_USERNAME || "",
+  deepbridWebdavPassword: process.env.DEEPBRID_WEBDAV_PASSWORD || "",
+  deepbridDownloadTokens: (process.env.DB_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  // Offcloud API
+  offcloudApiKey: process.env.OFFCLOUD_API_KEY || "",
+  offcloudApiBase: process.env.OFFCLOUD_API_BASE || "https://offcloud.com/api",
+  offcloudWebdavUrl: process.env.OFFCLOUD_WEBDAV_URL || "",
+  offcloudWebdavUsername: process.env.OFFCLOUD_WEBDAV_USERNAME || "",
+  offcloudWebdavPassword: process.env.OFFCLOUD_WEBDAV_PASSWORD || "",
+  offcloudDownloadTokens: (process.env.OC_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  // Put.io API
+  putioOauthToken: process.env.PUTIO_OAUTH_TOKEN || "",
+  putioApiBase: process.env.PUTIO_API_BASE || "https://api.put.io/v2",
+  putioWebdavUrl: process.env.PUTIO_WEBDAV_URL || "https://webdav.put.io",
+  putioWebdavUsername: process.env.PUTIO_WEBDAV_USERNAME || "",
+  putioWebdavPassword: process.env.PUTIO_WEBDAV_PASSWORD || "",
+  putioDownloadTokens: (process.env.PUTIO_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  // Mega-Debrid API
+  megadebridApiKey: process.env.MEGADEBRID_API_KEY || "",
+  megadebridApiBase: process.env.MEGADEBRID_API_BASE || "https://www.mega-debrid.eu",
+  megadebridDownloadTokens: (process.env.MD_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  // Seedr API
+  seedrApiKey: process.env.SEEDR_API_KEY || "",
+  seedrApiBase: process.env.SEEDR_API_BASE || "https://www.seedr.cc/rest",
+  seedrWebdavUrl: process.env.SEEDR_WEBDAV_URL || "https://dav.seedr.cc",
+  seedrWebdavUsername: process.env.SEEDR_WEBDAV_USERNAME || "",
+  seedrWebdavPassword: process.env.SEEDR_WEBDAV_PASSWORD || "",
+  seedrDownloadTokens: (process.env.SEEDR_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  // PikPak API
+  pikpakUsername: process.env.PIKPAK_USERNAME || "",
+  pikpakPassword: process.env.PIKPAK_PASSWORD || "",
+  pikpakApiBase: process.env.PIKPAK_API_BASE || "https://api-drive.mypikpak.com",
+  pikpakWebdavUrl: process.env.PIKPAK_WEBDAV_URL || "",
+  pikpakWebdavUsername: process.env.PIKPAK_WEBDAV_USERNAME || "",
+  pikpakWebdavPassword: process.env.PIKPAK_WEBDAV_PASSWORD || "",
+  pikpakDownloadTokens: (process.env.PIKPAK_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
   tokenResetTimezone: process.env.TOKEN_RESET_TIMEZONE || 'Australia/Sydney',
   // Mount settings
   mountBase: defaultMountBase,
@@ -135,6 +185,13 @@ export const config = {
   webdavBridgePortTB: Number(process.env.WEBDAV_BRIDGE_PORT_TB || 9116),
   webdavBridgePortAD: Number(process.env.WEBDAV_BRIDGE_PORT_AD || 9117),
   webdavBridgePortPM: Number(process.env.WEBDAV_BRIDGE_PORT_PM || 9118),
+  webdavBridgePortDL: Number(process.env.WEBDAV_BRIDGE_PORT_DL || 9119),
+  webdavBridgePortDB: Number(process.env.WEBDAV_BRIDGE_PORT_DB || 9122),
+  webdavBridgePortOC: Number(process.env.WEBDAV_BRIDGE_PORT_OC || 9123),
+  webdavBridgePortPUTIO: Number(process.env.WEBDAV_BRIDGE_PORT_PUTIO || 9124),
+  webdavBridgePortMD: Number(process.env.WEBDAV_BRIDGE_PORT_MD || 9125),
+  webdavBridgePortSEEDR: Number(process.env.WEBDAV_BRIDGE_PORT_SEEDR || 9126),
+  webdavBridgePortPIKPAK: Number(process.env.WEBDAV_BRIDGE_PORT_PIKPAK || 9127),
   webdavCacheTtlS: Number(process.env.WEBDAV_CACHE_TTL_S || 30),
   webdavDownloadCacheTtlS: Number(process.env.WEBDAV_DOWNLOAD_CACHE_TTL_S || 14400),
   // --- Trakt Integration ---
@@ -154,7 +211,10 @@ export const config = {
   // Torrentio
   torrentioUrl: process.env.TORRENTIO_URL || "https://torrentio.strem.fun",
   torrentioConfig: process.env.TORRENTIO_CONFIG || "",
-  torrentioEnabled: String(process.env.TORRENTIO_ENABLED ?? "false").toLowerCase() === "true",
+  // Auto-enable Torrentio when the Stremio addon is active (free public source)
+  torrentioEnabled: process.env.TORRENTIO_ENABLED !== undefined
+    ? String(process.env.TORRENTIO_ENABLED).toLowerCase() === "true"
+    : String(process.env.STREMIO_ADDON_ENABLED ?? "false").toLowerCase() === "true",
   // Comet
   cometUrl: process.env.COMET_URL || "",
   cometConfig: process.env.COMET_CONFIG || "",
@@ -166,6 +226,9 @@ export const config = {
   mediafusionUrl: process.env.MEDIAFUSION_URL || "https://mediafusion.elfhosted.com",
   mediafusionConfig: process.env.MEDIAFUSION_CONFIG || "",
   mediafusionEnabled: String(process.env.MEDIAFUSION_ENABLED ?? "false").toLowerCase() === "true",
+  // --- *arr Bridge (fake qBittorrent API for Radarr/Sonarr) ---
+  arrBridgeEnabled: String(process.env.ARR_BRIDGE_ENABLED ?? "false").toLowerCase() === "true",
+  arrBridgePort: Number(process.env.ARR_BRIDGE_PORT || 8282),
   // --- Stremio Addon Server (expose SchröDrive as an addon) ---
   stremioAddonEnabled: String(process.env.STREMIO_ADDON_ENABLED ?? "false").toLowerCase() === "true",
   stremioAddonPort: Number(process.env.STREMIO_ADDON_PORT || 7000),
@@ -178,6 +241,49 @@ export const config = {
   // --- Data Directory & Database ---
   dataDir: process.env.DATA_DIR || './data',
   dbPath: process.env.DB_PATH || path.join(process.env.DATA_DIR || './data', 'schrodrive.db'),
+
+  // =========================================================================
+  // Cloud Storage Mounts
+  // =========================================================================
+
+  /** Enable cloud storage mounting via rclone (Mega, Dropbox, GDrive, OneDrive). */
+  cloudMountsEnabled: String(process.env.CLOUD_MOUNTS_ENABLED ?? 'false').toLowerCase() === 'true',
+  /** Mount cloud storage as read-only (default: true — safer). */
+  cloudMountReadOnly: String(process.env.CLOUD_MOUNT_READ_ONLY ?? 'true').toLowerCase() !== 'false',
+
+  // MEGA (fully headless — email + password, no OAuth)
+  megaEmail: process.env.MEGA_EMAIL || '',
+  megaPassword: process.env.MEGA_PASSWORD || '',
+
+  // Dropbox (OAuth — needs pre-generated token via `rclone authorize "dropbox"`)
+  dropboxToken: process.env.DROPBOX_TOKEN || '',
+  dropboxClientId: process.env.DROPBOX_CLIENT_ID || '',
+  dropboxClientSecret: process.env.DROPBOX_CLIENT_SECRET || '',
+
+  // Google Drive (service account recommended for headless)
+  gdriveServiceAccountFile: process.env.GDRIVE_SERVICE_ACCOUNT_FILE || '',
+  gdriveToken: process.env.GDRIVE_TOKEN || '',
+  gdriveRootFolderId: process.env.GDRIVE_ROOT_FOLDER_ID || '',
+
+  // OneDrive (OAuth — needs pre-generated token via `rclone authorize "onedrive"`)
+  onedriveToken: process.env.ONEDRIVE_TOKEN || '',
+  onedriveDriveId: process.env.ONEDRIVE_DRIVE_ID || '',
+  onedriveDriveType: process.env.ONEDRIVE_DRIVE_TYPE || 'personal',
+
+  // =========================================================================
+  // Cloud Link Manager — Public Shared Folder Mounting
+  // =========================================================================
+
+  /** Enable the Cloud Link Manager (mounts public shared folder links). */
+  cloudLinksEnabled: String(process.env.CLOUD_LINKS_ENABLED ?? 'false').toLowerCase() === 'true',
+  /** Path to JSON file containing cloud link configurations. */
+  cloudLinksFile: process.env.CLOUD_LINKS_FILE || '/config/cloud_links.json',
+  /** Inline JSON array of cloud link configs (fallback if file not found). */
+  cloudLinksJson: process.env.CLOUD_LINKS || '',
+  /** Google Drive API key (for public folder access — no OAuth needed). */
+  gdriveApiKey: process.env.GDRIVE_API_KEY || '',
+  /** Port for the Cloud Links WebDAV bridge. */
+  cloudLinksBridgePort: Number(process.env.CLOUD_LINKS_PORT || 9121),
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {

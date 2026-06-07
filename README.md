@@ -45,7 +45,7 @@
 SchröDrive seamlessly connects your media request system ([Overseerr](https://overseerr.dev/)) with torrent indexers ([Prowlarr](https://prowlarr.com/) / [Jackett](https://github.com/Jackett/Jackett)) and delivers content to your preferred debrid services — then mounts everything as a virtual drive for your media server.
 
 ```
-Overseerr → SchröDrive → Prowlarr/Jackett → TorBox / RealDebrid / AllDebrid / Premiumize → rclone Mount → Plex/Jellyfin/Emby
+Overseerr → SchröDrive → Prowlarr/Jackett → 11 Debrid Providers → rclone Mount → Plex/Jellyfin/Emby
 ```
 
 **Provider-agnostic by design.** Adding a new debrid provider is a single file — zero changes needed elsewhere.
@@ -97,17 +97,24 @@ curl http://localhost:8978/health
 
 ## ✨ Features
 
-### 📺 Multi-Provider Debrid Support
+### 📺 Multi-Provider Debrid Support (11 Providers)
 
 | Provider | Torrents | Web Downloads | Usenet | WebDAV Mount | Bridge | Status |
 |----------|:--------:|:------------:|:------:|:------------:|:------:|--------|
 | **TorBox** | ✅ | ✅ | ✅ | ✅ | ✅ | Fully supported |
 | **RealDebrid** | ✅ | — | — | ✅ | ✅ | Fully supported |
-| **AllDebrid** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
+| **AllDebrid** | ✅ | — | — | ✅ | ✅ | In-testing 🧪 |
 | **Premiumize** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
+| **Debrid-Link** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
+| **Deepbrid** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
+| **Offcloud** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
+| **Put.io** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
+| **MegaDebrid** | ✅ | — | — | — | ✅ | Untested ⚠️ |
+| **Seedr** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
+| **PikPak** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
 
 > [!NOTE]
-> **AllDebrid and Premiumize** providers are fully implemented but have not been tested with live accounts yet. If you have an account and want to help test, please open an issue with your findings. We will be testing them ourselves as soon as we get accounts set up.
+> **AllDebrid** is currently in-testing with live accounts. **Premiumize, Debrid-Link, Deepbrid, Offcloud, Put.io, MegaDebrid, Seedr, and PikPak** are fully implemented but have not been tested with live accounts yet. If you have an account and want to help test, please open an issue with your findings.
 
 **Add strategies** — control how content is distributed across providers:
 
@@ -126,14 +133,60 @@ Set via `ADD_STRATEGY` environment variable.
 - **Auto-detection** — configure one or both; SchröDrive picks the active one
 - Intelligent result ranking by seeders (fallback by size)
 - Automatic magnet resolution with redirect-following fallback
+- **`.torrent` File Support** — indexer results that return `.torrent` download URLs are now supported alongside magnet URIs. All 11 debrid providers support torrent file upload.
 
 ### 🗂️ Virtual Drive (rclone WebDAV Mounts)
 
 - Mount your debrid library as a local filesystem via rclone
 - **WebDAV Bridge** — built-in translation layer that converts debrid API keys into WebDAV endpoints for rclone (no native WebDAV credentials required!)
+- **Zurg-compatible organised directories** — automatic media classification into `anime/`, `shows/`, `movies/`, and `__all__/`
 - Configurable mount options (VFS cache, permissions, buffer sizes, chunk sizes)
 - Works with Plex, Jellyfin, Emby, and any media server that reads local files
 - Per-provider mount points under a shared base directory
+- **Cloud storage mounts** — mount MEGA, Dropbox, Google Drive, and OneDrive alongside debrid content via rclone
+
+#### Mount Structure
+
+```
+/mnt/schrodrive/
+├── realdebrid/
+│   ├── __all__/         # All torrents (unfiltered)
+│   ├── anime/           # CRC hash detected fansub releases
+│   ├── shows/           # Episode pattern detected (S01E01, etc.)
+│   └── movies/          # Everything else (biggest file only)
+├── torbox/
+│   ├── __all__/
+│   ├── anime/
+│   ├── shows/
+│   └── movies/
+├── ... (other providers)
+├── cloud/               # Cloud storage mounts (account login)
+│   ├── mega/
+│   ├── dropbox/
+│   ├── gdrive/
+│   └── onedrive/
+└── cloud-links/          # Public shared folder links (no login)
+    ├── mega/
+    │   └── Australian.Survivor/
+    ├── gdrive/
+    │   └── Shared.Media/
+    └── http/
+        ├── media.example.com/
+        ├── 10.0.0.100/
+        └── RealDebrid.HTTP.Folder/
+```
+
+### 🔗 STRM Short-Code Service (Port 9120)
+
+Stable 16-character alphanumeric URLs that redirect to ephemeral CDN download links. Media player bookmarks never break even when CDN links expire — URLs auto-refresh transparently.
+
+### 🎬 Error Video Fallback
+
+When content is temporarily unavailable (e.g. CDN link expired and refresh failed), a brief error video is served instead of hanging or crashing the media player. This keeps playback graceful during transient outages.
+
+### 🎌 Anime Classification
+
+The organiser now outputs anime to a separate `Anime/` directory (alongside `Movies/` and `TV/`) using CRC hash and fansub pattern detection.
 
 ### 🔄 Automation Engine
 
@@ -144,8 +197,10 @@ Set via `ADD_STRATEGY` environment variable.
 | **Watchlist Poller** | Monitors Plex/Jellyfin/Emby watchlists | `RUN_WATCHLIST_POLLER=true` |
 | **Dead Scanner** | Detects stalled/failed torrents, deletes, blacklists, and auto-replaces | `RUN_DEAD_SCANNER_WATCH=true` |
 | **Organiser** | Creates symlinked views with TMDB/TVMaze metadata | `RUN_ORGANIZER_WATCH=true` |
+| ***arr Bridge** | Fake qBittorrent API — Radarr/Sonarr use SchroDrive as a download client | `ARR_BRIDGE_ENABLED=true` |
 | **Auto-Update** | Checks GitHub releases and self-restarts | `AUTO_UPDATE_ENABLED=true` |
 | **FUSE Mount** | Mounts debrid content as local drives | `RUN_MOUNT=true` |
+| **STRM Redirector** | Stable URLs for media bookmarks (port 9120) | Always on |
 
 ### 🖥️ Web GUI (Dashboard)
 
@@ -166,6 +221,58 @@ SchröDrive includes a full **Next.js dashboard** accessible on port 3000 when `
 
 > [!TIP]
 > Enable with `RUN_WEB_GUI=true` and `WEB_PORT=3000`. The GUI communicates with the backend API on port 8978 — both run inside the same container.
+
+### 🎬 *arr Bridge (Native Radarr/Sonarr Integration)
+
+SchroDrive includes a **built-in fake qBittorrent Web API v2 server** that lets Radarr and Sonarr use it as a download client — **no external bridge containers needed** (no Decypharr, no RDT-Client).
+
+**How it works:**
+
+```
+Overseerr → Radarr/Sonarr → SchroDrive (fake qBit, port 8282) → Debrid Providers
+                                          ↓
+                              Files appear on rclone mount
+                                          ↓
+                              Symlinks created in staging dir
+                                          ↓
+                              *arr imports + renames perfectly
+                                          ↓
+                              Jellyfin/Plex reads organised library
+```
+
+**What the bridge does:**
+
+1. **Receives magnets** from Radarr/Sonarr via the qBittorrent API (`POST /api/v2/torrents/add`)
+2. **Submits to debrid** using your configured provider strategy (`all`, `failover`, `single`)
+3. **Polls debrid status** — background check every 15s maps debrid states to qBit states
+4. **Scans the FUSE mount** — detects files on rclone mount every 10s once debrid reports completion
+5. **Creates symlinks** — from mount path to a staging directory (`/mnt/schrodrive/downloads/`)
+6. **Reports completion** — Radarr/Sonarr see "download complete", import the symlink, and rename to their perfect folder structure
+
+**Supported *arr operations:**
+
+| qBittorrent API Endpoint | Function |
+|--------------------------|----------|
+| `POST /api/v2/auth/login` | Authentication (always accepts) |
+| `GET /api/v2/app/version` | Reports as qBittorrent 4.6.7 |
+| `POST /api/v2/torrents/add` | Add magnet → submit to debrid |
+| `GET /api/v2/torrents/info` | List torrents with status/progress |
+| `POST /api/v2/torrents/delete` | Remove tracking (+ clean symlinks) |
+| `GET /api/v2/torrents/files` | List files in a torrent |
+| `GET /api/v2/sync/maindata` | Sync endpoint for *arr polling |
+
+**Two pipeline modes** — both work simultaneously:
+
+| Mode | Flow | Best For |
+|------|------|----------|
+| **Direct** | Overseerr → SchroDrive → Debrid | Simple setup, no Radarr/Sonarr needed |
+| ***arr** | Overseerr → Radarr/Sonarr → SchroDrive (qBit) → Debrid | Perfect naming, quality upgrades, episode tracking |
+
+> [!TIP]
+> Enable with `ARR_BRIDGE_ENABLED=true`. Add SchroDrive as a **qBittorrent** download client in Radarr/Sonarr: `Settings > Download Clients > qBittorrent`, host: `localhost`, port: `8282`, no username/password.
+
+> [!NOTE]
+> The *arr bridge and direct Overseerr pipeline can run **side-by-side**. Users who want Radarr/Sonarr's superior naming use the bridge; users who prefer simplicity keep the direct pipeline.
 
 ### 📡 Media Server Integration
 
@@ -203,7 +310,7 @@ Inspired by [Zurg's](https://github.com/debridmediamanager/zurg-testing) `downlo
 - When a download token hits bandwidth limits (HTTP 503) or rate limits (HTTP 429), SchröDrive automatically **marks that token as limited** (for 24 hours on 503, or 1 hour on 429) and **rotates** to the next available token
 - **Cool rate-limit bypass trick**: Since download tokens represent separate accounts/subscriptions, a 429/rate-limit error on a rotated download token **does not** trigger global provider rate limiting. This allows SchröDrive to immediately switch to another healthy token/account to continue serving streams without interruption!
 - All tokens **auto-reset daily at midnight** (configurable timezone)
-- Works with **ALL providers**: RealDebrid, TorBox, AllDebrid, and Premiumize
+- Works with **ALL 11 providers**: RealDebrid, TorBox, AllDebrid, Premiumize, Debrid-Link, Deepbrid, Offcloud, Put.io, MegaDebrid, Seedr, and PikPak
 
 **Environment variables:**
 
@@ -281,8 +388,15 @@ SchröDrive proactively detects and recovers from dead torrents through a **3-ph
 |----------|:----------:|:-------:|:----:|:-----:|
 | **RealDebrid** | ✅ | ✅ | ✅ | ✅ |
 | **TorBox** | ✅ | — | — | ✅ |
-| **AllDebrid** | ✅ ⚠️ | ✅ | — | ✅ |
+| **AllDebrid** | ✅ 🧪 | ✅ | — | ✅ |
 | **Premiumize** | ✅ ⚠️ | — | — | — |
+| **Debrid-Link** | ✅ ⚠️ | — | — | — |
+| **Deepbrid** | ✅ ⚠️ | — | — | — |
+| **Offcloud** | ✅ ⚠️ | — | — | — |
+| **Put.io** | ✅ ⚠️ | — | — | — |
+| **MegaDebrid** | ✅ ⚠️ | — | — | — |
+| **Seedr** | ✅ ⚠️ | — | — | — |
+| **PikPak** | ✅ ⚠️ | — | — | — |
 | **Provider redundancy** | ✅ All/Failover/Single | — | — | — |
 
 ### Integrations
@@ -290,6 +404,7 @@ SchröDrive proactively detects and recovers from dead torrents through a **3-ph
 | Feature | SchröDrive | pd_zurg | Zurg | Riven |
 |---------|:----------:|:-------:|:----:|:-----:|
 | **Overseerr** | ✅ Webhook + Poller | ✅ via plex_debrid | — | ✅ |
+| **Radarr/Sonarr** | ✅ Native bridge (fake qBit) | — (need Decypharr/RDT-Client) | — (need Decypharr/RDT-Client) | — (built-in VFS) |
 | **Prowlarr** | ✅ | ✅ via plex_debrid | — | ✅ |
 | **Jackett** | ✅ | ✅ via plex_debrid | — | ✅ |
 | **Plex** | ✅ Watchlist + Refresh | ✅ Watchlist | ✅ | ✅ Watchlist + Refresh |
@@ -319,7 +434,7 @@ SchröDrive proactively detects and recovers from dead torrents through a **3-ph
 
 ### What Each Project Does Best
 
-- **SchröDrive** — All-in-one with 4-provider redundancy, 3-phase torrent repair, 4 Stremio scrapers, 6 watchlist sources, embedded SQLite persistence, a full Next.js management dashboard, and the simplest deployment (single container). Also exposes itself as a Stremio addon.
+- **SchröDrive** — All-in-one with 11-provider redundancy, 3-phase torrent repair, 4 Stremio scrapers, 6 watchlist sources, native Radarr/Sonarr bridge (no external containers), embedded SQLite persistence, a full Next.js management dashboard, and the simplest deployment (single container). Also exposes itself as a Stremio addon.
 - **pd_zurg** — *Deprecated (Jan 2026).* Was the original all-in-one Docker solution. Successor is [DUMB](https://github.com/I-am-PUID-0/DUMB).
 - **Zurg** — Purpose-built, high-performance WebDAV server for RealDebrid. Excellent at what it does (serving files), but needs additional tools for automation.
 - **Riven** — Feature-rich with 7+ scrapers, Trakt/Mdblist integration, built-in VFS, and a settings UI. However, requires multi-container deployment (App + PostgreSQL + Redis).
@@ -371,49 +486,69 @@ What SchröDrive persists in SQLite:
 
 ```
 src/
-├── providers/                # Debrid provider abstraction layer
-│   ├── index.ts              #   DebridProvider interface + ProviderRegistry
-│   ├── realdebrid.ts         #   RealDebrid implementation
-│   ├── torbox.ts             #   TorBox implementation
-│   ├── alldebrid.ts          #   AllDebrid implementation
-│   ├── premiumize.ts         #   Premiumize implementation
-│   └── README.md             #   How to add a new provider
-├── services/                 # Business logic
-│   ├── overseerr.ts          #   Overseerr webhook + poller
-│   ├── deadScanner.ts        #   Dead torrent detection + replacement + blacklisting
-│   ├── mount.ts              #   rclone FUSE mount management
-│   ├── webdavBridge.ts       #   API-to-WebDAV translation layer (provider-agnostic)
-│   ├── organizer.ts          #   Media organiser (symlinks + metadata)
-│   ├── mediaServerWatchlist.ts#  Plex/Jellyfin/Emby watchlist polling
-│   ├── stremioAddon.ts       #   Stremio addon server (port 7000)
-│   ├── autoUpdate.ts         #   GitHub release auto-updater
-│   └── infringementList.ts   #   Content filtering
-├── integrations/             # Watchlist sources
-│   ├── plex.ts               #   Plex API client
-│   ├── jellyfin.ts           #   Jellyfin API client
-│   ├── emby.ts               #   Emby API client
-│   ├── trakt.ts              #   Trakt watchlist (OAuth2 + public)
-│   ├── mdblist.ts            #   Mdblist watchlist API
-│   └── listrr.ts             #   Listrr watchlist API
-├── indexers/                 # Search sources
-│   ├── index.ts              #   Unified indexer + scraper routing
-│   ├── prowlarr.ts           #   Prowlarr API client
-│   ├── jackett.ts            #   Jackett API client
-│   ├── stremioScraper.ts     #   Shared Stremio addon helpers
-│   ├── torrentio.ts          #   Torrentio addon scraper
-│   ├── comet.ts              #   Comet addon scraper
-│   ├── zilean.ts             #   Zilean DMM hashlists
-│   └── mediafusion.ts        #   Mediafusion addon scraper
-├── core/                     # Infrastructure
-│   ├── config.ts             #   Environment variable configuration
-│   ├── configApi.ts          #   Runtime config API endpoints
-│   ├── rateLimiter.ts        #   Adaptive rate limiter with caching
-│   ├── rateLimitStore.ts     #   Persistent rate limit state
-│   ├── blacklist.ts          #   Persistent dead torrent blacklist
-│   ├── db.ts                 #   SQLite persistence layer (WAL mode)
-│   └── logger.ts             #   In-memory log buffer
-├── server.ts                 # Express HTTP server + REST API
-└── index.ts                  # CLI entrypoint (Commander)
+├── core/                        # Infrastructure (10 files)
+│   ├── blacklist.ts             #   Persistent dead torrent blacklist
+│   ├── config.ts                #   Environment variable configuration
+│   ├── configApi.ts             #   Runtime config API endpoints
+│   ├── db.ts                    #   SQLite persistence layer (WAL mode)
+│   ├── errors.ts                #   Custom error classes (UnplayableTorrentError)
+│   ├── logger.ts                #   In-memory log buffer
+│   ├── mediaClassifier.ts       #   Anime/shows/movies classification (Zurg-compatible)
+│   ├── rateLimitStore.ts        #   Persistent rate limit state (SQLite-backed)
+│   ├── rateLimiter.ts           #   Adaptive rate limiter with caching
+│   └── tokenRotator.ts          #   Multi-token download rotation manager
+├── providers/                   # Debrid provider abstraction layer (14 files)
+│   ├── index.ts                 #   DebridProvider interface, types, auto-imports providers
+│   ├── registry.ts              #   ProviderRegistry singleton (register, get, ordered, strategies)
+│   ├── realdebrid.ts            #   RealDebrid implementation
+│   ├── torbox.ts                #   TorBox implementation
+│   ├── alldebrid.ts             #   AllDebrid implementation
+│   ├── premiumize.ts            #   Premiumize implementation
+│   ├── debridlink.ts            #   Debrid-Link implementation
+│   ├── deepbrid.ts              #   Deepbrid implementation
+│   ├── offcloud.ts              #   Offcloud implementation
+│   ├── putio.ts                 #   Put.io implementation
+│   ├── megadebrid.ts            #   MegaDebrid implementation (no WebDAV)
+│   ├── seedr.ts                 #   Seedr implementation
+│   ├── pikpak.ts                #   PikPak implementation (JWT auth)
+│   └── README.md                #   How to add a new provider
+├── services/                    # Business logic (12 files + 1 subdirectory)
+│   ├── cloudLinks/              #   Cloud link manager (6 files)
+│   │   ├── bridge.ts            #     WebDAV bridge for public shared folder links
+│   │   ├── dropboxAdapter.ts    #     Dropbox shared link adapter
+│   │   ├── gdriveAdapter.ts     #     Google Drive shared link adapter
+│   │   ├── httpAdapter.ts       #     HTTP/WebDAV folder adapter
+│   │   ├── megaAdapter.ts       #     MEGA shared folder adapter
+│   │   └── types.ts             #     Shared types (CloudLinkAdapter, CloudFile, etc.)
+│   ├── arrBridge.ts             #   Fake qBittorrent API for Radarr/Sonarr integration
+│   ├── autoUpdate.ts            #   GitHub release auto-updater
+│   ├── deadScanner.ts           #   Dead torrent detection + 3-phase repair + blacklisting
+│   ├── infringementList.ts      #   Content filtering
+│   ├── mediaServerWatchlist.ts  #   Plex/Jellyfin/Emby watchlist polling
+│   ├── mount.ts                 #   rclone FUSE mount management + auto-recovery
+│   ├── organizer.ts             #   Media organiser (symlinks + TMDB/TVMaze metadata)
+│   ├── overseerr.ts             #   Overseerr/Jellyseerr webhook + poller
+│   ├── stremioAddon.ts          #   Stremio addon server (port 7000)
+│   ├── strmService.ts           #   STRM short-code redirect service (port 9120)
+│   └── webdavBridge.ts          #   API-to-WebDAV translation layer (provider-agnostic)
+├── indexers/                    # Search sources (8 files)
+│   ├── index.ts                 #   Unified indexer + scraper routing
+│   ├── prowlarr.ts              #   Prowlarr API client
+│   ├── jackett.ts               #   Jackett API client
+│   ├── stremioScraper.ts        #   Shared Stremio addon helpers
+│   ├── torrentio.ts             #   Torrentio addon scraper
+│   ├── comet.ts                 #   Comet addon scraper
+│   ├── zilean.ts                #   Zilean DMM hashlists
+│   └── mediafusion.ts           #   Mediafusion addon scraper
+├── integrations/                # Watchlist sources (6 files)
+│   ├── plex.ts                  #   Plex API client (watchlist + library refresh)
+│   ├── jellyfin.ts              #   Jellyfin API client (watchlist + library refresh)
+│   ├── emby.ts                  #   Emby API client (watchlist + library refresh)
+│   ├── trakt.ts                 #   Trakt watchlist (OAuth2 + public)
+│   ├── mdblist.ts               #   Mdblist watchlist API
+│   └── listrr.ts                #   Listrr watchlist API
+├── index.ts                     # CLI entrypoint (Commander)
+└── server.ts                    # Express HTTP server + REST API
 ```
 
 ### Data Flow
@@ -421,6 +556,8 @@ src/
 ```mermaid
 graph LR
     A[Overseerr] -->|Webhook / Poll| B[SchröDrive]
+    A -->|Requests| R[Radarr / Sonarr]
+    R -->|Fake qBit API| B
     C[Plex/Jellyfin/Emby] -->|Watchlist| B
     C2[Trakt/Mdblist/Listrr] -->|Watchlist| B
     B -->|Search| D[Prowlarr / Jackett]
@@ -431,11 +568,17 @@ graph LR
     B -->|Add Magnet| F[RealDebrid]
     B -->|Add Magnet| G2[AllDebrid]
     B -->|Add Magnet| G3[Premiumize]
+    B -->|Add Magnet| G4[Debrid-Link / Deepbrid / Offcloud]
+    B -->|Add Magnet| G5[Put.io / MegaDebrid / Seedr / PikPak]
     E -->|WebDAV / Bridge| G[rclone Mount]
     F -->|WebDAV / Bridge| G
     G2 -->|WebDAV / Bridge| G
     G3 -->|WebDAV / Bridge| G
-    G -->|Local Files| C
+    G4 -->|WebDAV / Bridge| G
+    G5 -->|WebDAV / Bridge| G
+    G -->|Symlinks| S[Organised Library]
+    S -->|Media Files| C
+    R -->|Imports + Renames| S
 ```
 
 ### Dead Torrent Lifecycle
@@ -492,7 +635,7 @@ All configuration is done via environment variables. Below is the complete refer
 | `RD_WEBDAV_USERNAME` | — | WebDAV username |
 | `RD_WEBDAV_PASSWORD` | — | WebDAV password |
 
-#### AllDebrid ⚠️ Untested
+#### AllDebrid 🧪 In-testing
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -513,6 +656,80 @@ All configuration is done via environment variables. Below is the complete refer
 | `PREMIUMIZE_WEBDAV_USERNAME` | — | WebDAV username (customer ID) |
 | `PREMIUMIZE_WEBDAV_PASSWORD` | — | WebDAV password (API key) |
 
+#### Debrid-Link ⚠️ Untested
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEBRIDLINK_API_KEY` | — | **Required.** Debrid-Link API key |
+| `DEBRIDLINK_API_BASE` | `https://debrid-link.com/api/v2` | API base URL |
+| `DEBRIDLINK_WEBDAV_URL` | `https://webdav.debrid.link` | Native WebDAV URL |
+| `DEBRIDLINK_WEBDAV_USERNAME` | — | WebDAV username |
+| `DEBRIDLINK_WEBDAV_PASSWORD` | — | WebDAV password |
+
+#### Deepbrid ⚠️ Untested
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEEPBRID_API_KEY` | — | **Required.** Deepbrid API key |
+| `DEEPBRID_API_BASE` | `https://www.deepbrid.com/api` | API base URL |
+| `DEEPBRID_WEBDAV_URL` | — | WebDAV URL (if available) |
+| `DEEPBRID_WEBDAV_USERNAME` | — | WebDAV username |
+| `DEEPBRID_WEBDAV_PASSWORD` | — | WebDAV password |
+
+#### Offcloud ⚠️ Untested
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OFFCLOUD_API_KEY` | — | **Required.** Offcloud API key |
+| `OFFCLOUD_API_BASE` | `https://offcloud.com/api` | API base URL |
+| `OFFCLOUD_WEBDAV_URL` | — | WebDAV URL (if available) |
+| `OFFCLOUD_WEBDAV_USERNAME` | — | WebDAV username |
+| `OFFCLOUD_WEBDAV_PASSWORD` | — | WebDAV password |
+
+#### Put.io ⚠️ Untested
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PUTIO_OAUTH_TOKEN` | — | **Required.** Put.io OAuth2 token |
+| `PUTIO_API_BASE` | `https://api.put.io/v2` | API base URL |
+| `PUTIO_WEBDAV_URL` | `https://webdav.put.io` | Native WebDAV URL |
+| `PUTIO_WEBDAV_USERNAME` | — | WebDAV username |
+| `PUTIO_WEBDAV_PASSWORD` | — | WebDAV password |
+
+#### MegaDebrid ⚠️ Untested
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MEGADEBRID_API_KEY` | — | **Required.** MegaDebrid API token |
+| `MEGADEBRID_API_BASE` | `https://www.mega-debrid.eu` | API base URL |
+
+> [!NOTE]
+> MegaDebrid does not support native WebDAV — use the built-in WebDAV bridge instead.
+
+#### Seedr ⚠️ Untested
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SEEDR_API_KEY` | — | **Required.** Seedr OAuth2 Bearer token |
+| `SEEDR_API_BASE` | `https://www.seedr.cc/rest` | API base URL |
+| `SEEDR_WEBDAV_URL` | `https://dav.seedr.cc` | Native WebDAV URL (Master plan+) |
+| `SEEDR_WEBDAV_USERNAME` | — | WebDAV username |
+| `SEEDR_WEBDAV_PASSWORD` | — | WebDAV password |
+
+#### PikPak ⚠️ Untested
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PIKPAK_USERNAME` | — | **Required.** PikPak account email |
+| `PIKPAK_PASSWORD` | — | **Required.** PikPak account password |
+| `PIKPAK_API_BASE` | `https://api-drive.mypikpak.com` | API base URL |
+| `PIKPAK_WEBDAV_URL` | — | WebDAV URL (experimental) |
+| `PIKPAK_WEBDAV_USERNAME` | — | WebDAV username |
+| `PIKPAK_WEBDAV_PASSWORD` | — | WebDAV password |
+
+> [!NOTE]
+> PikPak uses username/password authentication (no API key). SchröDrive automatically handles JWT token login and refresh.
+
 #### Download Tokens (Multi-Account Bypass)
 
 | Variable | Default | Description |
@@ -521,6 +738,13 @@ All configuration is done via environment variables. Below is the complete refer
 | `TORBOX_DOWNLOAD_TOKENS` | — | Comma-separated additional TorBox keys for download rotation |
 | `AD_DOWNLOAD_TOKENS` | — | Comma-separated additional AllDebrid keys for download rotation |
 | `PM_DOWNLOAD_TOKENS` | — | Comma-separated additional Premiumize keys for download rotation |
+| `DL_DOWNLOAD_TOKENS` | — | Comma-separated additional Debrid-Link keys for download rotation |
+| `DB_DOWNLOAD_TOKENS` | — | Comma-separated additional Deepbrid keys for download rotation |
+| `OC_DOWNLOAD_TOKENS` | — | Comma-separated additional Offcloud keys for download rotation |
+| `PUTIO_DOWNLOAD_TOKENS` | — | Comma-separated additional Put.io tokens for download rotation |
+| `MD_DOWNLOAD_TOKENS` | — | Comma-separated additional MegaDebrid keys for download rotation |
+| `SEEDR_DOWNLOAD_TOKENS` | — | Comma-separated additional Seedr tokens for download rotation |
+| `PIKPAK_DOWNLOAD_TOKENS` | — | Comma-separated additional PikPak tokens for download rotation |
 | `TOKEN_RESET_TIMEZONE` | `Australia/Sydney` | Timezone for daily token reset (midnight) |
 
 ### 🔍 Indexers
@@ -553,14 +777,43 @@ All configuration is done via environment variables. Below is the complete refer
 | `JACKETT_TIMEOUT_MS` | `120000` | Search timeout (ms) |
 | `JACKETT_REDIRECT_MAX_HOPS` | `5` | Max redirects for magnet resolution |
 
-### 📡 Overseerr
+### 📡 Overseerr / Jellyseerr
+
+> **Jellyseerr support**: Jellyseerr is API-compatible with Overseerr (it's a fork). You can use either set of env vars below — `OVERSEERR_*` or `JELLYSEERR_*`. If both are set, `OVERSEERR_*` takes priority.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OVERSEERR_URL` | — | Overseerr API URL (include `/api/v1`) |
 | `OVERSEERR_API_KEY` | — | Overseerr API key |
 | `OVERSEERR_AUTH` | — | Optional webhook authorisation header |
+| `JELLYSEERR_URL` | — | Jellyseerr API URL (alias for `OVERSEERR_URL`) |
+| `JELLYSEERR_API_KEY` | — | Jellyseerr API key (alias for `OVERSEERR_API_KEY`) |
+| `JELLYSEERR_AUTH` | — | Jellyseerr auth header (alias for `OVERSEERR_AUTH`) |
 | `POLL_INTERVAL_S` | `30` | Poller interval (seconds) |
+
+### ☁️ Cloud Storage Mounts
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLOUD_MOUNTS_ENABLED` | `false` | Enable cloud storage mounting via rclone |
+| `CLOUD_MOUNT_READ_ONLY` | `true` | Mount cloud storage as read-only (safer default) |
+| `MEGA_EMAIL` | — | MEGA account email |
+| `MEGA_PASSWORD` | — | MEGA account password |
+| `DROPBOX_TOKEN` | — | Dropbox OAuth token (from `rclone authorize "dropbox"`) |
+| `DROPBOX_CLIENT_ID` | — | Optional Dropbox app client ID |
+| `DROPBOX_CLIENT_SECRET` | — | Optional Dropbox app client secret |
+| `GDRIVE_SERVICE_ACCOUNT_FILE` | — | Path to Google Drive service account JSON file |
+| `GDRIVE_TOKEN` | — | Google Drive OAuth token (alternative to service account) |
+| `GDRIVE_ROOT_FOLDER_ID` | — | Optional GDrive root folder to mount |
+| `ONEDRIVE_TOKEN` | — | OneDrive OAuth token (from `rclone authorize "onedrive"`) |
+| `ONEDRIVE_DRIVE_ID` | — | OneDrive drive ID |
+| `ONEDRIVE_DRIVE_TYPE` | `personal` | OneDrive type: `personal` or `business` |
+
+### 🔗 STRM Short-Codes
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STRM_PORT` | `9120` | HTTP port for the STRM short-code redirect service |
 
 ### 📺 Media Servers
 
@@ -612,6 +865,13 @@ All configuration is done via environment variables. Below is the complete refer
 | `WEBDAV_BRIDGE_PORT_TB` | `9116` | TorBox bridge port |
 | `WEBDAV_BRIDGE_PORT_AD` | `9117` | AllDebrid bridge port |
 | `WEBDAV_BRIDGE_PORT_PM` | `9118` | Premiumize bridge port |
+| `WEBDAV_BRIDGE_PORT_DL` | `9119` | Debrid-Link bridge port |
+| `WEBDAV_BRIDGE_PORT_DB` | `9122` | Deepbrid bridge port |
+| `WEBDAV_BRIDGE_PORT_OC` | `9123` | Offcloud bridge port |
+| `WEBDAV_BRIDGE_PORT_PUTIO` | `9124` | Put.io bridge port |
+| `WEBDAV_BRIDGE_PORT_MD` | `9125` | MegaDebrid bridge port |
+| `WEBDAV_BRIDGE_PORT_SEEDR` | `9126` | Seedr bridge port |
+| `WEBDAV_BRIDGE_PORT_PIKPAK` | `9127` | PikPak bridge port |
 | `WEBDAV_CACHE_TTL_S` | `30` | Directory listing cache TTL |
 | `WEBDAV_DOWNLOAD_CACHE_TTL_S` | `14400` | Download URL cache TTL (4 hours — CDN URLs live hours) |
 
@@ -627,7 +887,15 @@ All configuration is done via environment variables. Below is the complete refer
 | `RUN_ORGANIZER_WATCH` | `false` | Enable media organiser |
 | `RUN_WATCHLIST_POLLER` | `false` | Enable watchlist polling |
 | `REFRESH_LIBRARY_ON_ADD` | `true` | Refresh media server library after adding content |
+| `ARR_BRIDGE_ENABLED` | `false` | Enable fake qBittorrent API for Radarr/Sonarr |
 | `PORT` | `8978` | HTTP server port |
+
+### 🎬 *arr Bridge (Radarr/Sonarr)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ARR_BRIDGE_ENABLED` | `false` | Enable the fake qBittorrent API server |
+| `ARR_BRIDGE_PORT` | `8282` | Port for the *arr bridge (add as qBittorrent in Radarr/Sonarr) |
 
 ### 📁 Organiser
 
@@ -701,6 +969,205 @@ All configuration is done via environment variables. Below is the complete refer
 |----------|---------|-------------|
 | `STREMIO_ADDON_ENABLED` | `false` | Expose SchröDrive as a Stremio addon |
 | `STREMIO_ADDON_PORT` | `7000` | Stremio addon server port |
+
+---
+
+## 🎬 *arr Bridge Setup (Radarr/Sonarr)
+
+SchröDrive's built-in *arr bridge replaces external tools like Decypharr or RDT-Client. It exposes a fake qBittorrent API that Radarr and Sonarr connect to as a "download client".
+
+### Quick Setup
+
+1. **Enable the bridge** in your `.env`:
+   ```env
+   ARR_BRIDGE_ENABLED=true
+   ARR_BRIDGE_PORT=8282
+   ```
+
+2. **Add Radarr and Sonarr** to your Docker Compose:
+   ```yaml
+   radarr:
+     image: lscr.io/linuxserver/radarr:latest
+     container_name: radarr
+     restart: unless-stopped
+     environment:
+       - PUID=1000
+       - PGID=1000
+       - TZ=Australia/Sydney
+     volumes:
+       - radarr_config:/config
+       - /home/user/schrodrive:/schrodrive:rshared
+     network_mode: host
+     depends_on:
+       schrodrive:
+         condition: service_healthy
+
+   sonarr:
+     image: lscr.io/linuxserver/sonarr:latest
+     container_name: sonarr
+     restart: unless-stopped
+     environment:
+       - PUID=1000
+       - PGID=1000
+       - TZ=Australia/Sydney
+     volumes:
+       - sonarr_config:/config
+       - /home/user/schrodrive:/schrodrive:rshared
+     network_mode: host
+     depends_on:
+       schrodrive:
+         condition: service_healthy
+   ```
+
+3. **Configure Radarr** (`http://localhost:7878`):
+   - `Settings > Download Clients > Add > qBittorrent`
+   - **Host:** `localhost`
+   - **Port:** `8282`
+   - **Username/Password:** leave empty
+   - **Category:** `radarr`
+   - Set root folder: `/schrodrive/organized/Movies`
+
+4. **Configure Sonarr** (`http://localhost:8989`):
+   - Same download client config as Radarr
+   - **Category:** `sonarr`
+   - Set root folder: `/schrodrive/organized/TV`
+
+5. **Connect Prowlarr** to both:
+   - In Radarr/Sonarr: `Settings > Indexers > Add > Prowlarr`
+   - **URL:** `http://localhost:9696`
+
+6. **Configure Overseerr** (optional — for the *arr pipeline):
+   - Add Radarr as movie server: `http://localhost:7878`
+   - Add Sonarr as TV server: `http://localhost:8989`
+   - Requests will flow through the *arr apps for superior naming and tracking
+
+> [!IMPORTANT]
+> **Path consistency is critical.** Radarr, Sonarr, Plex, and Jellyfin must all see the mount at the **same path** (e.g. `/schrodrive/`). If one container sees `/data/` and another sees `/schrodrive/`, symlinks will break.
+
+> [!NOTE]
+> **Both pipelines work simultaneously.** The direct Overseerr → SchroDrive pipeline continues to work for users who prefer simplicity. The *arr bridge is an additional option for those who want Radarr/Sonarr's naming, quality profiles, and episode tracking.
+
+---
+
+## ☁️ Cloud Storage Setup
+
+SchröDrive can mount cloud storage providers alongside your debrid content via rclone. Set `CLOUD_MOUNTS_ENABLED=true` and configure credentials for the providers you want.
+
+### MEGA (Easiest — No OAuth)
+
+```env
+CLOUD_MOUNTS_ENABLED=true
+MEGA_EMAIL=your@email.com
+MEGA_PASSWORD=your_password
+```
+
+> [!WARNING]
+> MEGA 2FA must be disabled — rclone doesn't support it.
+
+### Google Drive (Service Account — Recommended)
+
+1. Create a Google Cloud project
+2. Enable the Google Drive API
+3. Create a service account and download the JSON key file
+4. Share the target Drive folder with the service account email
+
+```env
+CLOUD_MOUNTS_ENABLED=true
+GDRIVE_SERVICE_ACCOUNT_FILE=/config/gdrive-sa.json
+```
+
+### Dropbox & OneDrive (OAuth Token)
+
+1. On a machine with a browser, run: `rclone authorize "dropbox"` (or `"onedrive"`)
+2. Copy the token JSON blob from the output
+3. Set it as an env var:
+
+```env
+CLOUD_MOUNTS_ENABLED=true
+DROPBOX_TOKEN={"access_token":"...","token_type":"Bearer",...}
+```
+
+> [!TIP]
+> Cloud mounts appear under `/mnt/schrodrive/cloud/<provider>/`. Set `CLOUD_MOUNT_READ_ONLY=false` if you need write access.
+
+---
+
+## 🔗 Cloud Link Manager (Public Shared Folders)
+
+Mount public shared folder links directly as FUSE directories — no full account access needed! This is separate from the ☁️ Cloud Storage Setup (which requires login credentials).
+
+### How It Works
+
+1. Create a `cloud_links.json` file listing your public folder URLs:
+```json
+[
+  {
+    "type": "mega",
+    "url": "https://mega.nz/folder/sKxxzSYI#cz5spJH9KLxotRD--a5c2A",
+    "name": "Australian.Survivor"
+  },
+  {
+    "type": "gdrive",
+    "url": "https://drive.google.com/drive/folders/1ABCxyz",
+    "name": "Shared.Media"
+  }
+]
+```
+
+2. Set the env vars:
+```env
+CLOUD_LINKS_ENABLED=true
+CLOUD_LINKS_FILE=/config/cloud_links.json
+```
+
+3. Files appear at:
+```
+/mnt/schrodrive/cloud-links/
+├── mega/
+│   └── Australian.Survivor/
+│       ├── Season 01/
+│       └── Season 02/
+└── gdrive/
+    └── Shared.Media/
+```
+
+### Supported Providers
+
+| Provider | Auth Needed? | Download Method | Notes |
+|----------|-------------|-----------------|-------|
+| **MEGA** | ❌ None | Stream proxy (encrypted) | ~1-5GB/6hr free quota |
+| **Google Drive** | API key only | 302 redirect (direct URL) | Folder must be "Anyone with link" |
+| **Dropbox** | OAuth token | 302 redirect (temp URL) | Reuses `DROPBOX_TOKEN` from cloud mounts |
+| **HTTP** | ❌ None (or custom headers) | 302 redirect (direct URL) | Any open directory (Nginx/Apache autoindex, RD HTTP folder) |
+
+> [!WARNING]
+> MEGA files are encrypted client-side — SchröDrive proxies the decrypted stream, so MEGA content uses your server's bandwidth. For large collections, consider a MEGA Pro account for higher transfer quotas.
+
+> [!TIP]
+> For Google Drive, create a free API key at [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials. Set `GDRIVE_API_KEY` in your env.
+
+> [!TIP]
+> Your Real-Debrid HTTP folder link (e.g. `https://my.real-debrid.com/ZA2NWLMLIZMPM/`) works perfectly with the `http` type — it serves standard Apache mod_autoindex HTML.
+
+#### HTTP Directory Example
+
+Mount any open directory, file server, or RD HTTP folder:
+```json
+[
+  { "type": "http", "url": "https://media.example.com/", "name": "media.example.com" },
+  { "type": "http", "url": "http://10.0.0.100/", "name": "10.0.0.100" },
+  { "type": "http", "url": "https://my.real-debrid.com/YOURCODE/", "name": "RealDebrid.HTTP" }
+]
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLOUD_LINKS_ENABLED` | `false` | Enable public shared folder mounting |
+| `CLOUD_LINKS_FILE` | `/config/cloud_links.json` | Path to JSON config file |
+| `CLOUD_LINKS` | — | Inline JSON array (fallback if file not found) |
+| `GDRIVE_API_KEY` | — | Google Drive API key (for public folder access) |
+| `CLOUD_LINKS_PORT` | `9121` | WebDAV bridge port for cloud links |
 
 ---
 
@@ -854,6 +1321,8 @@ registry.register(new YourProvider());
 
 ## 📡 API Endpoints
 
+### SchroDrive API (port 8978)
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
@@ -870,6 +1339,22 @@ registry.register(new YourProvider());
 | `GET` | `/api/bridges` | WebDAV bridge status |
 | `POST` | `/api/bridges/refresh` | Refresh bridge caches |
 | `GET` | `/api/tokens` | Download token status (active, exhausted, cooldown) |
+
+### *arr Bridge API (port 8282 — qBittorrent-compatible)
+
+These endpoints are consumed by Radarr/Sonarr and are not intended for direct use:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v2/auth/login` | Authenticate (always succeeds) |
+| `GET` | `/api/v2/app/version` | qBittorrent version (4.6.7) |
+| `GET` | `/api/v2/app/preferences` | Client preferences (save path, etc.) |
+| `POST` | `/api/v2/torrents/add` | Add magnet → submit to debrid |
+| `GET` | `/api/v2/torrents/info` | List torrents with qBit-compatible status |
+| `GET` | `/api/v2/torrents/files` | Files within a torrent |
+| `POST` | `/api/v2/torrents/delete` | Remove tracked torrent |
+| `GET` | `/api/v2/sync/maindata` | Full sync (used by *arr polling) |
+| `GET` | `/health` | Bridge health + tracked torrent counts |
 
 ---
 
@@ -1039,7 +1524,7 @@ Two CI workflows:
 - Duplicate detection uses bi-directional case-insensitive substring matching across ALL configured providers
 - The WebDAV bridge enables mounting without native WebDAV credentials — only an API key is needed
 - The webhook handler responds immediately with `202 Accepted` and processes in the background to avoid Overseerr's 20-second timeout
-- AllDebrid and Premiumize providers are fully implemented but untested — community testing welcome!
+- AllDebrid is currently in-testing with live accounts. Premiumize, Debrid-Link, Deepbrid, Offcloud, Put.io, MegaDebrid, Seedr, and PikPak are fully implemented but untested — community testing welcome!
 
 ---
 
@@ -1048,5 +1533,5 @@ Two CI workflows:
 This project is licenced under the terms specified in the [LICENCE](LICENSE) file.
 
 <p align="center">
-  <sub>Built with ☕ and quantum uncertainty by <a href="https://github.com/moderniselife">moderniselife</a></sub>
+  <sub>Built with ☕, AI and quantum uncertainty by <a href="https://github.com/moderniselife">moderniselife</a></sub>
 </p>
