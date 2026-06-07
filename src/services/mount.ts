@@ -705,7 +705,7 @@ export async function mountVirtualDrive(): Promise<void> {
   // -----------------------------------------------------------------------
   // Phase 3: Determine which remotes to mount
   // -----------------------------------------------------------------------
-  const mounts: Array<{ remote: string; path: string }> = [];
+  const mounts: MountTarget[] = [];
   // Mount if we have direct WebDAV OR a running bridge
   if (ps.has("realdebrid") && (hasDirectWebDAV("realdebrid") || bridgePorts.has("realdebrid"))) {
     mounts.push({ remote: "rd:", path: path.join(base, "realdebrid") });
@@ -881,8 +881,26 @@ export async function mountVirtualDrive(): Promise<void> {
         }
       });
 
-      // Add to health monitor
-      mounts.push({ remote: 'cloud:', path: cloudPath });
+      // Add to health monitor — store custom args so attemptRemount uses the
+      // correct cloud-specific flags rather than falling back to debrid config.
+      const cloudRemountArgs = [
+        '--vfs-cache-mode=full',
+        '--dir-cache-time=1h',
+        '--vfs-cache-max-age=168h',
+        '--poll-interval=1m',
+        '--tpslimit=10',
+        '--allow-non-empty',
+      ];
+      if (canAllowOther()) cloudRemountArgs.push('--allow-other');
+      if (config.cloudMountReadOnly) cloudRemountArgs.push('--read-only');
+      if (typeof config.mountUid === 'number') cloudRemountArgs.push('--uid', String(config.mountUid));
+      if (typeof config.mountGid === 'number') cloudRemountArgs.push('--gid', String(config.mountGid));
+      if ((config.mountDirPerms || '').trim()) cloudRemountArgs.push(`--dir-perms=${config.mountDirPerms}`);
+      if ((config.mountFilePerms || '').trim()) cloudRemountArgs.push(`--file-perms=${config.mountFilePerms}`);
+      if (!(config.mountDirPerms || config.mountFilePerms)) cloudRemountArgs.push('--umask', '0022');
+      cloudRemountArgs.push(`--log-file=${cloudLogFile}`);
+      cloudRemountArgs.push('--log-level=NOTICE');
+      mounts.push({ remote: 'cloud:', path: cloudPath, configPath: cfg, customArgs: cloudRemountArgs });
 
       // Post-mount verification (best-effort)
       try {
@@ -956,7 +974,22 @@ export async function mountVirtualDrive(): Promise<void> {
       }
     });
 
-    mounts.push({ remote: 'cloud-links:', path: clPath });
+    // Store cloud-links mount metadata so attemptRemount uses the correct
+    // dedicated rclone config and cloud-links-specific flags.
+    const clRemountArgs = [
+      '--vfs-cache-mode=full',
+      '--dir-cache-time=5m',
+      '--vfs-cache-max-age=168h',
+      '--poll-interval=5m',
+      '--allow-other',
+      '--allow-non-empty',
+      '--read-only',
+      `--log-file=${path.join(tmpDir, 'rclone-cloud-links.log')}`,
+      '--log-level=NOTICE',
+    ];
+    if (typeof config.mountUid === 'number') clRemountArgs.push('--uid', String(config.mountUid));
+    if (typeof config.mountGid === 'number') clRemountArgs.push('--gid', String(config.mountGid));
+    mounts.push({ remote: 'cloud-links:', path: clPath, configPath: clConfigPath, customArgs: clRemountArgs });
     console.log(`[${new Date().toISOString()}][mount] Cloud links mount initiated at ${clPath}`);
   }
 
@@ -1032,6 +1065,10 @@ const MOUNT_ERROR_PATTERNS = [
 interface MountTarget {
   remote: string;
   path: string;
+  /** Optional rclone config file path (e.g. cloud-links uses a dedicated config). */
+  configPath?: string;
+  /** Optional custom mount args — used instead of debrid config-driven args on remount. */
+  customArgs?: string[];
 }
 
 /**
@@ -1157,43 +1194,57 @@ async function attemptRemount(mount: MountTarget, rcloneConfigPath: string): Pro
   // Ensure mount directory exists
   ensureDir(mount.path, { cleanupOnStale: false });
 
-  // Rebuild rclone mount args
+  // Resolve which rclone config to use — cloud-links and cloud mounts store
+  // their own config path; debrid mounts fall back to the main rclone config.
+  const effectiveConfigPath = mount.configPath ?? rcloneConfigPath;
+
+  // Rebuild rclone mount args — if the mount has custom args stored (cloud-links,
+  // cloud), use those. Otherwise fall back to debrid-style config-driven args.
   const args = [
     "mount",
     mount.remote,
     mount.path,
-    "--config", rcloneConfigPath,
+    "--config", effectiveConfigPath,
   ];
 
-  if (canAllowOther()) {
-    args.push("--allow-other");
-  }
-  args.push("--allow-non-empty");
-
-  // Apply configured mount options
-  if (config.mountOptions && config.mountOptions.trim()) {
-    args.push(...splitArgs(config.mountOptions));
+  if (mount.customArgs) {
+    // Use the mount-specific args that were captured during initial mount.
+    // These already include allow-other, cache-mode, log-file, etc.
+    args.push(...mount.customArgs);
+    console.log(`[${ts()}][mount-health] using stored custom args for ${mount.remote}`);
   } else {
-    args.push(`--poll-interval=${config.mountPollInterval}`);
-    args.push(`--dir-cache-time=${config.mountDirCacheTime}`);
-    args.push(`--vfs-cache-mode=${config.mountVfsCacheMode}`);
-    args.push(`--buffer-size=${config.mountBufferSize}`);
-    if ((config.mountVfsReadChunkSize || "").trim()) args.push(`--vfs-read-chunk-size=${config.mountVfsReadChunkSize}`);
-    if ((config.mountVfsReadChunkSizeLimit || "").trim()) args.push(`--vfs-read-chunk-size-limit=${config.mountVfsReadChunkSizeLimit}`);
-    if ((config.mountVfsCacheMaxAge || "").trim()) args.push(`--vfs-cache-max-age=${config.mountVfsCacheMaxAge}`);
-    if ((config.mountVfsCacheMaxSize || "").trim()) args.push(`--vfs-cache-max-size=${config.mountVfsCacheMaxSize}`);
+    // Debrid mount — build args from global config (existing behaviour)
+    if (canAllowOther()) {
+      args.push("--allow-other");
+    }
+    args.push("--allow-non-empty");
+
+    // Apply configured mount options
+    if (config.mountOptions && config.mountOptions.trim()) {
+      args.push(...splitArgs(config.mountOptions));
+    } else {
+      args.push(`--poll-interval=${config.mountPollInterval}`);
+      args.push(`--dir-cache-time=${config.mountDirCacheTime}`);
+      args.push(`--vfs-cache-mode=${config.mountVfsCacheMode}`);
+      args.push(`--buffer-size=${config.mountBufferSize}`);
+      if ((config.mountVfsReadChunkSize || "").trim()) args.push(`--vfs-read-chunk-size=${config.mountVfsReadChunkSize}`);
+      if ((config.mountVfsReadChunkSizeLimit || "").trim()) args.push(`--vfs-read-chunk-size-limit=${config.mountVfsReadChunkSizeLimit}`);
+      if ((config.mountVfsCacheMaxAge || "").trim()) args.push(`--vfs-cache-max-age=${config.mountVfsCacheMaxAge}`);
+      if ((config.mountVfsCacheMaxSize || "").trim()) args.push(`--vfs-cache-max-size=${config.mountVfsCacheMaxSize}`);
+    }
+
+    if (!(config.mountDirPerms || config.mountFilePerms)) {
+      args.push("--umask", "0022");
+    }
+
+    const remoteName = mount.remote.replace(":", "");
+    const logFile = path.join(tmpDir, `rclone-${remoteName}.log`);
+    if (!hasUserLogFlags(config.mountOptions)) {
+      args.push("--log-level=INFO");
+    }
+    args.push(`--log-file=${logFile}`);
   }
 
-  if (!(config.mountDirPerms || config.mountFilePerms)) {
-    args.push("--umask", "0022");
-  }
-
-  const remoteName = mount.remote.replace(":", "");
-  const logFile = path.join(tmpDir, `rclone-${remoteName}.log`);
-  if (!hasUserLogFlags(config.mountOptions)) {
-    args.push("--log-level=INFO");
-  }
-  args.push(`--log-file=${logFile}`);
   args.push("--daemon");
 
   console.log(`[${ts()}][mount-health] re-mounting: rclone ${args.join(" ")}`);

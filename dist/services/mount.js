@@ -866,8 +866,33 @@ async function mountVirtualDrive() {
                     console.error(`[${new Date().toISOString()}][mount] cloud daemon exited with code ${code}`);
                 }
             });
-            // Add to health monitor
-            mounts.push({ remote: 'cloud:', path: cloudPath });
+            // Add to health monitor — store custom args so attemptRemount uses the
+            // correct cloud-specific flags rather than falling back to debrid config.
+            const cloudRemountArgs = [
+                '--vfs-cache-mode=full',
+                '--dir-cache-time=1h',
+                '--vfs-cache-max-age=168h',
+                '--poll-interval=1m',
+                '--tpslimit=10',
+                '--allow-non-empty',
+            ];
+            if (canAllowOther())
+                cloudRemountArgs.push('--allow-other');
+            if (config_1.config.cloudMountReadOnly)
+                cloudRemountArgs.push('--read-only');
+            if (typeof config_1.config.mountUid === 'number')
+                cloudRemountArgs.push('--uid', String(config_1.config.mountUid));
+            if (typeof config_1.config.mountGid === 'number')
+                cloudRemountArgs.push('--gid', String(config_1.config.mountGid));
+            if ((config_1.config.mountDirPerms || '').trim())
+                cloudRemountArgs.push(`--dir-perms=${config_1.config.mountDirPerms}`);
+            if ((config_1.config.mountFilePerms || '').trim())
+                cloudRemountArgs.push(`--file-perms=${config_1.config.mountFilePerms}`);
+            if (!(config_1.config.mountDirPerms || config_1.config.mountFilePerms))
+                cloudRemountArgs.push('--umask', '0022');
+            cloudRemountArgs.push(`--log-file=${cloudLogFile}`);
+            cloudRemountArgs.push('--log-level=NOTICE');
+            mounts.push({ remote: 'cloud:', path: cloudPath, configPath: cfg, customArgs: cloudRemountArgs });
             // Post-mount verification (best-effort)
             try {
                 await sleep(3000);
@@ -931,7 +956,24 @@ async function mountVirtualDrive() {
                 console.error(`[${new Date().toISOString()}][mount] cloud-links daemon exited with code ${code}`);
             }
         });
-        mounts.push({ remote: 'cloud-links:', path: clPath });
+        // Store cloud-links mount metadata so attemptRemount uses the correct
+        // dedicated rclone config and cloud-links-specific flags.
+        const clRemountArgs = [
+            '--vfs-cache-mode=full',
+            '--dir-cache-time=5m',
+            '--vfs-cache-max-age=168h',
+            '--poll-interval=5m',
+            '--allow-other',
+            '--allow-non-empty',
+            '--read-only',
+            `--log-file=${path.join(tmpDir, 'rclone-cloud-links.log')}`,
+            '--log-level=NOTICE',
+        ];
+        if (typeof config_1.config.mountUid === 'number')
+            clRemountArgs.push('--uid', String(config_1.config.mountUid));
+        if (typeof config_1.config.mountGid === 'number')
+            clRemountArgs.push('--gid', String(config_1.config.mountGid));
+        mounts.push({ remote: 'cloud-links:', path: clPath, configPath: clConfigPath, customArgs: clRemountArgs });
         console.log(`[${new Date().toISOString()}][mount] Cloud links mount initiated at ${clPath}`);
     }
     console.log(`[${new Date().toISOString()}][mount] All mounts initiated at ${base}`);
@@ -1097,44 +1139,57 @@ async function attemptRemount(mount, rcloneConfigPath) {
     await sleep(2000);
     // Ensure mount directory exists
     ensureDir(mount.path, { cleanupOnStale: false });
-    // Rebuild rclone mount args
+    // Resolve which rclone config to use — cloud-links and cloud mounts store
+    // their own config path; debrid mounts fall back to the main rclone config.
+    const effectiveConfigPath = mount.configPath ?? rcloneConfigPath;
+    // Rebuild rclone mount args — if the mount has custom args stored (cloud-links,
+    // cloud), use those. Otherwise fall back to debrid-style config-driven args.
     const args = [
         "mount",
         mount.remote,
         mount.path,
-        "--config", rcloneConfigPath,
+        "--config", effectiveConfigPath,
     ];
-    if (canAllowOther()) {
-        args.push("--allow-other");
-    }
-    args.push("--allow-non-empty");
-    // Apply configured mount options
-    if (config_1.config.mountOptions && config_1.config.mountOptions.trim()) {
-        args.push(...splitArgs(config_1.config.mountOptions));
+    if (mount.customArgs) {
+        // Use the mount-specific args that were captured during initial mount.
+        // These already include allow-other, cache-mode, log-file, etc.
+        args.push(...mount.customArgs);
+        console.log(`[${ts()}][mount-health] using stored custom args for ${mount.remote}`);
     }
     else {
-        args.push(`--poll-interval=${config_1.config.mountPollInterval}`);
-        args.push(`--dir-cache-time=${config_1.config.mountDirCacheTime}`);
-        args.push(`--vfs-cache-mode=${config_1.config.mountVfsCacheMode}`);
-        args.push(`--buffer-size=${config_1.config.mountBufferSize}`);
-        if ((config_1.config.mountVfsReadChunkSize || "").trim())
-            args.push(`--vfs-read-chunk-size=${config_1.config.mountVfsReadChunkSize}`);
-        if ((config_1.config.mountVfsReadChunkSizeLimit || "").trim())
-            args.push(`--vfs-read-chunk-size-limit=${config_1.config.mountVfsReadChunkSizeLimit}`);
-        if ((config_1.config.mountVfsCacheMaxAge || "").trim())
-            args.push(`--vfs-cache-max-age=${config_1.config.mountVfsCacheMaxAge}`);
-        if ((config_1.config.mountVfsCacheMaxSize || "").trim())
-            args.push(`--vfs-cache-max-size=${config_1.config.mountVfsCacheMaxSize}`);
+        // Debrid mount — build args from global config (existing behaviour)
+        if (canAllowOther()) {
+            args.push("--allow-other");
+        }
+        args.push("--allow-non-empty");
+        // Apply configured mount options
+        if (config_1.config.mountOptions && config_1.config.mountOptions.trim()) {
+            args.push(...splitArgs(config_1.config.mountOptions));
+        }
+        else {
+            args.push(`--poll-interval=${config_1.config.mountPollInterval}`);
+            args.push(`--dir-cache-time=${config_1.config.mountDirCacheTime}`);
+            args.push(`--vfs-cache-mode=${config_1.config.mountVfsCacheMode}`);
+            args.push(`--buffer-size=${config_1.config.mountBufferSize}`);
+            if ((config_1.config.mountVfsReadChunkSize || "").trim())
+                args.push(`--vfs-read-chunk-size=${config_1.config.mountVfsReadChunkSize}`);
+            if ((config_1.config.mountVfsReadChunkSizeLimit || "").trim())
+                args.push(`--vfs-read-chunk-size-limit=${config_1.config.mountVfsReadChunkSizeLimit}`);
+            if ((config_1.config.mountVfsCacheMaxAge || "").trim())
+                args.push(`--vfs-cache-max-age=${config_1.config.mountVfsCacheMaxAge}`);
+            if ((config_1.config.mountVfsCacheMaxSize || "").trim())
+                args.push(`--vfs-cache-max-size=${config_1.config.mountVfsCacheMaxSize}`);
+        }
+        if (!(config_1.config.mountDirPerms || config_1.config.mountFilePerms)) {
+            args.push("--umask", "0022");
+        }
+        const remoteName = mount.remote.replace(":", "");
+        const logFile = path.join(tmpDir, `rclone-${remoteName}.log`);
+        if (!hasUserLogFlags(config_1.config.mountOptions)) {
+            args.push("--log-level=INFO");
+        }
+        args.push(`--log-file=${logFile}`);
     }
-    if (!(config_1.config.mountDirPerms || config_1.config.mountFilePerms)) {
-        args.push("--umask", "0022");
-    }
-    const remoteName = mount.remote.replace(":", "");
-    const logFile = path.join(tmpDir, `rclone-${remoteName}.log`);
-    if (!hasUserLogFlags(config_1.config.mountOptions)) {
-        args.push("--log-level=INFO");
-    }
-    args.push(`--log-file=${logFile}`);
     args.push("--daemon");
     console.log(`[${ts()}][mount-health] re-mounting: rclone ${args.join(" ")}`);
     const p = (0, child_process_1.spawn)(config_1.config.rclonePath, args, { stdio: "inherit" });
