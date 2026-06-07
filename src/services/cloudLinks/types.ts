@@ -93,6 +93,22 @@ export interface CloudLinkAdapter {
   listFolder(subPath?: string): Promise<CloudFile[]>;
 
   /**
+   * Check if a given sub-path is in the adapter's internal folder cache.
+   * Used by the pre-warm to skip rate-limit delays for cached paths.
+   *
+   * @param subPath - Relative path within the shared folder (empty = root).
+   * @returns true if the folder listing is already cached.
+   */
+  isCached?(subPath?: string): boolean;
+
+  /**
+   * Rate limit delay in milliseconds between HTTP requests.
+   * The pre-warm uses this to throttle fetches for uncached paths.
+   * Adapters without rate limits return 0 or don't implement this.
+   */
+  readonly rateLimitMs?: number;
+
+  /**
    * Get a readable stream for a file.
    *
    * @param fileId - Provider-specific file identifier.

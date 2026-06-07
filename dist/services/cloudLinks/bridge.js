@@ -681,6 +681,12 @@ async function preWarmCache() {
         await acquireSemaphore();
         let files;
         try {
+            // If this path is NOT in the adapter's internal cache, we'll trigger
+            // a real HTTP request. Respect the adapter's rate limit to avoid 429s.
+            const needsNetwork = adapter.isCached ? !adapter.isCached(subPath || undefined) : true;
+            if (needsNetwork && adapter.rateLimitMs && adapter.rateLimitMs > 0) {
+                await new Promise(r => setTimeout(r, adapter.rateLimitMs));
+            }
             files = await adapter.listFolder(subPath || undefined);
         }
         catch (err) {
