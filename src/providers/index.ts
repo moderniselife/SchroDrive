@@ -146,6 +146,11 @@ export interface DebridProvider {
   listTorrentsStream?(): AsyncGenerator<TorrentInfo[], void, unknown>;
   /** Adds a magnet link to the provider for downloading. */
   addMagnet(magnet: string, name?: string): Promise<AddMagnetResult>;
+  /**
+   * Uploads a .torrent file buffer to the debrid provider.
+   * Optional — providers that don't support this should not implement it.
+   */
+  addTorrentFile?(fileBuffer: Buffer, name?: string): Promise<AddMagnetResult>;
   /** Checks whether a torrent with a matching title already exists. */
   checkExisting(title: string): Promise<boolean>;
   /** Determines whether a torrent is dead (failed/errored/stalled). */

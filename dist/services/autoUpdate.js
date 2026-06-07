@@ -51,14 +51,18 @@ async function getLatestTag(owner, repo) {
     }
 }
 function doExitRestart(reason) {
-    console.log(`[${new Date().toISOString()}][auto-update] ${reason} -> unmounting FUSE drives and exiting for supervisor/docker to restart`);
+    console.log(`[${new Date().toISOString()}][auto-update] ${reason} -> unmounting FUSE drives...`);
     try {
         (0, mount_1.unmountAll)();
     }
     catch (err) {
         console.error(`[${new Date().toISOString()}][auto-update] FUSE unmount failed (non-fatal): ${err?.message}`);
     }
-    setTimeout(() => process.exit(0), 500);
+    console.log(`[${new Date().toISOString()}][auto-update] Waiting 3 seconds for FUSE mounts to clear...`);
+    setTimeout(() => {
+        console.log(`[${new Date().toISOString()}][auto-update] Exiting for supervisor/docker to restart`);
+        process.exit(0);
+    }, 3000);
 }
 function tryGitPullAndExit() {
     console.log(`[${new Date().toISOString()}][auto-update] attempting git pull --ff-only`);

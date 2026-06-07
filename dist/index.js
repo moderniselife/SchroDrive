@@ -29,15 +29,19 @@ program
     }
     // Register graceful shutdown handlers
     const shutdown = () => {
-        console.log(`[${new Date().toISOString()}][serve] Shutting down — unmounting FUSE drives and closing database...`);
+        console.log(`[${new Date().toISOString()}][serve] Shutting down — unmounting FUSE drives...`);
         try {
             (0, mount_1.unmountAll)();
         }
         catch (err) {
             console.error(`[${new Date().toISOString()}][serve] Error during FUSE unmount (non-fatal): ${err?.message}`);
         }
-        (0, db_1.closeDb)();
-        process.exit(0);
+        console.log(`[${new Date().toISOString()}][serve] Waiting 3 seconds for FUSE mounts to clear...`);
+        setTimeout(() => {
+            console.log(`[${new Date().toISOString()}][serve] Closing database and exiting...`);
+            (0, db_1.closeDb)();
+            process.exit(0);
+        }, 3000);
     };
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
