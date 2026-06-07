@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.9.0] - 2026-06-07 🌐
+*Status: 11-provider debrid ecosystem — the most provider support of any debrid automation tool*
+
+### Added ✨
+- **7 new debrid providers** (11 total — up from 4):
+  - **Debrid-Link** (`src/providers/debridlink.ts`) — Bearer token auth, Seedbox API v2, native WebDAV support
+  - **Deepbrid** (`src/providers/deepbrid.ts`) — Query param token auth, direct download URLs
+  - **Offcloud** (`src/providers/offcloud.ts`) — API key header auth, cloud download model
+  - **Put.io** (`src/providers/putio.ts`) — OAuth2 Bearer auth, native WebDAV, folder-based file retrieval
+  - **MegaDebrid** (`src/providers/megadebrid.ts`) — Query param token auth, action-based API routing, no WebDAV
+  - **Seedr** (`src/providers/seedr.ts`) — OAuth2 Bearer auth, native WebDAV (Master plan+)
+  - **PikPak** (`src/providers/pikpak.ts`) — Username/password JWT auth with automatic re-login on 401, offline download tasks
+- **All new providers implement full interface**: `listTorrents`, `addMagnet`, `addTorrentFile`, `checkExisting`, `isTorrentDead`, `deleteTorrent`, `getInfoHash`, `repairTorrent`, `fetchDirectories`, `resolveDownloadUrl`
+- **WebDAV bridge ports** for all 7 new providers (9119–9127)
+- **Download token rotation** support for all new providers
+- **Config entries** for all 7 providers with env var overrides
+
+### Changed 🔄
+- **AllDebrid** status updated from "Untested ⚠️" to "In-testing 🧪"
+- **README**: Complete overhaul — 11-provider table, comparison matrix, config docs for every provider, architecture tree, flow diagram, bridge port table
+- **Provider count** in tagline/comparison updated from 4 to 11
+- **Download tokens table** expanded to cover all 11 providers
+
 ### Version [0.8.0] - 2026-06-07 🎬
 *Status: Native Radarr/Sonarr integration via fake qBittorrent API bridge*
 

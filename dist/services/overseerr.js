@@ -108,7 +108,18 @@ function startOverseerrPoller() {
         providers: providers.map(p => p.id),
         order: providers_1.registry.ordered().map(p => p.id),
     });
-    const processed = new Set();
+    /** Loaded from SQLite on startup — survives container restarts. */
+    let processed = new Set();
+    function loadProcessedFromDb() {
+        try {
+            processed = (0, db_1.getProcessedOverseerrKeys)();
+            console.log(`[${new Date().toISOString()}][poller→overseerr] Loaded ${processed.size} processed request(s) from database`);
+        }
+        catch (e) {
+            console.warn(`[${new Date().toISOString()}][poller→overseerr] Failed to load processed state from DB: ${e?.message}`);
+        }
+    }
+    loadProcessedFromDb();
     const intervalMs = Math.max(5, Number(config_1.config.pollIntervalSeconds || 30)) * 1000;
     console.log(`[${new Date().toISOString()}][poller] starting`, { intervalSeconds: Math.round(intervalMs / 1000) });
     // Test indexer connection on startup
@@ -236,6 +247,7 @@ function startOverseerrPoller() {
                     if (!magnet) {
                         console.warn(`[${new Date().toISOString()}][poller] no magnet found`, { id, query: built.query });
                         processed.add(id);
+                        (0, db_1.markOverseerrProcessed)(String(r.id), undefined, mediaType, tmdbId ? String(tmdbId) : undefined, undefined);
                         continue;
                     }
                     // -----------------------------------------------------------------
@@ -258,13 +270,7 @@ function startOverseerrPoller() {
                         console.error(`[${new Date().toISOString()}][poller] ❌ failed to add to ANY provider`, { id, title: torrentTitle });
                     }
                     processed.add(id);
-                    if (processed.size > 1000) {
-                        // Trim processed set
-                        const first = processed.values().next().value;
-                        if (typeof first === "string") {
-                            processed.delete(first);
-                        }
-                    }
+                    (0, db_1.markOverseerrProcessed)(String(r.id), torrentTitle, mediaType, tmdbId ? String(tmdbId) : undefined, undefined);
                 }
                 catch (err) {
                     console.error(`[${new Date().toISOString()}][poller] processing error`, { id, query: built.query, error: err?.message || String(err), stack: err?.stack });
@@ -407,7 +413,7 @@ async function checkAndReaddMissingRequests() {
             // Not present! Check search cooldown to avoid spamming indexers
             const now = Date.now();
             const lastSearch = req.lastSearchAt || 0;
-            const cooldownMs = 6 * 60 * 60 * 1000; // 6 hours cooldown
+            const cooldownMs = 24 * 60 * 60 * 1000; // 24 hours cooldown
             if (now - lastSearch < cooldownMs) {
                 // Skipped due to cooldown
                 continue;
