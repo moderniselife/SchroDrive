@@ -28,6 +28,8 @@ exports.WebDAVBridge = void 0;
 const express_1 = __importDefault(require("express"));
 const http_1 = __importDefault(require("http"));
 const https_1 = __importDefault(require("https"));
+const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
 const axios_1 = __importDefault(require("axios"));
 const config_1 = require("../core/config");
 const rateLimiter_1 = require("../core/rateLimiter");
@@ -35,6 +37,7 @@ const tokenRotator_1 = require("../core/tokenRotator");
 const providers_1 = require("../providers");
 const db_1 = require("../core/db");
 const errors_1 = require("../core/errors");
+const mediaClassifier_1 = require("../core/mediaClassifier");
 // ===========================================================================
 // HTTP Client (IPv4 forced — matches realdebrid.ts pattern)
 // ===========================================================================
@@ -47,6 +50,10 @@ const axiosIPv4 = axios_1.default.create({ httpAgent, httpsAgent });
  * the hash, and queue a replacement search.
  */
 const DEAD_TORRENT_THRESHOLD = 10;
+/** Dead torrent flags auto-expire after this TTL (6 hours). Gives providers time to process/seed. */
+const DEAD_TORRENT_TTL_MS = 6 * 60 * 60 * 1000;
+/** Suppress repetitive dead torrent log warnings — max once per 60s per torrent. */
+const DEAD_LOG_DEDUP_MS = 60000;
 // ===========================================================================
 // Logging Helper
 // ===========================================================================
@@ -516,21 +523,28 @@ async function fetchRDTorrentFiles(torrentId) {
         const links = Array.isArray(res?.data?.links) ? res.data.links : [];
         // Build the virtual file list from selected files
         // The links[] array maps 1:1 to selected files (files with selected === 1)
+        // IMPORTANT: Only include files that have a corresponding link.
+        // If links.length < selectedFiles.length, RD didn't cache all files.
         const selectedFiles = files.filter((f) => f.selected === 1);
         let linkIdx = 0;
-        return selectedFiles.map((f) => {
-            // Extract just the filename from the path (RD paths look like "/dirname/file.mkv")
-            const pathParts = String(f.path || "").split("/").filter(Boolean);
+        const result = [];
+        for (const f of selectedFiles) {
+            if (linkIdx >= links.length) {
+                // No more links available — remaining files can't be downloaded
+                logWarn(providerName, `Torrent ${torrentId}: ${selectedFiles.length} selected files but only ${links.length} link(s) — skipping ${selectedFiles.length - linkIdx} file(s)`);
+                break;
+            }
+            const pathParts = String(f.path || '').split('/').filter(Boolean);
             const fileName = pathParts[pathParts.length - 1] || `file_${f.id}`;
-            const vf = {
+            result.push({
                 id: String(f.id),
                 name: sanitiseName(fileName),
-                size: typeof f.bytes === "number" ? f.bytes : 0,
+                size: typeof f.bytes === 'number' ? f.bytes : 0,
                 linkIndex: linkIdx,
-            };
+            });
             linkIdx++;
-            return vf;
-        });
+        }
+        return result;
     }
     catch (err) {
         const errorMsg = err?.message || String(err);
@@ -755,6 +769,8 @@ class WebDAVBridge {
         this.torrentFailures = new Map();
         /** Torrents flagged as dead due to persistent download failures. */
         this.deadTorrents = new Map();
+        /** Last time we logged a dead torrent warning, to suppress spam. */
+        this.deadLogTimestamps = new Map();
         this.provider = options.provider;
         this.port = options.port;
         this.cache = new BridgeCache(options.cacheTtlS ?? 30, options.downloadCacheTtlS ?? 300);
@@ -774,6 +790,17 @@ class WebDAVBridge {
                     continue;
                 this.torrentFailures.set(record.torrentKey, record.failureCount);
                 if (record.flaggedAt) {
+                    // Skip expired dead torrent flags — give them another chance
+                    const flagAge = Date.now() - new Date(record.flaggedAt).getTime();
+                    if (flagAge > DEAD_TORRENT_TTL_MS) {
+                        log(this.provider, `Dead torrent flag expired for ${record.torrentName || record.torrentId} (flagged ${Math.round(flagAge / 3600000)}h ago — TTL is ${DEAD_TORRENT_TTL_MS / 3600000}h)`);
+                        // Remove expired record from DB
+                        try {
+                            (0, db_1.removeDeadTorrent)(record.torrentKey);
+                        }
+                        catch { }
+                        continue;
+                    }
                     this.deadTorrents.set(record.torrentKey, {
                         id: record.torrentId,
                         name: record.torrentName || record.torrentId,
@@ -935,27 +962,27 @@ class WebDAVBridge {
      * Handles PROPFIND requests — the core of WebDAV directory listing.
      * rclone uses Depth: 0 for stat and Depth: 1 for listing children.
      *
-     * Routes:
-     * - `/` → list all torrent directories
-     * - `/{torrentName}/` → list files in a torrent
-     * - `/{torrentName}/{fileName}` → stat a single file
+     * Routes (Zurg-compatible organised layout):
+     * - `/` → list category directories (__all__, anime, shows, movies)
+     * - `/{category}/` → list torrents in that category
+     * - `/{category}/{torrentName}/` → list files in a torrent
+     * - `/{category}/{torrentName}/{fileName}` → stat a single file
      */
     async handlePropfind(req, res) {
         const path = decodeURIComponent(req.path).replace(/\/+$/, "") || "/";
         const depth = req.headers["depth"] || "1";
         const lastModified = new Date().toUTCString();
         log(this.provider, `PROPFIND ${path} (depth: ${depth})`);
-        // Root directory
+        // Root directory — list category directories
         if (path === "/" || path === "") {
-            const dirs = await this.getDirectories();
             const responses = [];
             // Always include the root collection itself
             responses.push(buildCollectionResponse("/", ""));
-            // If depth > 0, include children (torrent directories)
+            // If depth > 0, include category directories
             if (depth !== "0") {
-                for (const dir of dirs) {
-                    const href = `/${encodeURIComponent(dir.name)}/`;
-                    responses.push(buildCollectionResponse(href, dir.name));
+                for (const view of mediaClassifier_1.MEDIA_VIEWS) {
+                    const href = `/${encodeURIComponent(view)}/`;
+                    responses.push(buildCollectionResponse(href, view));
                 }
             }
             res.status(207);
@@ -963,9 +990,80 @@ class WebDAVBridge {
             res.send(buildMultistatus(responses));
             return;
         }
-        // Parse path segments: /{torrentName} or /{torrentName}/{fileName}
+        // Parse path segments
         const segments = path.split("/").filter(Boolean);
-        const torrentName = segments[0];
+        const firstSegment = segments[0];
+        // Check if the first segment is a media view (category or __all__)
+        if ((0, mediaClassifier_1.isMediaView)(firstSegment)) {
+            const view = firstSegment;
+            const torrentName = segments.length > 1 ? segments[1] : null;
+            const fileName = segments.length > 2 ? segments.slice(2).join("/") : null;
+            // Category directory listing — show filtered torrents
+            if (!torrentName) {
+                const dirs = await this.getDirectories();
+                const filteredDirs = this.filterDirectoriesByView(dirs, view);
+                const responses = [];
+                // Include the category directory itself
+                const categoryHref = `/${encodeURIComponent(view)}/`;
+                responses.push(buildCollectionResponse(categoryHref, view));
+                // If depth > 0, include torrent directories
+                if (depth !== "0") {
+                    for (const dir of filteredDirs) {
+                        const href = `/${encodeURIComponent(view)}/${encodeURIComponent(dir.name)}/`;
+                        responses.push(buildCollectionResponse(href, dir.name));
+                    }
+                }
+                res.status(207);
+                res.setHeader("Content-Type", "application/xml; charset=utf-8");
+                res.send(buildMultistatus(responses));
+                return;
+            }
+            // Torrent directory within a category — list files
+            const dirs = await this.getDirectories();
+            const dir = dirs.find((d) => d.name === torrentName);
+            if (!dir) {
+                res.status(404).end();
+                return;
+            }
+            if (!fileName) {
+                let files = await this.getFilesForTorrent(dir);
+                // Apply "only show biggest file" for movies category
+                if (view === 'movies' && files.length > 1) {
+                    files = (0, mediaClassifier_1.onlyBiggestFile)(files);
+                }
+                const responses = [];
+                // Include the directory itself
+                const dirHref = `/${encodeURIComponent(view)}/${encodeURIComponent(dir.name)}/`;
+                responses.push(buildCollectionResponse(dirHref, dir.name));
+                // If depth > 0, include files
+                if (depth !== "0") {
+                    for (const file of files) {
+                        const fileHref = `/${encodeURIComponent(view)}/${encodeURIComponent(dir.name)}/${encodeURIComponent(file.name)}`;
+                        responses.push(buildFileResponse(fileHref, file.name, file.size, lastModified));
+                    }
+                }
+                res.status(207);
+                res.setHeader("Content-Type", "application/xml; charset=utf-8");
+                res.send(buildMultistatus(responses));
+                return;
+            }
+            // Single file stat within a category/torrent
+            const files = await this.getFilesForTorrent(dir);
+            const file = files.find((f) => f.name === fileName);
+            if (!file) {
+                res.status(404).end();
+                return;
+            }
+            const fileHref = `/${encodeURIComponent(view)}/${encodeURIComponent(dir.name)}/${encodeURIComponent(file.name)}`;
+            const responses = [buildFileResponse(fileHref, file.name, file.size, lastModified)];
+            res.status(207);
+            res.setHeader("Content-Type", "application/xml; charset=utf-8");
+            res.send(buildMultistatus(responses));
+            return;
+        }
+        // Legacy fallback: direct torrent access without category prefix
+        // Supports existing rclone configs that don't use category directories
+        const torrentName = firstSegment;
         const fileName = segments.length > 1 ? segments.slice(1).join("/") : null;
         const dirs = await this.getDirectories();
         const dir = dirs.find((d) => d.name === torrentName);
@@ -973,7 +1071,7 @@ class WebDAVBridge {
             res.status(404).end();
             return;
         }
-        // Torrent directory listing
+        // Torrent directory listing (legacy)
         if (!fileName) {
             const files = await this.getFilesForTorrent(dir);
             const responses = [];
@@ -992,7 +1090,7 @@ class WebDAVBridge {
             res.send(buildMultistatus(responses));
             return;
         }
-        // Single file stat
+        // Single file stat (legacy)
         const files = await this.getFilesForTorrent(dir);
         const file = files.find((f) => f.name === fileName);
         if (!file) {
@@ -1006,8 +1104,23 @@ class WebDAVBridge {
         res.send(buildMultistatus(responses));
     }
     /**
+     * Filters directories by media view.
+     * - `__all__` returns all directories (unfiltered).
+     * - Category views filter using the media classifier.
+     */
+    filterDirectoriesByView(dirs, view) {
+        if (view === '__all__')
+            return dirs;
+        return dirs.filter((d) => {
+            const fileNames = d.files?.map((f) => f.name);
+            return (0, mediaClassifier_1.classifyTorrent)(d.originalName || d.name, fileNames) === view;
+        });
+    }
+    /**
      * Handles HEAD requests — returns file metadata without the body.
      * Used by rclone to check file existence and size before downloading.
+     * Supports both categorised paths (/{category}/{torrent}/{file}) and
+     * legacy flat paths (/{torrent}/{file}).
      */
     async handleHead(req, res) {
         const path = decodeURIComponent(req.path).replace(/\/+$/, "") || "/";
@@ -1017,8 +1130,23 @@ class WebDAVBridge {
             res.status(200).end();
             return;
         }
-        const torrentName = segments[0];
-        const fileName = segments.slice(1).join("/");
+        // Determine if first segment is a category view
+        let torrentName;
+        let fileName;
+        if ((0, mediaClassifier_1.isMediaView)(segments[0])) {
+            // Categorised path: /{category}/{torrent}/{file}
+            if (segments.length < 3) {
+                res.status(200).end(); // Category or torrent directory HEAD
+                return;
+            }
+            torrentName = segments[1];
+            fileName = segments.slice(2).join("/");
+        }
+        else {
+            // Legacy flat path: /{torrent}/{file}
+            torrentName = segments[0];
+            fileName = segments.slice(1).join("/");
+        }
         const dirs = await this.getDirectories();
         const dir = dirs.find((d) => d.name === torrentName);
         if (!dir) {
@@ -1040,6 +1168,8 @@ class WebDAVBridge {
      * Handles GET requests — resolves the download URL from the provider
      * and returns a 302 redirect to the CDN. This keeps file content
      * off the local machine entirely.
+     * Supports both categorised paths (/{category}/{torrent}/{file}) and
+     * legacy flat paths (/{torrent}/{file}).
      */
     async handleGet(req, res) {
         const path = decodeURIComponent(req.path).replace(/\/+$/, "") || "/";
@@ -1049,8 +1179,23 @@ class WebDAVBridge {
             res.status(404).end();
             return;
         }
-        const torrentName = segments[0];
-        const fileName = segments.slice(1).join("/");
+        // Determine if first segment is a category view
+        let torrentName;
+        let fileName;
+        if ((0, mediaClassifier_1.isMediaView)(segments[0])) {
+            // Categorised path: /{category}/{torrent}/{file}
+            if (segments.length < 3) {
+                res.status(404).end(); // Can't GET a category or torrent directory
+                return;
+            }
+            torrentName = segments[1];
+            fileName = segments.slice(2).join("/");
+        }
+        else {
+            // Legacy flat path: /{torrent}/{file}
+            torrentName = segments[0];
+            fileName = segments.slice(1).join("/");
+        }
         const dirs = await this.getDirectories();
         const dir = dirs.find((d) => d.name === torrentName);
         if (!dir) {
@@ -1066,13 +1211,29 @@ class WebDAVBridge {
         // Resolve the download URL (with caching + retry)
         const downloadUrl = await this.resolveDownloadUrl(dir, file);
         if (!downloadUrl) {
-            // Return 503 with Retry-After header instead of 502.
-            // This tells rclone the file is temporarily unavailable and to retry,
-            // rather than treating it as a permanent failure that breaks the mount.
-            // This is the key fix for the "423 Locked" cascade that plagued pd_zurg.
-            logWarn(this.provider, `Temporarily unavailable: ${dir.name}/${file.name} — returning 503 Retry-After`);
-            res.setHeader("Retry-After", "5");
-            res.status(503).send("File temporarily unavailable — provider returned an error. Retry shortly.");
+            // Serve error video fallback instead of a bare 503 text response.
+            // Media players (Plex/Jellyfin/Emby) handle a video response gracefully
+            // (they'll show "Media not found" to the user) rather than hanging or
+            // crashing on a 503 text body.
+            // Suppress repetitive log spam — media players retry every 2s
+            const unavailKey = `unavail:${dir.id}:${file.id}`;
+            const lastUnavailLog = this.deadLogTimestamps.get(unavailKey) || 0;
+            if (Date.now() - lastUnavailLog > DEAD_LOG_DEDUP_MS) {
+                logWarn(this.provider, `Temporarily unavailable: ${dir.name}/${file.name} — serving error video`);
+                this.deadLogTimestamps.set(unavailKey, Date.now());
+            }
+            const errorVideoPath = path_1.default.resolve(__dirname, '../../assets/not_found.mp4');
+            if (fs_1.default.existsSync(errorVideoPath)) {
+                res.setHeader('Content-Type', 'video/mp4');
+                res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+                res.setHeader('Retry-After', '5');
+                fs_1.default.createReadStream(errorVideoPath).pipe(res);
+            }
+            else {
+                // Fallback to 503 text if error video file is missing
+                res.setHeader("Retry-After", "5");
+                res.status(503).send("File temporarily unavailable — provider returned an error. Retry shortly.");
+            }
             return;
         }
         log(this.provider, `GET ${path} → 302 redirect`);
@@ -1207,8 +1368,28 @@ class WebDAVBridge {
     async resolveDownloadUrl(dir, file) {
         // Check if the torrent is already flagged as dead
         if (this.deadTorrents.has(dir.id)) {
-            logWarn(this.provider, `Skipping download resolution for dead torrent ${dir.name} (${dir.id})`);
-            return null;
+            const deadInfo = this.deadTorrents.get(dir.id);
+            // Check if the dead flag has expired (TTL)
+            const flagAge = Date.now() - new Date(deadInfo.flaggedAt).getTime();
+            if (flagAge > DEAD_TORRENT_TTL_MS) {
+                log(this.provider, `Dead torrent flag expired for ${dir.name} (${dir.id}) — retrying after ${Math.round(flagAge / 3600000)}h`);
+                this.deadTorrents.delete(dir.id);
+                this.torrentFailures.delete(dir.id);
+                try {
+                    (0, db_1.removeDeadTorrent)(dir.id);
+                }
+                catch { }
+                // Fall through to attempt resolution
+            }
+            else {
+                // Suppress repetitive log spam — only log once per DEAD_LOG_DEDUP_MS
+                const lastLog = this.deadLogTimestamps.get(dir.id) || 0;
+                if (Date.now() - lastLog > DEAD_LOG_DEDUP_MS) {
+                    logWarn(this.provider, `Skipping download resolution for dead torrent ${dir.name} (${dir.id})`);
+                    this.deadLogTimestamps.set(dir.id, Date.now());
+                }
+                return null;
+            }
         }
         const cacheKey = `${dir.id}:${file.id}`;
         const cached = this.cache.getDownloadUrl(cacheKey);
@@ -1248,7 +1429,18 @@ class WebDAVBridge {
         }
         catch (err) {
             if (err instanceof errors_1.UnplayableTorrentError || err?.name === "UnplayableTorrentError") {
-                this.flagTorrentAsDead(dir, err.message || "Unplayable torrent");
+                // Distinguish between per-file issues and whole-torrent issues.
+                // Link index out-of-range is a per-file problem (stale link mapping) —
+                // don't kill the entire torrent because of one bad file in a 200-file pack.
+                const isLinkIndexError = err.message?.includes('out of range');
+                if (isLinkIndexError) {
+                    logWarn(this.provider, `Per-file error (not flagging torrent as dead): ${err.message}`);
+                    // Return null for THIS file — it'll serve the error video.
+                    // But the rest of the torrent's files remain playable.
+                }
+                else {
+                    this.flagTorrentAsDead(dir, err.message || 'Unplayable torrent');
+                }
                 return null;
             }
             logError(this.provider, `Unexpected error during download URL resolution: ${err?.message || String(err)}`);
