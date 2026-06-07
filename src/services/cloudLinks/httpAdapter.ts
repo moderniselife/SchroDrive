@@ -560,6 +560,26 @@ export class HttpAdapter implements CloudLinkAdapter {
   }
 
   /**
+   * Exposes the adapter's rate limit delay for external consumers
+   * (e.g. the pre-warm function).
+   */
+  get rateLimitMs(): number {
+    return this.crawlDelayMs;
+  }
+
+  /**
+   * Checks if the given sub-path is already in the adapter's internal
+   * folder cache. Used by the pre-warm to skip rate-limit delays for
+   * paths that will be served from cache without network requests.
+   */
+  isCached(subPath?: string): boolean {
+    const targetUrl = subPath
+      ? new URL(subPath.endsWith('/') ? subPath : subPath + '/', this.baseUrl).toString()
+      : this.baseUrl;
+    return this.folderCache.has(targetUrl);
+  }
+
+  /**
    * Lists files and directories at the given sub-path.
    *
    * Cache strategy (stale-while-revalidate):
