@@ -24,7 +24,6 @@ const http_1 = __importDefault(require("http"));
 const config_1 = require("../core/config");
 const rateLimiter_1 = require("../core/rateLimiter");
 const tokenRotator_1 = require("../core/tokenRotator");
-const errors_1 = require("../core/errors");
 // ===========================================================================
 // Constants & HTTP Configuration
 // ===========================================================================
@@ -252,6 +251,49 @@ class RealDebridProvider {
         }
         catch (err) {
             this.handleError(err, 'add magnet');
+            throw err;
+        }
+    }
+    /**
+     * Uploads a .torrent file buffer to RealDebrid.
+     *
+     * Uses `PUT /torrents/addTorrent` with the raw binary body and
+     * `Content-Type: application/x-bittorrent`. Automatically selects
+     * all files after upload (same as addMagnet).
+     *
+     * @param fileBuffer - The raw .torrent file contents.
+     * @param name - Optional human-readable name for logging.
+     * @returns An object containing the torrent `id` from the RD response.
+     * @throws {Error} If the provider is rate-limited or the request fails.
+     */
+    async addTorrentFile(fileBuffer, name) {
+        if (rateLimiter_1.rateLimiter.isRateLimited(PROVIDER_NAME)) {
+            const waitTime = rateLimiter_1.rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+            throw new Error(`RealDebrid rate limited, retry in ${waitTime}s`);
+        }
+        await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
+        const base = getBaseUrl();
+        const url = `${base}/torrents/addTorrent`;
+        console.log(`[${new Date().toISOString()}][rd] Uploading .torrent file${name ? `: ${name}` : ''}`);
+        try {
+            const res = await axiosIPv4.put(url, fileBuffer, {
+                headers: {
+                    ...rdHeaders(),
+                    'Content-Type': 'application/x-bittorrent',
+                },
+                timeout: 30000,
+            });
+            rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
+            const data = res.data || {};
+            const torrentId = String(data.id || '');
+            if (!torrentId)
+                throw new Error('RealDebrid addTorrent returned no ID');
+            // Automatically select all files after adding the torrent
+            await this.selectAllFiles(torrentId);
+            return { id: torrentId, uri: data.uri };
+        }
+        catch (err) {
+            this.handleError(err, 'add torrent file');
             throw err;
         }
     }
@@ -647,22 +689,29 @@ class RealDebridProvider {
             const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             const files = Array.isArray(res?.data?.files) ? res.data.files : [];
+            const links = Array.isArray(res?.data?.links) ? res.data.links : [];
             // Build the virtual file list from selected files
             // The links[] array maps 1:1 to selected files (files with selected === 1)
+            // IMPORTANT: Only include files that have a corresponding link.
             const selectedFiles = files.filter((f) => f.selected === 1);
             let linkIdx = 0;
-            return selectedFiles.map((f) => {
+            const result = [];
+            for (const f of selectedFiles) {
+                if (linkIdx >= links.length) {
+                    console.warn(`[${new Date().toISOString()}][rd] Torrent ${torrentId}: ${selectedFiles.length} selected files but only ${links.length} link(s) — skipping ${selectedFiles.length - linkIdx} file(s)`);
+                    break;
+                }
                 const pathParts = String(f.path || '').split('/').filter(Boolean);
                 const fileName = pathParts[pathParts.length - 1] || `file_${f.id}`;
-                const vf = {
+                result.push({
                     id: String(f.id),
                     name: sanitiseName(fileName),
                     size: typeof f.bytes === 'number' ? f.bytes : 0,
                     linkIndex: linkIdx,
-                };
+                });
                 linkIdx++;
-                return vf;
-            });
+            }
+            return result;
         }
         catch (err) {
             this.handleError(err, `fetch files for torrent ${torrentId}`);
@@ -698,7 +747,9 @@ class RealDebridProvider {
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             const links = Array.isArray(infoRes?.data?.links) ? infoRes.data.links : [];
             if (linkIndex < 0 || linkIndex >= links.length) {
-                throw new errors_1.UnplayableTorrentError(`Link index ${linkIndex} out of range (${links.length} links) for torrent ${torrentId}`);
+                // Per-file issue (stale mapping) — don't kill the entire torrent
+                console.warn(`[${new Date().toISOString()}][rd] Link index ${linkIndex} out of range (${links.length} links) for torrent ${torrentId} — skipping file`);
+                return null;
             }
             const link = links[linkIndex];
             // Unrestrict the link to get the direct download URL

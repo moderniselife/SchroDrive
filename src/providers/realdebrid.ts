@@ -290,6 +290,54 @@ export class RealDebridProvider implements DebridProvider {
   }
 
   /**
+   * Uploads a .torrent file buffer to RealDebrid.
+   *
+   * Uses `PUT /torrents/addTorrent` with the raw binary body and
+   * `Content-Type: application/x-bittorrent`. Automatically selects
+   * all files after upload (same as addMagnet).
+   *
+   * @param fileBuffer - The raw .torrent file contents.
+   * @param name - Optional human-readable name for logging.
+   * @returns An object containing the torrent `id` from the RD response.
+   * @throws {Error} If the provider is rate-limited or the request fails.
+   */
+  async addTorrentFile(fileBuffer: Buffer, name?: string): Promise<AddMagnetResult> {
+    if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
+      const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
+      throw new Error(`RealDebrid rate limited, retry in ${waitTime}s`);
+    }
+
+    await rateLimiter.throttle(PROVIDER_NAME);
+
+    const base = getBaseUrl();
+    const url = `${base}/torrents/addTorrent`;
+    console.log(`[${new Date().toISOString()}][rd] Uploading .torrent file${name ? `: ${name}` : ''}`);
+
+    try {
+      const res = await axiosIPv4.put(url, fileBuffer, {
+        headers: {
+          ...rdHeaders(),
+          'Content-Type': 'application/x-bittorrent',
+        },
+        timeout: 30000,
+      });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+
+      const data = res.data || {};
+      const torrentId = String(data.id || '');
+      if (!torrentId) throw new Error('RealDebrid addTorrent returned no ID');
+
+      // Automatically select all files after adding the torrent
+      await this.selectAllFiles(torrentId);
+
+      return { id: torrentId, uri: data.uri };
+    } catch (err: any) {
+      this.handleError(err, 'add torrent file');
+      throw err;
+    }
+  }
+
+  /**
    * Selects all files within a RealDebrid torrent for download.
    *
    * Called internally after adding a magnet to ensure all files in the
@@ -714,25 +762,33 @@ export class RealDebridProvider implements DebridProvider {
       rateLimiter.recordSuccess(PROVIDER_NAME);
 
       const files: any[] = Array.isArray(res?.data?.files) ? res.data.files : [];
+      const links: string[] = Array.isArray(res?.data?.links) ? res.data.links : [];
 
       // Build the virtual file list from selected files
       // The links[] array maps 1:1 to selected files (files with selected === 1)
+      // IMPORTANT: Only include files that have a corresponding link.
       const selectedFiles = files.filter((f) => f.selected === 1);
       let linkIdx = 0;
 
-      return selectedFiles.map((f) => {
+      const result: VirtualFile[] = [];
+      for (const f of selectedFiles) {
+        if (linkIdx >= links.length) {
+          console.warn(`[${new Date().toISOString()}][rd] Torrent ${torrentId}: ${selectedFiles.length} selected files but only ${links.length} link(s) — skipping ${selectedFiles.length - linkIdx} file(s)`);
+          break;
+        }
+
         const pathParts = String(f.path || '').split('/').filter(Boolean);
         const fileName = pathParts[pathParts.length - 1] || `file_${f.id}`;
 
-        const vf: VirtualFile = {
+        result.push({
           id: String(f.id),
           name: sanitiseName(fileName),
           size: typeof f.bytes === 'number' ? f.bytes : 0,
           linkIndex: linkIdx,
-        };
+        });
         linkIdx++;
-        return vf;
-      });
+      }
+      return result;
     } catch (err: any) {
       this.handleError(err, `fetch files for torrent ${torrentId}`);
       return [];
@@ -774,7 +830,9 @@ export class RealDebridProvider implements DebridProvider {
 
       const links: string[] = Array.isArray(infoRes?.data?.links) ? infoRes.data.links : [];
       if (linkIndex < 0 || linkIndex >= links.length) {
-        throw new UnplayableTorrentError(`Link index ${linkIndex} out of range (${links.length} links) for torrent ${torrentId}`);
+        // Per-file issue (stale mapping) — don't kill the entire torrent
+        console.warn(`[${new Date().toISOString()}][rd] Link index ${linkIndex} out of range (${links.length} links) for torrent ${torrentId} — skipping file`);
+        return null;
       }
 
       const link = links[linkIndex];

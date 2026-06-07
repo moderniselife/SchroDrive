@@ -300,6 +300,71 @@ function buildRcloneConfigFile(bridgePorts: Map<string, number>): string {
     }
   }
 
+  // =========================================================================
+  // Cloud Storage Providers (mounted via rclone combine remote)
+  // =========================================================================
+  if (config.cloudMountsEnabled) {
+    const cloudRemotes: string[] = [];
+
+    // MEGA — email + password auth (fully headless)
+    if (config.megaEmail && config.megaPassword) {
+      lines.push(`[mega]`);
+      lines.push(`type = mega`);
+      lines.push(`user = ${config.megaEmail}`);
+      lines.push(`pass = ${config.megaPassword}`);
+      lines.push(``);
+      cloudRemotes.push('mega');
+    }
+
+    // Dropbox — OAuth token
+    if (config.dropboxToken) {
+      lines.push(`[dropbox]`);
+      lines.push(`type = dropbox`);
+      if (config.dropboxClientId) lines.push(`client_id = ${config.dropboxClientId}`);
+      if (config.dropboxClientSecret) lines.push(`client_secret = ${config.dropboxClientSecret}`);
+      lines.push(`token = ${config.dropboxToken}`);
+      lines.push(``);
+      cloudRemotes.push('dropbox');
+    }
+
+    // Google Drive — service account or OAuth token
+    if (config.gdriveServiceAccountFile || config.gdriveToken) {
+      lines.push(`[gdrive]`);
+      lines.push(`type = drive`);
+      lines.push(`scope = drive`);
+      if (config.gdriveServiceAccountFile) {
+        lines.push(`service_account_file = ${config.gdriveServiceAccountFile}`);
+      }
+      if (config.gdriveToken) {
+        lines.push(`token = ${config.gdriveToken}`);
+      }
+      if (config.gdriveRootFolderId) {
+        lines.push(`root_folder_id = ${config.gdriveRootFolderId}`);
+      }
+      lines.push(``);
+      cloudRemotes.push('gdrive');
+    }
+
+    // OneDrive — OAuth token
+    if (config.onedriveToken) {
+      lines.push(`[onedrive]`);
+      lines.push(`type = onedrive`);
+      lines.push(`token = ${config.onedriveToken}`);
+      if (config.onedriveDriveId) lines.push(`drive_id = ${config.onedriveDriveId}`);
+      if (config.onedriveDriveType) lines.push(`drive_type = ${config.onedriveDriveType}`);
+      lines.push(``);
+      cloudRemotes.push('onedrive');
+    }
+
+    // Combine remote — presents all cloud providers under a single mount
+    if (cloudRemotes.length > 0) {
+      lines.push(`[cloud]`);
+      lines.push(`type = combine`);
+      lines.push(`upstreams = ${cloudRemotes.map(r => `${r}=${r}:`).join(' ')}`);
+      lines.push(``);
+    }
+  }
+
   if (!lines.length) {
     console.warn(`[${new Date().toISOString()}][mount] No mount sources available. Need WebDAV creds or API keys.`);
     return "";
@@ -640,7 +705,7 @@ export async function mountVirtualDrive(): Promise<void> {
   // -----------------------------------------------------------------------
   // Phase 3: Determine which remotes to mount
   // -----------------------------------------------------------------------
-  const mounts: Array<{ remote: string; path: string }> = [];
+  const mounts: MountTarget[] = [];
   // Mount if we have direct WebDAV OR a running bridge
   if (ps.has("realdebrid") && (hasDirectWebDAV("realdebrid") || bridgePorts.has("realdebrid"))) {
     mounts.push({ remote: "rd:", path: path.join(base, "realdebrid") });
@@ -748,7 +813,187 @@ export async function mountVirtualDrive(): Promise<void> {
     }
   }
 
+  // -----------------------------------------------------------------------
+  // Phase 4: Mount cloud storage providers (if configured)
+  // -----------------------------------------------------------------------
+  if (config.cloudMountsEnabled) {
+    const hasCloud = config.megaEmail || config.dropboxToken ||
+                     config.gdriveServiceAccountFile || config.gdriveToken ||
+                     config.onedriveToken;
+
+    if (hasCloud) {
+      const cloudPath = path.join(base, 'cloud');
+      ensureDir(cloudPath, { cleanupOnStale: true });
+
+      console.log(`[${new Date().toISOString()}][mount] Mounting cloud storage at ${cloudPath}`);
+
+      const cloudArgs = [
+        'mount', 'cloud:', cloudPath,
+        '--config', cfg,
+        '--daemon',
+        '--vfs-cache-mode=full',
+        '--dir-cache-time=1h',
+        '--vfs-cache-max-age=168h',
+        '--poll-interval=1m',
+        '--tpslimit=10',
+        '--allow-non-empty',
+      ];
+
+      if (canAllowOther()) {
+        cloudArgs.push('--allow-other');
+      }
+
+      if (config.cloudMountReadOnly) {
+        cloudArgs.push('--read-only');
+      }
+
+      // Ownership and permissions — match debrid mount patterns
+      if (typeof config.mountUid === 'number') {
+        cloudArgs.push('--uid', String(config.mountUid));
+      }
+      if (typeof config.mountGid === 'number') {
+        cloudArgs.push('--gid', String(config.mountGid));
+      }
+      if ((config.mountDirPerms || '').trim()) {
+        cloudArgs.push(`--dir-perms=${config.mountDirPerms}`);
+      }
+      if ((config.mountFilePerms || '').trim()) {
+        cloudArgs.push(`--file-perms=${config.mountFilePerms}`);
+      }
+      if (!(config.mountDirPerms || config.mountFilePerms)) {
+        cloudArgs.push('--umask', '0022');
+      }
+
+      // Logging
+      const cloudLogFile = path.join(tmpDir, 'rclone-cloud.log');
+      cloudArgs.push(`--log-file=${cloudLogFile}`);
+      cloudArgs.push('--log-level=NOTICE');
+
+      console.log(`[${new Date().toISOString()}][mount] rclone ${cloudArgs.join(' ')}`);
+
+      const cloudProc = spawn(config.rclonePath, cloudArgs, { stdio: 'inherit' });
+      cloudProc.on('error', (e) => {
+        console.error(`[${new Date().toISOString()}][mount] cloud mount failed`, { err: (e as any)?.message });
+      });
+      cloudProc.on('close', (code) => {
+        if (code !== 0) {
+          console.error(`[${new Date().toISOString()}][mount] cloud daemon exited with code ${code}`);
+        }
+      });
+
+      // Add to health monitor — store custom args so attemptRemount uses the
+      // correct cloud-specific flags rather than falling back to debrid config.
+      const cloudRemountArgs = [
+        '--vfs-cache-mode=full',
+        '--dir-cache-time=1h',
+        '--vfs-cache-max-age=168h',
+        '--poll-interval=1m',
+        '--tpslimit=10',
+        '--allow-non-empty',
+      ];
+      if (canAllowOther()) cloudRemountArgs.push('--allow-other');
+      if (config.cloudMountReadOnly) cloudRemountArgs.push('--read-only');
+      if (typeof config.mountUid === 'number') cloudRemountArgs.push('--uid', String(config.mountUid));
+      if (typeof config.mountGid === 'number') cloudRemountArgs.push('--gid', String(config.mountGid));
+      if ((config.mountDirPerms || '').trim()) cloudRemountArgs.push(`--dir-perms=${config.mountDirPerms}`);
+      if ((config.mountFilePerms || '').trim()) cloudRemountArgs.push(`--file-perms=${config.mountFilePerms}`);
+      if (!(config.mountDirPerms || config.mountFilePerms)) cloudRemountArgs.push('--umask', '0022');
+      cloudRemountArgs.push(`--log-file=${cloudLogFile}`);
+      cloudRemountArgs.push('--log-level=NOTICE');
+      mounts.push({ remote: 'cloud:', path: cloudPath, configPath: cfg, customArgs: cloudRemountArgs });
+
+      // Post-mount verification (best-effort)
+      try {
+        await sleep(3000);
+        const items = await Promise.race([
+          fs.promises.readdir(cloudPath),
+          sleep(10000).then(() => { throw new Error('readdir timed out after 10s'); }),
+        ]);
+        console.log(`[${new Date().toISOString()}][mount] verify cloud: at ${cloudPath} -> entries=${(items as string[]).length}`);
+      } catch (e: any) {
+        console.warn(`[${new Date().toISOString()}][mount] verify warning for cloud: at ${cloudPath}`, { err: e?.message });
+        console.warn(`[${new Date().toISOString()}][mount] cloud mount may still be initialising — see rclone log: ${path.join(tmpDir, 'rclone-cloud.log')}`);
+      }
+
+      console.log(`[${new Date().toISOString()}][mount] Cloud storage mount initiated at ${cloudPath}`);
+    }
+  }
+
   console.log(`[${new Date().toISOString()}][mount] mounts initiated at ${base}`);
+
+  // Mount cloud-links WebDAV bridge via rclone (if configured)
+  if (config.cloudLinksEnabled) {
+    const clPath = path.join(base, 'cloud-links');
+    ensureDir(clPath, { cleanupOnStale: true });
+
+    console.log(`[${new Date().toISOString()}][mount] Mounting cloud-links WebDAV bridge at ${clPath}`);
+
+    // Write a dedicated rclone config for the cloud-links remote
+    const clConfigPath = path.join(tmpDir, 'rclone-cloud-links.conf');
+    const clConfigLines = [
+      `[cloud-links]`,
+      `type = webdav`,
+      `url = http://localhost:${config.cloudLinksBridgePort}`,
+      `vendor = other`,
+      ``,
+    ];
+    fs.writeFileSync(clConfigPath, clConfigLines.join('\n'), 'utf-8');
+
+    const clArgs = [
+      'mount', 'cloud-links:', clPath,
+      '--daemon',
+      '--vfs-cache-mode=full',
+      '--dir-cache-time=5m',
+      '--vfs-cache-max-age=168h',
+      '--poll-interval=5m',
+      '--allow-other',
+      '--allow-non-empty',
+      '--read-only',
+      `--config=${clConfigPath}`,
+      `--log-file=${path.join(tmpDir, 'rclone-cloud-links.log')}`,
+      '--log-level=NOTICE',
+    ];
+
+    // Add UID/GID matching (mirrors debrid mount perms)
+    if (typeof config.mountUid === 'number') {
+      clArgs.push('--uid', String(config.mountUid));
+    }
+    if (typeof config.mountGid === 'number') {
+      clArgs.push('--gid', String(config.mountGid));
+    }
+
+    console.log(`[${new Date().toISOString()}][mount] rclone ${clArgs.join(' ')}`);
+
+    const clProc = spawn(config.rclonePath, clArgs, { stdio: 'inherit' });
+    clProc.on('error', (e) => {
+      console.error(`[${new Date().toISOString()}][mount] cloud-links mount failed`, { err: (e as any)?.message });
+    });
+    clProc.on('close', (code) => {
+      if (code !== 0) {
+        console.error(`[${new Date().toISOString()}][mount] cloud-links daemon exited with code ${code}`);
+      }
+    });
+
+    // Store cloud-links mount metadata so attemptRemount uses the correct
+    // dedicated rclone config and cloud-links-specific flags.
+    const clRemountArgs = [
+      '--vfs-cache-mode=full',
+      '--dir-cache-time=5m',
+      '--vfs-cache-max-age=168h',
+      '--poll-interval=5m',
+      '--allow-other',
+      '--allow-non-empty',
+      '--read-only',
+      `--log-file=${path.join(tmpDir, 'rclone-cloud-links.log')}`,
+      '--log-level=NOTICE',
+    ];
+    if (typeof config.mountUid === 'number') clRemountArgs.push('--uid', String(config.mountUid));
+    if (typeof config.mountGid === 'number') clRemountArgs.push('--gid', String(config.mountGid));
+    mounts.push({ remote: 'cloud-links:', path: clPath, configPath: clConfigPath, customArgs: clRemountArgs });
+    console.log(`[${new Date().toISOString()}][mount] Cloud links mount initiated at ${clPath}`);
+  }
+
+  console.log(`[${new Date().toISOString()}][mount] All mounts initiated at ${base}`);
 
   // Start the mount health monitor to detect and recover from IO errors
   startMountHealthMonitor(mounts, cfg, base);
@@ -767,6 +1012,8 @@ export function unmountAll(): void {
   if (ps.has("torbox")) mounts.push(path.join(base, "torbox"));
   if (ps.has("alldebrid")) mounts.push(path.join(base, "alldebrid"));
   if (ps.has("premiumize")) mounts.push(path.join(base, "premiumize"));
+  if (config.cloudMountsEnabled) mounts.push(path.join(base, "cloud"));
+  if (config.cloudLinksEnabled) mounts.push(path.join(base, "cloud-links"));
 
   console.log(`[${new Date().toISOString()}][mount] Cleaning up and unmounting all FUSE mount points...`);
   for (const m of mounts) {
@@ -797,20 +1044,31 @@ const HEALTH_CHECK_FAILURE_THRESHOLD = 5;
 /** Interval between health checks in milliseconds. */
 const HEALTH_CHECK_INTERVAL_MS = 60_000; // 1 minute
 
-/** Error patterns that indicate a problematic mount. */
+/**
+ * Error patterns that indicate a genuinely problematic mount.
+ *
+ * NOTE: 502 Bad Gateway and 503 Service Unavailable are intentionally EXCLUDED.
+ * The WebDAV bridge returns 503 Retry-After for dead/temporarily-unavailable
+ * torrents by design. rclone logs these at INFO level and retries automatically.
+ * Counting them as mount errors caused unnecessary remounts every ~5 minutes,
+ * which killed active Plex streams. See: webdavBridge.ts lines 1306-1314.
+ */
 const MOUNT_ERROR_PATTERNS = [
-  "423 Locked",
   "IO error",
   "transport connection broken",
   "connection reset by peer",
-  "502 Bad Gateway",
-  "503 Service Unavailable",
   "vfs cache: failed to open",
+  "mount helper error",
+  "mount failed",
 ];
 
 interface MountTarget {
   remote: string;
   path: string;
+  /** Optional rclone config file path (e.g. cloud-links uses a dedicated config). */
+  configPath?: string;
+  /** Optional custom mount args — used instead of debrid config-driven args on remount. */
+  customArgs?: string[];
 }
 
 /**
@@ -838,9 +1096,12 @@ function startMountHealthMonitor(
       const remoteName = m.remote.replace(":", "");
       const logFile = path.join(tmpDir, `rclone-${remoteName}.log`);
 
-      let hasErrors = false;
+      let logHasErrors = false;
+      let mountInaccessible = false;
 
-      // 1. Check rclone log for new errors since last read
+      // 1. Check rclone log for new errors since last read (INFORMATIONAL ONLY)
+      // Log errors alone do NOT trigger a remount — the mount can be healthy
+      // even with transient 503/423 errors from dead/unavailable torrents.
       try {
         const stat = fs.statSync(logFile);
         if (stat.size > logPositions[m.remote]) {
@@ -857,9 +1118,9 @@ function startMountHealthMonitor(
           );
 
           if (errorLines.length > 0) {
-            hasErrors = true;
+            logHasErrors = true;
             console.warn(
-              `[${new Date().toISOString()}][mount-health] ${m.remote} detected ${errorLines.length} error(s) in rclone log`
+              `[${new Date().toISOString()}][mount-health] ${m.remote} detected ${errorLines.length} rclone error(s) (informational — not triggering remount)`
             );
           }
         }
@@ -867,28 +1128,33 @@ function startMountHealthMonitor(
         // Log file might not exist yet — that's fine
       }
 
-      // 2. Check FUSE mount accessibility (non-blocking)
+      // 2. Check FUSE mount accessibility — THIS is the primary health signal.
+      // Only mount inaccessibility (readdir failure/timeout/empty) counts as
+      // a genuine failure. This prevents the old bug where expected 503
+      // responses from dead torrents triggered unnecessary remounts.
       try {
         const items = await Promise.race([
           fs.promises.readdir(m.path),
           sleep(5000).then(() => { throw new Error("readdir timed out"); }),
         ]);
         if ((items as string[]).length === 0) {
-          hasErrors = true;
+          mountInaccessible = true;
           console.warn(`[${new Date().toISOString()}][mount-health] ${m.remote} mount at ${m.path} is empty`);
         }
       } catch (e: any) {
-        hasErrors = true;
+        mountInaccessible = true;
         console.warn(
           `[${new Date().toISOString()}][mount-health] ${m.remote} mount at ${m.path} inaccessible: ${e?.message}`
         );
       }
 
-      // 3. Update failure counter and trigger remount if needed
-      if (hasErrors) {
-        failureCounts[m.remote]++;
+      // 3. Update failure counter — only on mount inaccessibility
+      // Log errors alone are informational and do NOT affect the counter.
+      // If both log errors AND mount inaccessible, escalate faster (2x increment).
+      if (mountInaccessible) {
+        failureCounts[m.remote] += logHasErrors ? 2 : 1;
         console.warn(
-          `[${new Date().toISOString()}][mount-health] ${m.remote} failure streak: ${failureCounts[m.remote]}/${HEALTH_CHECK_FAILURE_THRESHOLD}`
+          `[${new Date().toISOString()}][mount-health] ${m.remote} failure streak: ${failureCounts[m.remote]}/${HEALTH_CHECK_FAILURE_THRESHOLD}${logHasErrors ? ' (escalated — log errors + mount inaccessible)' : ''}`
         );
 
         if (failureCounts[m.remote] >= HEALTH_CHECK_FAILURE_THRESHOLD) {
@@ -900,7 +1166,7 @@ function startMountHealthMonitor(
           logPositions[m.remote] = 0; // Reset log position after remount
         }
       } else {
-        // Reset counter on successful check
+        // Mount is accessible — reset the failure counter
         if (failureCounts[m.remote] > 0) {
           console.log(`[${new Date().toISOString()}][mount-health] ${m.remote} recovered — resetting failure counter`);
         }
@@ -928,43 +1194,57 @@ async function attemptRemount(mount: MountTarget, rcloneConfigPath: string): Pro
   // Ensure mount directory exists
   ensureDir(mount.path, { cleanupOnStale: false });
 
-  // Rebuild rclone mount args
+  // Resolve which rclone config to use — cloud-links and cloud mounts store
+  // their own config path; debrid mounts fall back to the main rclone config.
+  const effectiveConfigPath = mount.configPath ?? rcloneConfigPath;
+
+  // Rebuild rclone mount args — if the mount has custom args stored (cloud-links,
+  // cloud), use those. Otherwise fall back to debrid-style config-driven args.
   const args = [
     "mount",
     mount.remote,
     mount.path,
-    "--config", rcloneConfigPath,
+    "--config", effectiveConfigPath,
   ];
 
-  if (canAllowOther()) {
-    args.push("--allow-other");
-  }
-  args.push("--allow-non-empty");
-
-  // Apply configured mount options
-  if (config.mountOptions && config.mountOptions.trim()) {
-    args.push(...splitArgs(config.mountOptions));
+  if (mount.customArgs) {
+    // Use the mount-specific args that were captured during initial mount.
+    // These already include allow-other, cache-mode, log-file, etc.
+    args.push(...mount.customArgs);
+    console.log(`[${ts()}][mount-health] using stored custom args for ${mount.remote}`);
   } else {
-    args.push(`--poll-interval=${config.mountPollInterval}`);
-    args.push(`--dir-cache-time=${config.mountDirCacheTime}`);
-    args.push(`--vfs-cache-mode=${config.mountVfsCacheMode}`);
-    args.push(`--buffer-size=${config.mountBufferSize}`);
-    if ((config.mountVfsReadChunkSize || "").trim()) args.push(`--vfs-read-chunk-size=${config.mountVfsReadChunkSize}`);
-    if ((config.mountVfsReadChunkSizeLimit || "").trim()) args.push(`--vfs-read-chunk-size-limit=${config.mountVfsReadChunkSizeLimit}`);
-    if ((config.mountVfsCacheMaxAge || "").trim()) args.push(`--vfs-cache-max-age=${config.mountVfsCacheMaxAge}`);
-    if ((config.mountVfsCacheMaxSize || "").trim()) args.push(`--vfs-cache-max-size=${config.mountVfsCacheMaxSize}`);
+    // Debrid mount — build args from global config (existing behaviour)
+    if (canAllowOther()) {
+      args.push("--allow-other");
+    }
+    args.push("--allow-non-empty");
+
+    // Apply configured mount options
+    if (config.mountOptions && config.mountOptions.trim()) {
+      args.push(...splitArgs(config.mountOptions));
+    } else {
+      args.push(`--poll-interval=${config.mountPollInterval}`);
+      args.push(`--dir-cache-time=${config.mountDirCacheTime}`);
+      args.push(`--vfs-cache-mode=${config.mountVfsCacheMode}`);
+      args.push(`--buffer-size=${config.mountBufferSize}`);
+      if ((config.mountVfsReadChunkSize || "").trim()) args.push(`--vfs-read-chunk-size=${config.mountVfsReadChunkSize}`);
+      if ((config.mountVfsReadChunkSizeLimit || "").trim()) args.push(`--vfs-read-chunk-size-limit=${config.mountVfsReadChunkSizeLimit}`);
+      if ((config.mountVfsCacheMaxAge || "").trim()) args.push(`--vfs-cache-max-age=${config.mountVfsCacheMaxAge}`);
+      if ((config.mountVfsCacheMaxSize || "").trim()) args.push(`--vfs-cache-max-size=${config.mountVfsCacheMaxSize}`);
+    }
+
+    if (!(config.mountDirPerms || config.mountFilePerms)) {
+      args.push("--umask", "0022");
+    }
+
+    const remoteName = mount.remote.replace(":", "");
+    const logFile = path.join(tmpDir, `rclone-${remoteName}.log`);
+    if (!hasUserLogFlags(config.mountOptions)) {
+      args.push("--log-level=INFO");
+    }
+    args.push(`--log-file=${logFile}`);
   }
 
-  if (!(config.mountDirPerms || config.mountFilePerms)) {
-    args.push("--umask", "0022");
-  }
-
-  const remoteName = mount.remote.replace(":", "");
-  const logFile = path.join(tmpDir, `rclone-${remoteName}.log`);
-  if (!hasUserLogFlags(config.mountOptions)) {
-    args.push("--log-level=INFO");
-  }
-  args.push(`--log-file=${logFile}`);
   args.push("--daemon");
 
   console.log(`[${ts()}][mount-health] re-mounting: rclone ${args.join(" ")}`);

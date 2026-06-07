@@ -2,7 +2,8 @@ import axios from "axios";
 import { config, requireEnv } from "../core/config";
 import { searchIndexer, pickBestResult, getMagnet, getMagnetOrResolve, testIndexerConnection, getProviderName, isIndexerConfigured } from "../indexers/index";
 import { registry } from "../providers";
-import { upsertOverseerrRequest, getAllOverseerrRequests } from "../core/db";
+import { upsertOverseerrRequest, getAllOverseerrRequests, isOverseerrProcessed, markOverseerrProcessed, getProcessedOverseerrKeys } from "../core/db";
+import { isBlacklisted } from "../core/blacklist";
 import { isAnyMediaServerStreaming } from "../integrations/plex";
 
 
@@ -127,7 +128,17 @@ export function startOverseerrPoller() {
     order: registry.ordered().map(p => p.id),
   });
 
-  const processed = new Set<string>();
+  /** Loaded from SQLite on startup — survives container restarts. */
+  let processed: Set<string> = new Set();
+  function loadProcessedFromDb(): void {
+    try {
+      processed = getProcessedOverseerrKeys();
+      console.log(`[${new Date().toISOString()}][poller→overseerr] Loaded ${processed.size} processed request(s) from database`);
+    } catch (e: any) {
+      console.warn(`[${new Date().toISOString()}][poller→overseerr] Failed to load processed state from DB: ${e?.message}`);
+    }
+  }
+  loadProcessedFromDb();
   const intervalMs = Math.max(5, Number(config.pollIntervalSeconds || 30)) * 1000;
   console.log(`[${new Date().toISOString()}][poller] starting`, { intervalSeconds: Math.round(intervalMs / 1000) });
 
@@ -261,6 +272,7 @@ export function startOverseerrPoller() {
           if (!magnet) {
             console.warn(`[${new Date().toISOString()}][poller] no magnet found`, { id, query: built.query });
             processed.add(id);
+            markOverseerrProcessed(String(r.id), undefined, mediaType, tmdbId ? String(tmdbId) : undefined, undefined);
             continue;
           }
           
@@ -288,13 +300,7 @@ export function startOverseerrPoller() {
           }
 
           processed.add(id);
-          if (processed.size > 1000) {
-            // Trim processed set
-            const first = processed.values().next().value as string | undefined;
-            if (typeof first === "string") {
-              processed.delete(first);
-            }
-          }
+          markOverseerrProcessed(String(r.id), torrentTitle, mediaType, tmdbId ? String(tmdbId) : undefined, undefined);
         } catch (err: any) {
           console.error(`[${new Date().toISOString()}][poller] processing error`, { id, query: built.query, error: err?.message || String(err), stack: err?.stack });
           // Don't add to processed set on error so it will be retried
@@ -445,7 +451,7 @@ async function checkAndReaddMissingRequests(): Promise<void> {
       // Not present! Check search cooldown to avoid spamming indexers
       const now = Date.now();
       const lastSearch = req.lastSearchAt || 0;
-      const cooldownMs = 6 * 60 * 60 * 1000; // 6 hours cooldown
+      const cooldownMs = 24 * 60 * 60 * 1000; // 24 hours cooldown
       if (now - lastSearch < cooldownMs) {
         // Skipped due to cooldown
         continue;
