@@ -251,6 +251,12 @@ function parseSize(sizeStr) {
 const DEFAULT_CRAWL_DELAY_MS = 500;
 /** Maximum directory depth to crawl (prevents infinite recursion). */
 const CRAWL_MAX_DEPTH = 10;
+/**
+ * Maximum number of entries to persist to disk.
+ * Keeps the JSON file small enough to parse/serialise without OOM.
+ * The full in-memory cache can be much larger — we have RAM to spare.
+ */
+const MAX_DISK_CACHE_SIZE = 3000;
 class HttpAdapter {
     /**
      * Creates a new HTTP directory adapter.
@@ -269,6 +275,8 @@ class HttpAdapter {
         this.crawlFetched = 0;
         /** In-memory cache of folder contents: url → entries. */
         this.folderCache = new Map();
+        /** Debounce timer for disk cache saves. */
+        this.diskSaveTimer = null;
         /** Set of URLs currently being refreshed in the background (dedup). */
         this.refreshingUrls = new Set();
         /** Path to persistent disk cache file. */
@@ -317,9 +325,21 @@ class HttpAdapter {
         }
     }
     /**
-     * Persists the current in-memory cache to disk.
+     * Persists the current in-memory cache to disk (debounced).
+     * Only saves the most recent MAX_DISK_CACHE_SIZE entries to avoid OOM
+     * when serialising massive caches (31k+ entries) to JSON.
      */
     saveDiskCache() {
+        if (!this.diskCachePath)
+            return;
+        // Debounce: wait 5 seconds after the last call before actually writing.
+        // This prevents hammering the disk during rapid-fire cache updates.
+        if (this.diskSaveTimer)
+            clearTimeout(this.diskSaveTimer);
+        this.diskSaveTimer = setTimeout(() => this.saveDiskCacheNow(), 5000);
+    }
+    /** Actually writes the disk cache (called by the debounce timer). */
+    saveDiskCacheNow() {
         if (!this.diskCachePath)
             return;
         try {
@@ -328,8 +348,12 @@ class HttpAdapter {
             const dir = path.dirname(this.diskCachePath);
             if (!fs.existsSync(dir))
                 fs.mkdirSync(dir, { recursive: true });
+            // Sort by fetchedAt descending (most recent first) and cap the count
+            const entries = Array.from(this.folderCache.entries())
+                .sort((a, b) => b[1].fetchedAt - a[1].fetchedAt)
+                .slice(0, MAX_DISK_CACHE_SIZE);
             const data = {};
-            for (const [url, entry] of this.folderCache.entries()) {
+            for (const [url, entry] of entries) {
                 data[url] = entry;
             }
             fs.writeFileSync(this.diskCachePath, JSON.stringify(data), 'utf-8');
