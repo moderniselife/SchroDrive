@@ -52,6 +52,18 @@ const PROPFIND_HTTP_STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** Background re-crawl interval to keep the cache warm (6 hours). */
 const RECRAWL_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
+/** Maximum concurrent adapter.listFolder() calls during pre-warm. */
+const PREWARM_CONCURRENCY = 3;
+
+/** Maximum directory depth for pre-warm traversal (supports deeply nested structures). */
+const PREWARM_MAX_DEPTH = 6;
+
+/**
+ * Maximum total entries allowed in a Depth: infinity PROPFIND response.
+ * Prevents OOM when a directory tree is massive (e.g. 50k+ files).
+ */
+const DEPTH_INFINITY_MAX_ENTRIES = 5000;
+
 /**
  * Returns the appropriate fresh/stale TTLs for a given provider type.
  * HTTP directories are extremely static so they get much longer cache windows.
@@ -347,10 +359,15 @@ function handleOptions(_req: Request, res: Response): void {
  * /mega/     → lists configured MEGA folder links
  * /mega/Name/ → lists files in that folder
  * /mega/Name/Sub/ → lists files in subfolder
+ *
+ * Supports Depth: 0, 1 (default), and infinity.
+ * Depth: infinity recursively includes all descendants, capped at
+ * DEPTH_INFINITY_MAX_ENTRIES to prevent OOM on massive trees.
  */
 async function handlePropfind(req: Request, res: Response): Promise<void> {
   const reqPath = decodeURIComponent(req.path).replace(/\/+$/, '') || '/';
   const segments = reqPath.split('/').filter(Boolean);
+  const depthHeader = (req.headers['depth'] as string || '1').toLowerCase();
 
   try {
     // Root: list provider types
@@ -409,7 +426,86 @@ async function handlePropfind(req: Request, res: Response): Promise<void> {
     const cacheKey = reqPath;
     const now = Date.now();
 
-    // ----- Cache lookup -----
+    // ----- Depth: infinity handling -----
+    // Recursively collect all descendants into a single multistatus response.
+    // Falls back to depth-1 if the tree exceeds DEPTH_INFINITY_MAX_ENTRIES.
+    if (depthHeader === 'infinity') {
+      console.log(`[${new Date().toISOString()}]${LOG_PREFIX} PROPFIND Depth:infinity requested for ${cacheKey}`);
+
+      const allEntries: Array<{ href: string; isDirectory: boolean; size: number; name: string }> = [];
+      let aborted = false;
+
+      /**
+       * Recursively collects entries for the Depth: infinity response.
+       * Fetches from the PROPFIND cache where possible, otherwise calls the adapter.
+       */
+      async function collectRecursive(currentSubPath: string, currentBasePath: string): Promise<void> {
+        if (aborted) return;
+
+        const currentCacheKey = `/${providerType}/${linkName}${currentSubPath ? '/' + currentSubPath : ''}`;
+        let files: CloudFile[];
+
+        // Prefer cached data; fall back to a live adapter call
+        const cachedEntry = propfindCache.get(currentCacheKey);
+        if (cachedEntry) {
+          files = cachedEntry.files;
+        } else {
+          files = await adapter!.listFolder(currentSubPath || undefined);
+          // Populate the cache while we're at it
+          const entryItems = files.map((f: CloudFile) => ({
+            href: `${currentBasePath}/${f.name}`,
+            isDirectory: f.isDirectory,
+            size: f.size,
+            name: f.name,
+          }));
+          const entryXml = generatePropfindResponse(currentBasePath, entryItems);
+          propfindCache.set(currentCacheKey, { xml: entryXml, files, fetchedAt: Date.now() });
+        }
+
+        for (const f of files) {
+          if (aborted) return;
+          if (allEntries.length >= DEPTH_INFINITY_MAX_ENTRIES) {
+            aborted = true;
+            return;
+          }
+
+          allEntries.push({
+            href: `${currentBasePath}/${f.name}`,
+            isDirectory: f.isDirectory,
+            size: f.size,
+            name: f.name,
+          });
+
+          // Recurse into subdirectories
+          if (f.isDirectory) {
+            const childSubPath = currentSubPath ? `${currentSubPath}/${f.name}` : f.name;
+            const childBasePath = `${currentBasePath}/${f.name}`;
+            await collectRecursive(childSubPath, childBasePath);
+          }
+        }
+      }
+
+      await collectRecursive(subPath, basePath);
+
+      if (aborted) {
+        // Too many entries — fall back to a standard depth-1 response
+        console.warn(
+          `[${new Date().toISOString()}]${LOG_PREFIX} Depth:infinity exceeded ${DEPTH_INFINITY_MAX_ENTRIES} entries ` +
+          `for ${cacheKey}, falling back to depth-1`
+        );
+        // Fall through to the normal depth-1 logic below
+      } else {
+        console.log(
+          `[${new Date().toISOString()}]${LOG_PREFIX} Depth:infinity response for ${cacheKey}: ${allEntries.length} entries`
+        );
+        const xml = generatePropfindResponse(basePath, allEntries);
+        res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+        res.status(207).send(xml);
+        return;
+      }
+    }
+
+    // ----- Standard depth-0 / depth-1 cache lookup -----
     const cached = propfindCache.get(cacheKey);
     if (cached) {
       const age = now - cached.fetchedAt;
@@ -605,6 +701,172 @@ async function handleHead(req: Request, res: Response): Promise<void> {
 }
 
 // ===========================================================================
+// Pre-warm Cache (Plex Compatibility)
+// ===========================================================================
+
+/**
+ * Recursive PROPFIND cache pre-warming for Plex/rclone compatibility.
+ *
+ * Plex performs recursive directory scans (PROPFIND depth-1 on every
+ * subdirectory). For a large library, this means thousands of sequential
+ * PROPFIND requests on the first scan. Even though HTTP adapters cache
+ * their own folder data to disk, each uncached path still requires
+ * building the PROPFIND XML response on first access.
+ *
+ * This function eagerly walks the directory tree for HTTP adapters
+ * (which are static/rarely changing) and pre-builds the PROPFIND XML
+ * cache. When Plex subsequently sends its flood of PROPFINDs, every
+ * single one is an instant cache hit.
+ *
+ * Only HTTP adapters are pre-warmed — MEGA/GDrive/Dropbox are dynamic
+ * and their listings change frequently enough that pre-warming would
+ * be wasteful (and MEGA has API rate limits).
+ *
+ * Concurrency is capped at PREWARM_CONCURRENCY (3) to avoid saturating
+ * the event loop. Traversal depth is limited to PREWARM_MAX_DEPTH (6)
+ * which covers root → show → season — exactly what Plex needs.
+ */
+async function preWarmCache(): Promise<void> {
+  const startTime = Date.now();
+  const httpAdapters = adaptersByProvider.get('http' as CloudLinkProvider);
+
+  if (!httpAdapters || httpAdapters.size === 0) {
+    console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: no HTTP adapters configured, skipping`);
+    return;
+  }
+
+  console.log(
+    `[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: starting for ${httpAdapters.size} HTTP adapter(s) ` +
+    `(concurrency=${PREWARM_CONCURRENCY}, maxDepth=${PREWARM_MAX_DEPTH})`
+  );
+
+  // Simple semaphore for concurrency control
+  let activeCount = 0;
+  const waiting: Array<() => void> = [];
+
+  async function acquireSemaphore(): Promise<void> {
+    if (activeCount < PREWARM_CONCURRENCY) {
+      activeCount++;
+      return;
+    }
+    // Wait until a slot opens up
+    return new Promise<void>((resolve) => {
+      waiting.push(() => {
+        activeCount++;
+        resolve();
+      });
+    });
+  }
+
+  function releaseSemaphore(): void {
+    activeCount--;
+    if (waiting.length > 0) {
+      const next = waiting.shift()!;
+      next();
+    }
+  }
+
+  let totalCached = 0;
+  let totalSkipped = 0;
+
+  /**
+   * Recursively walks a single adapter's directory tree, building
+   * PROPFIND cache entries for each directory encountered.
+   */
+  async function walkAdapter(
+    adapter: CloudLinkAdapter,
+    linkName: string,
+    subPath: string,
+    depth: number,
+  ): Promise<void> {
+    if (depth > PREWARM_MAX_DEPTH) return;
+
+    const cacheKey = `/http/${linkName}${subPath ? '/' + subPath : ''}`;
+    const basePath = cacheKey;
+
+    // Check if this path already has a fresh PROPFIND cache entry
+    const existing = propfindCache.get(cacheKey);
+    if (existing) {
+      const { freshMs } = getTtlsForProvider('http');
+      const age = Date.now() - existing.fetchedAt;
+      if (age < freshMs) {
+        // Already fresh — still need to recurse into subdirectories
+        // using the cached file list (no adapter call needed)
+        totalSkipped++;
+        const subdirs = existing.files.filter((f: CloudFile) => f.isDirectory);
+        const tasks: Promise<void>[] = [];
+        for (const dir of subdirs) {
+          const childSubPath = subPath ? `${subPath}/${dir.name}` : dir.name;
+          tasks.push(walkAdapter(adapter, linkName, childSubPath, depth + 1));
+        }
+        await Promise.all(tasks);
+        return;
+      }
+    }
+
+    // Acquire a concurrency slot before calling the adapter
+    await acquireSemaphore();
+    let files: CloudFile[];
+    try {
+      files = await adapter.listFolder(subPath || undefined);
+    } catch (err: any) {
+      console.warn(
+        `[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: failed to list ${cacheKey}: ${err?.message}`
+      );
+      releaseSemaphore();
+      return;
+    }
+    releaseSemaphore();
+
+    // Build and cache the PROPFIND XML for this directory
+    const entries = files.map((f: CloudFile) => ({
+      href: `${basePath}/${f.name}`,
+      isDirectory: f.isDirectory,
+      size: f.size,
+      name: f.name,
+    }));
+    const xml = generatePropfindResponse(basePath, entries);
+    propfindCache.set(cacheKey, { xml, files, fetchedAt: Date.now() });
+    totalCached++;
+
+    // Log progress periodically
+    if (totalCached % 100 === 0) {
+      console.log(
+        `[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm progress: ${totalCached} cached, ${totalSkipped} skipped`
+      );
+    }
+
+    // Recurse into subdirectories
+    const subdirs = files.filter((f: CloudFile) => f.isDirectory);
+    const tasks: Promise<void>[] = [];
+    for (const dir of subdirs) {
+      const childSubPath = subPath ? `${subPath}/${dir.name}` : dir.name;
+      tasks.push(walkAdapter(adapter, linkName, childSubPath, depth + 1));
+    }
+    await Promise.all(tasks);
+  }
+
+  // Walk each HTTP adapter's tree
+  for (const [linkName, adapter] of httpAdapters) {
+    console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: walking http/${linkName}...`);
+    try {
+      await walkAdapter(adapter, linkName, '', 0);
+    } catch (err: any) {
+      console.error(
+        `[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: error walking http/${linkName}: ${err?.message}`
+      );
+    }
+  }
+
+  const elapsedMs = Date.now() - startTime;
+  const elapsedSec = (elapsedMs / 1000).toFixed(1);
+  console.log(
+    `[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm complete: ${totalCached} paths cached, ` +
+    `${totalSkipped} skipped (already fresh). Total time: ${elapsedSec}s`
+  );
+}
+
+// ===========================================================================
 // Public API
 // ===========================================================================
 
@@ -686,43 +948,32 @@ export async function startCloudLinksBridge(): Promise<void> {
       const totalLinks = [...adaptersByProvider.values()].reduce((sum, m) => sum + m.size, 0);
       console.log(`${LOG_PREFIX} Serving ${totalLinks} cloud link(s) across ${adaptersByProvider.size} provider(s)`);
 
-      // ------ Periodic re-crawl to keep the cache warm ------
+      // ------ Periodic re-crawl to keep the ENTIRE cache warm ------
+      // Calls preWarmCache() which recursively discovers and caches all
+      // subdirectories, not just paths that are already in the cache.
       recrawlTimer = setInterval(() => {
         const startTime = new Date();
-        console.log(`[${startTime.toISOString()}]${LOG_PREFIX} Periodic re-crawl started (${propfindCache.size} cached paths)`);
+        console.log(`[${startTime.toISOString()}]${LOG_PREFIX} Periodic re-crawl started — running full preWarmCache()`);
 
-        let refreshed = 0;
-        for (const [cachedPath, entry] of propfindCache) {
-          // Parse the cached path to determine provider and resolve TTLs
-          const segs = cachedPath.split('/').filter(Boolean);
-          if (segs.length < 2) continue; // Root / provider-level paths aren't adapter calls
-
-          const pType = segs[0] as CloudLinkProvider;
-          const lName = segs[1];
-
-          // Skip entries that are still fresh for their provider
-          const { freshMs } = getTtlsForProvider(pType);
-          const age = Date.now() - entry.fetchedAt;
-          if (age < freshMs) continue;
-
-          const subP = segs.slice(2).join('/') || undefined;
-          const bPath = `/${pType}/${lName}${subP ? '/' + subP : ''}`;
-
-          const pMap = adaptersByProvider.get(pType);
-          const adpt = pMap?.get(lName);
-          if (!adpt) continue;
-
-          backgroundRefresh(cachedPath, adpt, subP, pType, lName, bPath);
-          refreshed++;
-        }
-
-        console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Periodic re-crawl queued ${refreshed} refresh(es)`);
+        preWarmCache().then(() => {
+          console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Periodic re-crawl complete (${propfindCache.size} cached paths)`);
+        }).catch((err) => {
+          console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Periodic re-crawl failed: ${err?.message}`);
+        });
       }, RECRAWL_INTERVAL_MS);
 
       // Ensure the timer doesn't prevent process exit
       if (recrawlTimer && typeof recrawlTimer === 'object' && 'unref' in recrawlTimer) {
         (recrawlTimer as NodeJS.Timeout).unref();
       }
+
+      // ------ Fire-and-forget pre-warm for HTTP adapters ------
+      // This runs in the background after the server is ready to accept
+      // requests. If Plex connects before pre-warm finishes, PROPFIND
+      // requests will still work — they'll just trigger on-demand fetches.
+      preWarmCache().catch((err) => {
+        console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm failed: ${err?.message}`);
+      });
 
       resolve();
     });

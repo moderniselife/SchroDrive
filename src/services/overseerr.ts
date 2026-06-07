@@ -289,7 +289,8 @@ export function startOverseerrPoller() {
           }
           
           // -----------------------------------------------------------------
-          // Add magnet to providers using configured strategy
+          // Add magnet or .torrent file to providers using configured strategy
+          // (addMagnetWithStrategy auto-detects torrent: prefixed URLs)
           // -----------------------------------------------------------------
           const addStrategy = (config as any).addStrategy || 'all';
           const { results: addResults } = await registry.addMagnetWithStrategy(magnet, torrentTitle, addStrategy);

@@ -100,6 +100,14 @@ class ProviderRegistry {
     name?: string,
     strategy: AddStrategy = 'all',
   ): Promise<{ results: Array<{ provider: string; success: boolean; result?: AddMagnetResult; error?: string }> }> {
+    // Auto-detect .torrent file URLs (returned by getMagnetOrResolve with torrent: prefix)
+    // and transparently delegate to addTorrentFileFromUrl instead
+    if (magnet.startsWith('torrent:')) {
+      const torrentUrl = magnet.slice('torrent:'.length);
+      console.log(`[${new Date().toISOString()}][registry] Detected .torrent file URL — delegating to file upload`, { url: torrentUrl, name });
+      return this.addTorrentFileFromUrl(torrentUrl, name || 'unknown', strategy);
+    }
+
     const providers = this.ordered();
     const results: Array<{ provider: string; success: boolean; result?: AddMagnetResult; error?: string }> = [];
     let legallyBlocked = false;

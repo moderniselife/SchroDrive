@@ -215,16 +215,22 @@ async function searchJackett(query, opts) {
     return data;
 }
 function pickBestResult(results) {
-    const withMagnet = results.filter((r) => getMagnet(r));
-    const pool = withMagnet.length ? withMagnet : results;
+    // Filter out dead torrents (0 seeders) — they'll never download
+    const alive = results.filter((r) => (r.seeders ?? 0) > 0);
+    // Fall back to all results if every result has 0 seeders
+    const pool = alive.length > 0 ? alive : results;
+    // Sort purely by seeders desc, then size desc — magnet availability is
+    // handled by the caller's resolution loop in overseerr.ts
     const sorted = pool
         .slice()
         .sort((a, b) => ((b.seeders ?? 0) - (a.seeders ?? 0)) || ((b.size ?? 0) - (a.size ?? 0)));
     const chosen = sorted[0];
     console.log(`[${new Date().toISOString()}][jackett] pickBestResult`, {
         inputCount: results.length,
+        aliveCount: alive.length,
         poolCount: pool.length,
         chosen: chosen ? { title: chosen.title, seeders: chosen.seeders, size: chosen.size } : null,
+        top3: sorted.slice(0, 3).map(r => ({ title: r.title, seeders: r.seeders, size: r.size })),
     });
     return chosen;
 }
