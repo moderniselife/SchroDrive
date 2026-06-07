@@ -214,4 +214,11 @@ import './realdebrid';
 import './torbox';
 import './alldebrid';
 import './premiumize';
+import './debridlink';
+import './deepbrid';
+import './offcloud';
+import './putio';
+import './megadebrid';
+import './seedr';
+import './pikpak';
 
