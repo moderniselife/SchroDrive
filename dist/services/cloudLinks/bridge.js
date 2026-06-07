@@ -654,9 +654,12 @@ async function preWarmCache() {
      * Recursively walks a single adapter's directory tree, building
      * PROPFIND cache entries for each directory encountered.
      */
-    async function walkAdapter(adapter, linkName, subPath, depth) {
-        if (depth > PREWARM_MAX_DEPTH)
-            return;
+    /**
+     * Processes a single directory path: fetches listing (with rate-limit
+     * throttling for uncached paths), builds PROPFIND XML cache entry,
+     * and returns the subdirectory children for the BFS queue.
+     */
+    async function processPath(adapter, linkName, subPath) {
         const cacheKey = `/http/${linkName}${subPath ? '/' + subPath : ''}`;
         const basePath = cacheKey;
         // Check if this path already has a fresh PROPFIND cache entry
@@ -665,16 +668,11 @@ async function preWarmCache() {
             const { freshMs } = getTtlsForProvider('http');
             const age = Date.now() - existing.fetchedAt;
             if (age < freshMs) {
-                // Already fresh — still recurse into subdirectories using
-                // the cached file list (no adapter call needed).
-                // Process SEQUENTIALLY to avoid parallel fan-out hammering rate-limited servers.
                 totalSkipped++;
-                const subdirs = existing.files.filter((f) => f.isDirectory);
-                for (const dir of subdirs) {
-                    const childSubPath = subPath ? `${subPath}/${dir.name}` : dir.name;
-                    await walkAdapter(adapter, linkName, childSubPath, depth + 1);
-                }
-                return;
+                // Return subdirectories for BFS queue even though we skipped fetching
+                return existing.files
+                    .filter((f) => f.isDirectory)
+                    .map(dir => ({ subPath: subPath ? `${subPath}/${dir.name}` : dir.name }));
             }
         }
         // Acquire a concurrency slot before calling the adapter
@@ -692,7 +690,7 @@ async function preWarmCache() {
         catch (err) {
             console.warn(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: failed to list ${cacheKey}: ${err?.message}`);
             releaseSemaphore();
-            return;
+            return [];
         }
         releaseSemaphore();
         // Build and cache the PROPFIND XML for this directory
@@ -709,20 +707,35 @@ async function preWarmCache() {
         if (totalCached % 100 === 0) {
             console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm progress: ${totalCached} cached, ${totalSkipped} skipped`);
         }
-        // Recurse into subdirectories SEQUENTIALLY to respect rate limits.
-        // Parallel fan-out (Promise.all) caused thousands of concurrent requests
-        // that bypassed the adapter's rateLimitMs (e.g. 3500ms for a.111477.xyz).
-        const subdirs = files.filter((f) => f.isDirectory);
-        for (const dir of subdirs) {
-            const childSubPath = subPath ? `${subPath}/${dir.name}` : dir.name;
-            await walkAdapter(adapter, linkName, childSubPath, depth + 1);
+        // Return subdirectories for BFS queue
+        return files
+            .filter((f) => f.isDirectory)
+            .map(dir => ({ subPath: subPath ? `${subPath}/${dir.name}` : dir.name }));
+    }
+    /**
+     * Breadth-first walk of a single adapter's directory tree.
+     * Processes ALL directories at depth N before moving to depth N+1.
+     * This ensures top-level folders (movies, tvs, etc.) are cached first,
+     * before diving into thousands of subdirectories.
+     */
+    async function walkAdapterBFS(adapter, linkName) {
+        // Start with the root
+        let currentLevel = [{ subPath: '' }];
+        for (let depth = 0; depth <= PREWARM_MAX_DEPTH && currentLevel.length > 0; depth++) {
+            console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: http/${linkName} depth=${depth}, ${currentLevel.length} dir(s) to process`);
+            const nextLevel = [];
+            for (const item of currentLevel) {
+                const children = await processPath(adapter, linkName, item.subPath);
+                nextLevel.push(...children);
+            }
+            currentLevel = nextLevel;
         }
     }
-    // Walk each HTTP adapter's tree
+    // Walk each HTTP adapter's tree using breadth-first traversal
     for (const [linkName, adapter] of httpAdapters) {
-        console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: walking http/${linkName}...`);
+        console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: walking http/${linkName} (BFS)...`);
         try {
-            await walkAdapter(adapter, linkName, '', 0);
+            await walkAdapterBFS(adapter, linkName);
         }
         catch (err) {
             console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: error walking http/${linkName}: ${err?.message}`);
