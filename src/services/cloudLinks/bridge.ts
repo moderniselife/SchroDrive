@@ -790,16 +790,15 @@ async function preWarmCache(): Promise<void> {
       const { freshMs } = getTtlsForProvider('http');
       const age = Date.now() - existing.fetchedAt;
       if (age < freshMs) {
-        // Already fresh — still need to recurse into subdirectories
-        // using the cached file list (no adapter call needed)
+        // Already fresh — still recurse into subdirectories using
+        // the cached file list (no adapter call needed).
+        // Process SEQUENTIALLY to avoid parallel fan-out hammering rate-limited servers.
         totalSkipped++;
         const subdirs = existing.files.filter((f: CloudFile) => f.isDirectory);
-        const tasks: Promise<void>[] = [];
         for (const dir of subdirs) {
           const childSubPath = subPath ? `${subPath}/${dir.name}` : dir.name;
-          tasks.push(walkAdapter(adapter, linkName, childSubPath, depth + 1));
+          await walkAdapter(adapter, linkName, childSubPath, depth + 1);
         }
-        await Promise.all(tasks);
         return;
       }
     }
@@ -836,14 +835,14 @@ async function preWarmCache(): Promise<void> {
       );
     }
 
-    // Recurse into subdirectories
+    // Recurse into subdirectories SEQUENTIALLY to respect rate limits.
+    // Parallel fan-out (Promise.all) caused thousands of concurrent requests
+    // that bypassed the adapter's rateLimitMs (e.g. 3500ms for a.111477.xyz).
     const subdirs = files.filter((f: CloudFile) => f.isDirectory);
-    const tasks: Promise<void>[] = [];
     for (const dir of subdirs) {
       const childSubPath = subPath ? `${subPath}/${dir.name}` : dir.name;
-      tasks.push(walkAdapter(adapter, linkName, childSubPath, depth + 1));
+      await walkAdapter(adapter, linkName, childSubPath, depth + 1);
     }
-    await Promise.all(tasks);
   }
 
   // Walk each HTTP adapter's tree
