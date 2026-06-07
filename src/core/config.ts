@@ -211,7 +211,10 @@ export const config = {
   // Torrentio
   torrentioUrl: process.env.TORRENTIO_URL || "https://torrentio.strem.fun",
   torrentioConfig: process.env.TORRENTIO_CONFIG || "",
-  torrentioEnabled: String(process.env.TORRENTIO_ENABLED ?? "false").toLowerCase() === "true",
+  // Auto-enable Torrentio when the Stremio addon is active (free public source)
+  torrentioEnabled: process.env.TORRENTIO_ENABLED !== undefined
+    ? String(process.env.TORRENTIO_ENABLED).toLowerCase() === "true"
+    : String(process.env.STREMIO_ADDON_ENABLED ?? "false").toLowerCase() === "true",
   // Comet
   cometUrl: process.env.COMET_URL || "",
   cometConfig: process.env.COMET_CONFIG || "",
