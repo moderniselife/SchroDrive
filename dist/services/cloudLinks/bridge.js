@@ -724,18 +724,13 @@ async function preWarmCache() {
     }
     /**
      * Breadth-first walk of a single adapter's directory tree.
-     * Processes ALL directories at depth N before moving to depth N+1.
-     * This ensures top-level folders (movies, tvs, etc.) are cached first,
-     * before diving into thousands of subdirectories.
+     * Can be limited to a max depth — used for the two-phase approach.
+     * Returns the pending queue at the depth limit so deeper traversal
+     * can be continued later.
      */
-    // Track depth-1 completion across all adapters
-    const totalHttpAdapters = httpAdapters.size;
-    let completedDepth1 = 0;
-    const bridgeDepth1ResolveForAdapter = bridgeDepth1Resolve !== null;
-    async function walkAdapterBFS(adapter, linkName) {
-        // Start with the root
-        let currentLevel = [{ subPath: '' }];
-        for (let depth = 0; depth <= PREWARM_MAX_DEPTH && currentLevel.length > 0; depth++) {
+    async function walkAdapterBFS(adapter, linkName, maxDepth = PREWARM_MAX_DEPTH, startLevel) {
+        let currentLevel = startLevel || [{ subPath: '' }];
+        for (let depth = (startLevel ? 2 : 0); depth <= maxDepth && currentLevel.length > 0; depth++) {
             console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: http/${linkName} depth=${depth}, ${currentLevel.length} dir(s) to process`);
             const nextLevel = [];
             for (const item of currentLevel) {
@@ -743,33 +738,39 @@ async function preWarmCache() {
                 nextLevel.push(...children);
             }
             currentLevel = nextLevel;
-            // Signal depth-1 completion so the FUSE mount can proceed
-            if (depth === 1 && bridgeDepth1ResolveForAdapter) {
-                completedDepth1++;
-                if (completedDepth1 >= totalHttpAdapters) {
-                    console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: all adapters completed depth-1 — FUSE mount can proceed`);
-                    if (bridgeDepth1Resolve) {
-                        bridgeDepth1Resolve();
-                        bridgeDepth1Resolve = null;
-                    }
-                }
-            }
         }
+        return currentLevel; // remaining unprocessed dirs (if max depth hit)
     }
-    // Walk each HTTP adapter's tree using breadth-first traversal
+    // ==== PHASE 1: Walk ALL adapters to depth-1 (fast, from disk cache) ====
+    // This ensures top-level dirs (movies/, tvs/) are cached before the FUSE mount.
+    const pendingQueues = new Map();
     for (const [linkName, adapter] of httpAdapters) {
-        console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: walking http/${linkName} (BFS)...`);
+        console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm phase 1: walking http/${linkName} to depth-1...`);
         try {
-            await walkAdapterBFS(adapter, linkName);
+            const remaining = await walkAdapterBFS(adapter, linkName, 1);
+            pendingQueues.set(linkName, { adapter, queue: remaining });
         }
         catch (err) {
-            console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: error walking http/${linkName}: ${err?.message}`);
+            console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm phase 1: error walking http/${linkName}: ${err?.message}`);
         }
     }
-    // If depth-1 was never reached (e.g. all cached already), resolve anyway
+    // Signal bridge readiness — FUSE mount can proceed
+    console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm phase 1 complete — all adapters at depth-1, signalling bridge ready`);
     if (bridgeDepth1Resolve) {
         bridgeDepth1Resolve();
         bridgeDepth1Resolve = null;
+    }
+    // ==== PHASE 2: Continue deeper traversal (depth 2+) ====
+    for (const [linkName, { adapter, queue }] of pendingQueues) {
+        if (queue.length === 0)
+            continue;
+        console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm phase 2: continuing http/${linkName} from depth-2 (${queue.length} dirs)...`);
+        try {
+            await walkAdapterBFS(adapter, linkName, PREWARM_MAX_DEPTH, queue);
+        }
+        catch (err) {
+            console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm phase 2: error walking http/${linkName}: ${err?.message}`);
+        }
     }
     const elapsedMs = Date.now() - startTime;
     const elapsedSec = (elapsedMs / 1000).toFixed(1);
