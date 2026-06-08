@@ -63,5 +63,9 @@ ENV RUN_WEB_GUI=false
 ENV WEB_PORT=3000
 ENV BACKEND_URL=http://localhost:8978
 
+# Allow Bun (JSC) to use up to 16 GB heap for large in-memory caches
+# (e.g. 31k+ directory listings from HTTP adapters)
+ENV BUN_JSC_forceRAMSize=17179869184
+
 ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["serve"]
