@@ -759,6 +759,11 @@ async function mountVirtualDrive() {
             if ((config_1.config.mountVfsCacheMaxSize || "").trim())
                 args.push(`--vfs-cache-max-size=${config_1.config.mountVfsCacheMaxSize}`);
         }
+        // Prevent rclone from retrying failed downloads endlessly.
+        // Without limits, a 503 from the debrid bridge causes rclone's VFS cache to
+        // retry in a tight loop, blocking Plex scanner threads in D-state.
+        args.push('--retries', '1');
+        args.push('--low-level-retries', '3');
         // Ownership and permissions presentation for FUSE mount
         if (typeof config_1.config.mountUid === "number") {
             args.push("--uid", String(config_1.config.mountUid));
@@ -1190,6 +1195,9 @@ async function attemptRemount(mount, rcloneConfigPath) {
             if ((config_1.config.mountVfsCacheMaxSize || "").trim())
                 args.push(`--vfs-cache-max-size=${config_1.config.mountVfsCacheMaxSize}`);
         }
+        // Prevent rclone from retrying failed downloads endlessly (mirrors main mount logic)
+        args.push('--retries', '1');
+        args.push('--low-level-retries', '3');
         if (!(config_1.config.mountDirPerms || config_1.config.mountFilePerms)) {
             args.push("--umask", "0022");
         }
