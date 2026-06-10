@@ -262,6 +262,13 @@ const DEFAULT_CRAWL_DELAY_MS = 500;
 /** Maximum directory depth to crawl (prevents infinite recursion). */
 const CRAWL_MAX_DEPTH = 10;
 
+/**
+ * Maximum number of entries to persist to disk.
+ * Keeps the JSON file small enough to parse/serialise without OOM.
+ * The full in-memory cache can be much larger — we have RAM to spare.
+ */
+const MAX_DISK_CACHE_SIZE = 3000;
+
 export class HttpAdapter implements CloudLinkAdapter {
   readonly type: CloudLinkProvider = 'http' as CloudLinkProvider;
   readonly name: string;
@@ -278,6 +285,9 @@ export class HttpAdapter implements CloudLinkAdapter {
 
   /** In-memory cache of folder contents: url → entries. */
   private folderCache = new Map<string, { files: CloudFile[]; fetchedAt: number }>();
+
+  /** Debounce timer for disk cache saves. */
+  private diskSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * Fresh TTL — serve from cache without any background refresh.
@@ -358,9 +368,21 @@ export class HttpAdapter implements CloudLinkAdapter {
   }
 
   /**
-   * Persists the current in-memory cache to disk.
+   * Persists the current in-memory cache to disk (debounced).
+   * Only saves the most recent MAX_DISK_CACHE_SIZE entries to avoid OOM
+   * when serialising massive caches (31k+ entries) to JSON.
    */
   private saveDiskCache(): void {
+    if (!this.diskCachePath) return;
+
+    // Debounce: wait 5 seconds after the last call before actually writing.
+    // This prevents hammering the disk during rapid-fire cache updates.
+    if (this.diskSaveTimer) clearTimeout(this.diskSaveTimer);
+    this.diskSaveTimer = setTimeout(() => this.saveDiskCacheNow(), 5000);
+  }
+
+  /** Actually writes the disk cache (called by the debounce timer). */
+  private saveDiskCacheNow(): void {
     if (!this.diskCachePath) return;
     try {
       const fs = require('fs');
@@ -368,8 +390,13 @@ export class HttpAdapter implements CloudLinkAdapter {
       const dir = path.dirname(this.diskCachePath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
+      // Sort by fetchedAt descending (most recent first) and cap the count
+      const entries = Array.from(this.folderCache.entries())
+        .sort((a, b) => b[1].fetchedAt - a[1].fetchedAt)
+        .slice(0, MAX_DISK_CACHE_SIZE);
+
       const data: Record<string, { files: CloudFile[]; fetchedAt: number }> = {};
-      for (const [url, entry] of this.folderCache.entries()) {
+      for (const [url, entry] of entries) {
         data[url] = entry;
       }
 
@@ -557,6 +584,26 @@ export class HttpAdapter implements CloudLinkAdapter {
       .finally(() => {
         this.refreshingUrls.delete(targetUrl);
       });
+  }
+
+  /**
+   * Exposes the adapter's rate limit delay for external consumers
+   * (e.g. the pre-warm function).
+   */
+  get rateLimitMs(): number {
+    return this.crawlDelayMs;
+  }
+
+  /**
+   * Checks if the given sub-path is already in the adapter's internal
+   * folder cache. Used by the pre-warm to skip rate-limit delays for
+   * paths that will be served from cache without network requests.
+   */
+  isCached(subPath?: string): boolean {
+    const targetUrl = subPath
+      ? new URL(subPath.endsWith('/') ? subPath : subPath + '/', this.baseUrl).toString()
+      : this.baseUrl;
+    return this.folderCache.has(targetUrl);
   }
 
   /**
