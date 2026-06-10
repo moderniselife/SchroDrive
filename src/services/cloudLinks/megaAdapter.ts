@@ -34,26 +34,34 @@ export class MegaAdapter implements CloudLinkAdapter {
   private folder: any;
   private loaded = false;
   private fileMap: MegaFileMap = new Map();
+  private url: string;
 
   /**
    * Creates a new MEGA adapter for a public shared folder link.
+   * The MEGA URL is validated and loaded lazily during {@link init}.
    *
    * @param url - MEGA public folder URL (e.g. https://mega.nz/folder/ID#KEY)
    * @param name - Display name for the mount directory.
    */
   constructor(url: string, name: string) {
     this.name = name;
-    this.folder = File.fromURL(url);
+    this.url = url;
+    // Defer File.fromURL() to init() so invalid URLs don't crash the constructor
+    this.folder = null;
   }
 
   /**
    * Load the folder's attribute tree from MEGA.
-   * This fetches the full directory structure in one API call.
+   * This validates the URL and fetches the full directory structure in one API call.
    */
   async init(): Promise<void> {
     if (this.loaded) return;
 
     console.log(`[${new Date().toISOString()}][cloud-links][mega] Loading attributes for "${this.name}"...`);
+
+    // Parse the MEGA URL — throws if the URL has no hash/decryption key
+    this.folder = File.fromURL(this.url);
+
     await this.folder.loadAttributes();
     this.loaded = true;
 

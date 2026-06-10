@@ -95,12 +95,18 @@ const EPISODE_PATTERNS = [
     /\bSeasons?\s*\d+\s+(?:to|and|&)\s*\d+/i, // Seasons 1 to 5, Seasons 6 and 7
     /\b\d{1,2}x\d{2,3}\b/i, // 1x01, 12x05
     /\bE(?:p|pisode)?\s*\d+/i, // E01, Ep01, Episode 01
-    /Complete\s*(?:Series|Season)/i, // Complete Series, Complete Season
+    /Complete[.\s]+Series/i, // Complete Series, Complete.Series, COMPLETE.SERIES
+    /Complete[.\s]+Season/i, // Complete Season, Complete.Season
     /Season\s*\d+\s*Complete/i, // Season 1 Complete
     /\bMini[- ]?Series\b/i, // Mini-Series, Miniseries
     /\bTVShows?\b/i, // TVShows, TVShow
     /\bSeason\s*Pack\b/i, // Season Pack
     /\bS\d{1,3}[.-]S\d{1,3}\b/i, // S01.S05 or S01-S05 (dot/dash multi-season)
+    /\d+[.\s-]+Seasons?\b/i, // 1-32.Seasons, 1.Seasons, 3 Seasons (number before Seasons)
+    /\bSeasons[.\s]+\d/i, // Seasons.ENG, Seasons 1 (Seasons followed by content)
+    /\b\d+[.\s]*[-–]\s*\d+[.\s]+Season/i, // 1-32 Seasons, 1-5.Season (multi-season range)
+    /\bCOMPLETE[.\s]+SERIES\b/i, // COMPLETE SERIES, COMPLETE.SERIES (uppercase)
+    /\b(?:The[.\s]+)?(?:Complete[.\s]+)?(?:TV[.\s]*)?Series\b.*\b(?:\d{3,4}p|WEB|HDTV|DVDRip|BDRip|BluRay)\b/i, // "Series" + quality tag = TV show
 ];
 /**
  * Checks whether a torrent name contains episode numbering patterns,

@@ -63,6 +63,7 @@ const path = __importStar(require("path"));
 const child_process_1 = require("child_process");
 const config_1 = require("../core/config");
 const webdavBridge_1 = require("./webdavBridge");
+const bridge_1 = require("./cloudLinks/bridge");
 // ===========================================================================
 // Module-level State
 // ===========================================================================
@@ -758,6 +759,11 @@ async function mountVirtualDrive() {
             if ((config_1.config.mountVfsCacheMaxSize || "").trim())
                 args.push(`--vfs-cache-max-size=${config_1.config.mountVfsCacheMaxSize}`);
         }
+        // Prevent rclone from retrying failed downloads endlessly.
+        // Without limits, a 503 from the debrid bridge causes rclone's VFS cache to
+        // retry in a tight loop, blocking Plex scanner threads in D-state.
+        args.push('--retries', '1');
+        args.push('--low-level-retries', '3');
         // Ownership and permissions presentation for FUSE mount
         if (typeof config_1.config.mountUid === "number") {
             args.push("--uid", String(config_1.config.mountUid));
@@ -911,70 +917,79 @@ async function mountVirtualDrive() {
     }
     console.log(`[${new Date().toISOString()}][mount] mounts initiated at ${base}`);
     // Mount cloud-links WebDAV bridge via rclone (if configured)
+    // DEFERRED: Waits for the bridge pre-warm to cache depth-1 directories
+    // before mounting, so Plex never hits uncached paths on startup.
     if (config_1.config.cloudLinksEnabled) {
         const clPath = path.join(base, 'cloud-links');
         ensureDir(clPath, { cleanupOnStale: true });
-        console.log(`[${new Date().toISOString()}][mount] Mounting cloud-links WebDAV bridge at ${clPath}`);
-        // Write a dedicated rclone config for the cloud-links remote
-        const clConfigPath = path.join(tmpDir, 'rclone-cloud-links.conf');
-        const clConfigLines = [
-            `[cloud-links]`,
-            `type = webdav`,
-            `url = http://localhost:${config_1.config.cloudLinksBridgePort}`,
-            `vendor = other`,
-            ``,
-        ];
-        fs.writeFileSync(clConfigPath, clConfigLines.join('\n'), 'utf-8');
-        const clArgs = [
-            'mount', 'cloud-links:', clPath,
-            '--daemon',
-            '--vfs-cache-mode=full',
-            '--dir-cache-time=5m',
-            '--vfs-cache-max-age=168h',
-            '--poll-interval=5m',
-            '--allow-other',
-            '--allow-non-empty',
-            '--read-only',
-            `--config=${clConfigPath}`,
-            `--log-file=${path.join(tmpDir, 'rclone-cloud-links.log')}`,
-            '--log-level=NOTICE',
-        ];
-        // Add UID/GID matching (mirrors debrid mount perms)
-        if (typeof config_1.config.mountUid === 'number') {
-            clArgs.push('--uid', String(config_1.config.mountUid));
-        }
-        if (typeof config_1.config.mountGid === 'number') {
-            clArgs.push('--gid', String(config_1.config.mountGid));
-        }
-        console.log(`[${new Date().toISOString()}][mount] rclone ${clArgs.join(' ')}`);
-        const clProc = (0, child_process_1.spawn)(config_1.config.rclonePath, clArgs, { stdio: 'inherit' });
-        clProc.on('error', (e) => {
-            console.error(`[${new Date().toISOString()}][mount] cloud-links mount failed`, { err: e?.message });
-        });
-        clProc.on('close', (code) => {
-            if (code !== 0) {
-                console.error(`[${new Date().toISOString()}][mount] cloud-links daemon exited with code ${code}`);
+        // Fire-and-forget async — don't block other mounts
+        (async () => {
+            console.log(`[${new Date().toISOString()}][mount] Waiting for cloud-links bridge to pre-warm depth-1 before mounting...`);
+            await (0, bridge_1.waitForBridgeReady)(5 * 60 * 1000); // 5 minute timeout
+            console.log(`[${new Date().toISOString()}][mount] Bridge ready — mounting cloud-links WebDAV bridge at ${clPath}`);
+            // Write a dedicated rclone config for the cloud-links remote
+            const clConfigPath = path.join(tmpDir, 'rclone-cloud-links.conf');
+            const clConfigLines = [
+                `[cloud-links]`,
+                `type = webdav`,
+                `url = http://localhost:${config_1.config.cloudLinksBridgePort}`,
+                `vendor = other`,
+                ``,
+            ];
+            fs.writeFileSync(clConfigPath, clConfigLines.join('\n'), 'utf-8');
+            const clArgs = [
+                'mount', 'cloud-links:', clPath,
+                '--daemon',
+                '--vfs-cache-mode=off',
+                '--dir-cache-time=24h',
+                '--poll-interval=0',
+                '--allow-other',
+                '--allow-non-empty',
+                '--read-only',
+                '--transfers=4',
+                `--config=${clConfigPath}`,
+                `--log-file=${path.join(tmpDir, 'rclone-cloud-links.log')}`,
+                '--log-level=NOTICE',
+            ];
+            // Add UID/GID matching (mirrors debrid mount perms)
+            if (typeof config_1.config.mountUid === 'number') {
+                clArgs.push('--uid', String(config_1.config.mountUid));
             }
+            if (typeof config_1.config.mountGid === 'number') {
+                clArgs.push('--gid', String(config_1.config.mountGid));
+            }
+            console.log(`[${new Date().toISOString()}][mount] rclone ${clArgs.join(' ')}`);
+            const clProc = (0, child_process_1.spawn)(config_1.config.rclonePath, clArgs, { stdio: 'inherit' });
+            clProc.on('error', (e) => {
+                console.error(`[${new Date().toISOString()}][mount] cloud-links mount failed`, { err: e?.message });
+            });
+            clProc.on('close', (code) => {
+                if (code !== 0) {
+                    console.error(`[${new Date().toISOString()}][mount] cloud-links daemon exited with code ${code}`);
+                }
+            });
+            // Store cloud-links mount metadata so attemptRemount uses the correct
+            // dedicated rclone config and cloud-links-specific flags.
+            const clRemountArgs = [
+                '--vfs-cache-mode=off',
+                '--dir-cache-time=24h',
+                '--poll-interval=0',
+                '--allow-other',
+                '--allow-non-empty',
+                '--read-only',
+                '--transfers=4',
+                `--log-file=${path.join(tmpDir, 'rclone-cloud-links.log')}`,
+                '--log-level=NOTICE',
+            ];
+            if (typeof config_1.config.mountUid === 'number')
+                clRemountArgs.push('--uid', String(config_1.config.mountUid));
+            if (typeof config_1.config.mountGid === 'number')
+                clRemountArgs.push('--gid', String(config_1.config.mountGid));
+            mounts.push({ remote: 'cloud-links:', path: clPath, configPath: clConfigPath, customArgs: clRemountArgs });
+            console.log(`[${new Date().toISOString()}][mount] Cloud links mount initiated at ${clPath}`);
+        })().catch((err) => {
+            console.error(`[${new Date().toISOString()}][mount] Deferred cloud-links mount failed: ${err?.message}`);
         });
-        // Store cloud-links mount metadata so attemptRemount uses the correct
-        // dedicated rclone config and cloud-links-specific flags.
-        const clRemountArgs = [
-            '--vfs-cache-mode=full',
-            '--dir-cache-time=5m',
-            '--vfs-cache-max-age=168h',
-            '--poll-interval=5m',
-            '--allow-other',
-            '--allow-non-empty',
-            '--read-only',
-            `--log-file=${path.join(tmpDir, 'rclone-cloud-links.log')}`,
-            '--log-level=NOTICE',
-        ];
-        if (typeof config_1.config.mountUid === 'number')
-            clRemountArgs.push('--uid', String(config_1.config.mountUid));
-        if (typeof config_1.config.mountGid === 'number')
-            clRemountArgs.push('--gid', String(config_1.config.mountGid));
-        mounts.push({ remote: 'cloud-links:', path: clPath, configPath: clConfigPath, customArgs: clRemountArgs });
-        console.log(`[${new Date().toISOString()}][mount] Cloud links mount initiated at ${clPath}`);
     }
     console.log(`[${new Date().toISOString()}][mount] All mounts initiated at ${base}`);
     // Start the mount health monitor to detect and recover from IO errors
@@ -1180,6 +1195,9 @@ async function attemptRemount(mount, rcloneConfigPath) {
             if ((config_1.config.mountVfsCacheMaxSize || "").trim())
                 args.push(`--vfs-cache-max-size=${config_1.config.mountVfsCacheMaxSize}`);
         }
+        // Prevent rclone from retrying failed downloads endlessly (mirrors main mount logic)
+        args.push('--retries', '1');
+        args.push('--low-level-retries', '3');
         if (!(config_1.config.mountDirPerms || config_1.config.mountFilePerms)) {
             args.push("--umask", "0022");
         }
