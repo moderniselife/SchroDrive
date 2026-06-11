@@ -207,31 +207,92 @@ function waitForBridgeReady(timeoutMs = 5 * 60 * 1000) {
     ]);
 }
 /**
- * Triggers a background (fire-and-forget) refresh of a single cache entry.
- * Deduplicated via `refreshingPaths` — concurrent calls for the same path
- * are silently dropped.
+ * Rate-limited background refresh queue.
+ *
+ * Instead of firing HTTP requests for every PROPFIND cache miss
+ * simultaneously, we queue them and process one at a time with a
+ * configurable delay between requests. When a 429 is received,
+ * the queue backs off exponentially.
+ */
+const refreshQueue = [];
+let refreshQueueRunning = false;
+let refreshBackoffMs = 0;
+let missLogSuppressCount = 0;
+let lastMissLogTime = 0;
+/** Drains the background refresh queue one item at a time. */
+async function drainRefreshQueue() {
+    if (refreshQueueRunning)
+        return;
+    refreshQueueRunning = true;
+    while (refreshQueue.length > 0) {
+        const item = refreshQueue.shift();
+        // Skip if already refreshing or already fresh
+        if (refreshingPaths.has(item.cacheKey))
+            continue;
+        const existing = propfindCache.get(item.cacheKey);
+        if (existing) {
+            const { freshMs } = getTtlsForProvider(item.providerType);
+            if (Date.now() - existing.fetchedAt < freshMs)
+                continue;
+        }
+        refreshingPaths.add(item.cacheKey);
+        // Apply backoff if we've been 429'd
+        if (refreshBackoffMs > 0) {
+            await new Promise(r => setTimeout(r, refreshBackoffMs));
+        }
+        // Respect the adapter's rate limit
+        const rateLimitDelay = item.adapter.rateLimitMs ?? 0;
+        if (rateLimitDelay > 0) {
+            await new Promise(r => setTimeout(r, rateLimitDelay));
+        }
+        try {
+            const files = await item.adapter.listFolder(item.subPath);
+            const entries = files.map((f) => ({
+                href: `${item.basePath}/${f.name}`,
+                isDirectory: f.isDirectory,
+                size: f.size,
+                name: f.name,
+            }));
+            const xml = generatePropfindResponse(item.basePath, entries);
+            propfindCache.set(item.cacheKey, { xml, fetchedAt: Date.now() });
+            // Successful fetch — reset backoff
+            if (refreshBackoffMs > 0) {
+                console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Background refresh: 429 backoff cleared after successful fetch`);
+                refreshBackoffMs = 0;
+            }
+        }
+        catch (err) {
+            const msg = err?.message ?? '';
+            if (msg.includes('429') || msg.includes('Too Many') || msg.includes('rate')) {
+                // Exponential backoff: 5s → 10s → 20s → 40s (max 60s)
+                refreshBackoffMs = Math.min(60000, Math.max(5000, (refreshBackoffMs || 2500) * 2));
+                console.warn(`[${new Date().toISOString()}]${LOG_PREFIX} Background refresh: 429 rate limited — ` +
+                    `backing off ${(refreshBackoffMs / 1000).toFixed(0)}s (${refreshQueue.length} queued)`);
+            }
+            else {
+                console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Background refresh failed for ${item.cacheKey}: ${msg}`);
+            }
+        }
+        finally {
+            refreshingPaths.delete(item.cacheKey);
+        }
+    }
+    refreshQueueRunning = false;
+}
+/**
+ * Queues a background refresh for a cache entry.
+ * Deduplicated — repeated requests for the same path are silently dropped.
  */
 function backgroundRefresh(cacheKey, adapter, subPath, providerType, linkName, basePath) {
+    // Deduplicate: skip if already in queue or actively refreshing
     if (refreshingPaths.has(cacheKey))
         return;
-    refreshingPaths.add(cacheKey);
-    adapter
-        .listFolder(subPath)
-        .then((files) => {
-        const entries = files.map((f) => ({
-            href: `${basePath}/${f.name}`,
-            isDirectory: f.isDirectory,
-            size: f.size,
-            name: f.name,
-        }));
-        const xml = generatePropfindResponse(basePath, entries);
-        propfindCache.set(cacheKey, { xml, fetchedAt: Date.now() });
-    })
-        .catch((err) => {
-        console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Background refresh failed for ${cacheKey}: ${err?.message}`);
-    })
-        .finally(() => {
-        refreshingPaths.delete(cacheKey);
+    if (refreshQueue.some(q => q.cacheKey === cacheKey))
+        return;
+    refreshQueue.push({ cacheKey, adapter, subPath, providerType, linkName, basePath });
+    // Kick off queue processing (idempotent — only one drain loop runs)
+    drainRefreshQueue().catch((err) => {
+        console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Refresh queue error: ${err?.message}`);
     });
 }
 // ===========================================================================
@@ -439,7 +500,7 @@ async function handlePropfind(req, res) {
             const { freshMs, staleMs } = getTtlsForProvider(providerType);
             if (age < freshMs) {
                 // Fresh — serve straight from cache, no adapter call
-                console.log(`[${new Date().toISOString()}]${LOG_PREFIX} PROPFIND cache HIT (fresh) for ${cacheKey}`);
+                // Suppress per-request HIT logs to avoid spam (thousands of PROPFINDs)
                 res.setHeader('Content-Type', 'application/xml; charset=utf-8');
                 res.status(207).send(cached.xml);
                 return;
@@ -463,7 +524,14 @@ async function handlePropfind(req, res) {
         else {
             // Cache MISS — return empty directory immediately, queue background fetch
             // This ensures Plex/rclone scanner threads NEVER block on I/O.
-            console.log(`[${new Date().toISOString()}]${LOG_PREFIX} PROPFIND cache MISS for ${cacheKey} — returning empty (non-blocking)`);
+            // Suppress per-request MISS logs — only log a batch summary periodically
+            missLogSuppressCount++;
+            const now = Date.now();
+            if (now - lastMissLogTime > 10000) {
+                console.log(`[${new Date().toISOString()}]${LOG_PREFIX} PROPFIND cache: ${missLogSuppressCount} misses since last log (queue: ${refreshQueue.length})`);
+                missLogSuppressCount = 0;
+                lastMissLogTime = now;
+            }
             backgroundRefresh(cacheKey, adapter, subPath || undefined, providerType, linkName, basePath);
             const emptyXml = generatePropfindResponse(basePath, []);
             res.setHeader('Content-Type', 'application/xml; charset=utf-8');
