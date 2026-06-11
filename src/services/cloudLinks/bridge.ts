@@ -902,9 +902,12 @@ async function preWarmCache(): Promise<void> {
       }
       files = await adapter.listFolder(subPath || undefined);
     } catch (err: any) {
-      console.warn(
-        `[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: failed to list ${cacheKey}: ${err?.message}`
-      );
+      // Suppress 429 errors — already handled by rate-limit summary logging
+      if (!err?.message?.includes('429')) {
+        console.warn(
+          `[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm: failed to list ${cacheKey}: ${err?.message}`
+        );
+      }
       releaseSemaphore();
       return [];
     }
