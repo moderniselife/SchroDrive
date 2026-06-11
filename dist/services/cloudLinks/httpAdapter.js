@@ -281,6 +281,10 @@ class HttpAdapter {
         this.refreshingUrls = new Set();
         /** Path to persistent disk cache file. */
         this.diskCachePath = null;
+        /** Timestamp of last 429 log line (suppress spam). */
+        this._last429LogTime = 0;
+        /** Total 429 hits since adapter creation. */
+        this._rateLimitHitCount = 0;
         this.name = name;
         // Ensure trailing slash
         this.baseUrl = url.endsWith('/') ? url : url + '/';
@@ -474,6 +478,17 @@ class HttpAdapter {
                 signal: AbortSignal.timeout(30000),
             });
             if (!response.ok) {
+                if (response.status === 429) {
+                    // Suppress per-request 429 logs — log a summary periodically
+                    const now = Date.now();
+                    if (!this._last429LogTime || now - this._last429LogTime > 30000) {
+                        this._rateLimitHitCount = (this._rateLimitHitCount ?? 0) + 1;
+                        console.warn(`[${new Date().toISOString()}][cloud-links][http] ${this.name}: rate limited (429) — ${this._rateLimitHitCount} hits since startup`);
+                        this._last429LogTime = now;
+                    }
+                    // Throw so callers (background refresh queue) can detect and back off
+                    throw new Error(`429 Too Many Requests: ${targetUrl}`);
+                }
                 console.warn(`[${new Date().toISOString()}][cloud-links][http] ${targetUrl} returned HTTP ${response.status}`);
                 return null;
             }
