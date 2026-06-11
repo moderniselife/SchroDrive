@@ -30,7 +30,7 @@ import { MegaAdapter } from './megaAdapter';
 import { GDriveAdapter } from './gdriveAdapter';
 import { DropboxAdapter } from './dropboxAdapter';
 import { HttpAdapter } from './httpAdapter';
-import { triggerPlexScan } from './plexIntegration';
+import { triggerPlexScan, startPlexContainer } from './plexIntegration';
 
 // ===========================================================================
 // Constants
@@ -1009,9 +1009,16 @@ async function preWarmCache(): Promise<void> {
     `${totalSkipped} skipped (already fresh). Total time: ${elapsedSec}s`
   );
 
-  // Trigger Plex library scan now that the cache is warm
-  triggerPlexScan().catch((err) => {
-    console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Post-pre-warm Plex scan failed: ${err?.message}`);
+  // Start Plex container now that cache is fully warm, then trigger scan
+  startPlexContainer().then((started) => {
+    if (started) {
+      console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Plex container started — triggering library scan...`);
+      return triggerPlexScan();
+    } else {
+      console.warn(`[${new Date().toISOString()}]${LOG_PREFIX} Plex container failed to start — skipping scan trigger`);
+    }
+  }).catch((err) => {
+    console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Post-pre-warm Plex start/scan failed: ${err?.message}`);
   });
 }
 

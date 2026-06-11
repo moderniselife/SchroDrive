@@ -844,9 +844,17 @@ async function preWarmCache() {
     const elapsedSec = (elapsedMs / 1000).toFixed(1);
     console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm complete: ${totalCached} paths cached, ` +
         `${totalSkipped} skipped (already fresh). Total time: ${elapsedSec}s`);
-    // Trigger Plex library scan now that the cache is warm
-    (0, plexIntegration_1.triggerPlexScan)().catch((err) => {
-        console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Post-pre-warm Plex scan failed: ${err?.message}`);
+    // Start Plex container now that cache is fully warm, then trigger scan
+    (0, plexIntegration_1.startPlexContainer)().then((started) => {
+        if (started) {
+            console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Plex container started — triggering library scan...`);
+            return (0, plexIntegration_1.triggerPlexScan)();
+        }
+        else {
+            console.warn(`[${new Date().toISOString()}]${LOG_PREFIX} Plex container failed to start — skipping scan trigger`);
+        }
+    }).catch((err) => {
+        console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Post-pre-warm Plex start/scan failed: ${err?.message}`);
     });
 }
 // ===========================================================================
