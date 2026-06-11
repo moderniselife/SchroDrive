@@ -256,7 +256,7 @@ const CRAWL_MAX_DEPTH = 10;
  * Keeps the JSON file small enough to parse/serialise without OOM.
  * The full in-memory cache can be much larger — we have RAM to spare.
  */
-const MAX_DISK_CACHE_SIZE = 3000;
+const MAX_DISK_CACHE_SIZE = 500;
 class HttpAdapter {
     /**
      * Creates a new HTTP directory adapter.
@@ -512,6 +512,10 @@ class HttpAdapter {
             return files;
         }
         catch (err) {
+            // Suppress 429 errors here — they're already logged via rate-limit summary
+            if (err?.message?.includes('429')) {
+                return null;
+            }
             console.error(`[${new Date().toISOString()}][cloud-links][http] Fetch failed for ${targetUrl}: ${err?.message}`);
             return null;
         }
