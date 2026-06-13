@@ -28,7 +28,7 @@ import { startAutoUpdater } from "./services/autoUpdate";
 import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDocker, CONFIG_SCHEMA } from "./core/configApi";
 import { logBuffer } from "./core/logger";
 import { rateLimiter } from "./core/rateLimiter";
-import { getBridgeStatuses, refreshBridges } from "./services/mount";
+import { getBridgeStatuses, refreshBridges, getExternalWebdavStatus } from "./services/mount";
 import { getPreWarmStatus } from "./services/cloudLinks/bridge";
 import { getBlacklistEntries, getBlacklistCount, addToBlacklist, removeFromBlacklist, isBlacklisted } from "./core/blacklist";
 import { tokenRotator } from "./core/tokenRotator";
@@ -146,6 +146,7 @@ export function startServer() {
         count: getBlacklistCount(),
       },
       webdavBridges: getBridgeStatuses(),
+      externalWebdavMounts: getExternalWebdavStatus(),
       tokenRotation: (() => {
         const status = tokenRotator.getAllStatus();
         const summary: Record<string, { activeTokens: number; limitedTokens: number; totalTokens: number }> = {};

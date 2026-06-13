@@ -147,6 +147,7 @@ function startServer() {
                 count: (0, blacklist_1.getBlacklistCount)(),
             },
             webdavBridges: (0, mount_1.getBridgeStatuses)(),
+            externalWebdavMounts: (0, mount_1.getExternalWebdavStatus)(),
             tokenRotation: (() => {
                 const status = tokenRotator_1.tokenRotator.getAllStatus();
                 const summary = {};

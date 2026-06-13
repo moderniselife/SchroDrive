@@ -135,6 +135,32 @@ export function getWebdavOrganiserRoots(): string[] {
   return roots;
 }
 
+/**
+ * Returns status information for all configured external WebDAV mounts.
+ * Used by the /health endpoint.
+ */
+export function getExternalWebdavStatus(): { name: string; url: string; mountPath: string; healthy: boolean; readOnly: boolean; skipOrganiser: boolean }[] {
+  if (!config.webdavMountsEnabled) return [];
+  const entries = loadWebdavMounts();
+  return entries.map((e) => {
+    const mountName = e.name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+    const mountPath = path.join(config.mountBase, 'webdav', mountName);
+    let healthy = false;
+    try {
+      fs.readdirSync(mountPath);
+      healthy = true;
+    } catch {}
+    return {
+      name: e.name,
+      url: e.url,
+      mountPath,
+      healthy,
+      readOnly: e.readOnly !== false,
+      skipOrganiser: e.skipOrganiser !== false,
+    };
+  });
+}
+
 // ===========================================================================
 // Mount Utilities
 // ===========================================================================
