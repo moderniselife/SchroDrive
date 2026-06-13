@@ -52,7 +52,6 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getWebdavSkipList = getWebdavSkipList;
 exports.getWebdavOrganiserRoots = getWebdavOrganiserRoots;
 exports.getBridgeStatuses = getBridgeStatuses;
 exports.refreshBridges = refreshBridges;
@@ -66,6 +65,7 @@ const child_process_1 = require("child_process");
 const config_1 = require("../core/config");
 const webdavBridge_1 = require("./webdavBridge");
 const bridge_1 = require("./cloudLinks/bridge");
+const utils_1 = require("../core/utils");
 // ===========================================================================
 // Module-level State
 // ===========================================================================
@@ -128,21 +128,6 @@ function isValidWebdavMount(item) {
     return (item &&
         typeof item.name === 'string' && item.name.length > 0 &&
         typeof item.url === 'string' && item.url.length > 0);
-}
-/**
- * Returns the list of WebDAV mount names that should be SKIPPED by the organiser.
- * Exported for use by organizer.ts.
- */
-function getWebdavSkipList() {
-    const entries = loadWebdavMounts();
-    const skipSet = new Set();
-    for (const e of entries) {
-        // Default to skip=true if not explicitly set to false
-        if (e.skipOrganiser !== false) {
-            skipSet.add(e.name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase());
-        }
-    }
-    return skipSet;
 }
 /**
  * Returns the list of WebDAV mount paths that the organiser SHOULD process.
@@ -526,15 +511,6 @@ function hasUserLogFlags(opts) {
     return tokens.some((t) => t === "-v" || t === "-vv" || t === "-vvv" || t.startsWith("--log-level"));
 }
 /**
- * Returns a promise that resolves after the specified number of milliseconds.
- *
- * @param ms - The number of milliseconds to sleep.
- * @returns A promise that resolves after the delay.
- */
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-/**
  * Checks whether the FUSE `allow_other` option is available on the system.
  * This requires `user_allow_other` to be uncommented in `/etc/fuse.conf`.
  *
@@ -627,7 +603,7 @@ async function mountVirtualDrive() {
     // -----------------------------------------------------------------------
     try {
         unmountAll();
-        await sleep(1000);
+        await (0, utils_1.sleep)(1000);
     }
     catch (err) {
         console.error(`[${new Date().toISOString()}][mount] Startup unmount cleanup failed (non-fatal):`, err?.message);
@@ -892,10 +868,10 @@ async function mountVirtualDrive() {
         // IMPORTANT: Do NOT use readdirSync here — FUSE mounts trigger PROPFIND
         // to the WebDAV bridge, which needs the event loop to respond.
         try {
-            await sleep(3000);
+            await (0, utils_1.sleep)(3000);
             const items = await Promise.race([
                 fs.promises.readdir(m.path),
-                sleep(10000).then(() => { throw new Error("readdir timed out after 10s"); }),
+                (0, utils_1.sleep)(10000).then(() => { throw new Error("readdir timed out after 10s"); }),
             ]);
             console.log(`[${new Date().toISOString()}][mount] verify ${m.remote} at ${m.path} -> entries=${items.length}`);
         }
@@ -991,10 +967,10 @@ async function mountVirtualDrive() {
             mounts.push({ remote: 'cloud:', path: cloudPath, configPath: cfg, customArgs: cloudRemountArgs });
             // Post-mount verification (best-effort)
             try {
-                await sleep(3000);
+                await (0, utils_1.sleep)(3000);
                 const items = await Promise.race([
                     fs.promises.readdir(cloudPath),
-                    sleep(10000).then(() => { throw new Error('readdir timed out after 10s'); }),
+                    (0, utils_1.sleep)(10000).then(() => { throw new Error('readdir timed out after 10s'); }),
                 ]);
                 console.log(`[${new Date().toISOString()}][mount] verify cloud: at ${cloudPath} -> entries=${items.length}`);
             }
@@ -1272,7 +1248,7 @@ function startMountHealthMonitor(mounts, rcloneConfigPath, _base) {
             try {
                 const items = await Promise.race([
                     fs.promises.readdir(m.path),
-                    sleep(5000).then(() => { throw new Error("readdir timed out"); }),
+                    (0, utils_1.sleep)(5000).then(() => { throw new Error("readdir timed out"); }),
                 ]);
                 if (items.length === 0) {
                     mountInaccessible = true;
@@ -1316,7 +1292,7 @@ async function attemptRemount(mount, rcloneConfigPath) {
     // Unmount the stale FUSE mount
     cleanupMountPath(mount.path);
     // Wait a moment for cleanup
-    await sleep(2000);
+    await (0, utils_1.sleep)(2000);
     // Ensure mount directory exists
     ensureDir(mount.path, { cleanupOnStale: false });
     // Resolve which rclone config to use — cloud-links and cloud mounts store
@@ -1386,10 +1362,10 @@ async function attemptRemount(mount, rcloneConfigPath) {
     });
     // Verify post-remount
     try {
-        await sleep(5000);
+        await (0, utils_1.sleep)(5000);
         const items = await Promise.race([
             fs.promises.readdir(mount.path),
-            sleep(10000).then(() => { throw new Error("readdir timed out"); }),
+            (0, utils_1.sleep)(10000).then(() => { throw new Error("readdir timed out"); }),
         ]);
         console.log(`[${ts()}][mount-health] remount verify ${mount.remote} → entries=${items.length}`);
     }

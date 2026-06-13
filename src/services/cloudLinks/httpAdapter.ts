@@ -20,6 +20,7 @@
  */
 
 import type { CloudLinkAdapter, CloudFile, CloudLinkProvider } from './types';
+import { sleep } from '../../core/utils';
 
 // ===========================================================================
 // Types
@@ -54,10 +55,7 @@ function safeDecodeURIComponent(str: string): string {
   }
 }
 
-/** Promise-based delay for rate-limiting. */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+
 
 // ===========================================================================
 // HTML Directory Listing Parsers

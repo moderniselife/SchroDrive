@@ -12,14 +12,10 @@
  *
  * @module providers/premiumize
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PremiumizeProvider = void 0;
-const axios_1 = __importDefault(require("axios"));
-const http_1 = __importDefault(require("http"));
-const https_1 = __importDefault(require("https"));
+const httpClient_1 = require("../core/httpClient");
+const utils_1 = require("../core/utils");
 const config_1 = require("../core/config");
 const rateLimiter_1 = require("../core/rateLimiter");
 const tokenRotator_1 = require("../core/tokenRotator");
@@ -28,10 +24,6 @@ const errors_1 = require("../core/errors");
 // Constants & HTTP Configuration
 // ===========================================================================
 const PROVIDER_NAME = 'premiumize';
-/** Force IPv4 to avoid IPv6 timeout issues in Docker containers. */
-const httpAgent = new http_1.default.Agent({ family: 4 });
-const httpsAgent = new https_1.default.Agent({ family: 4 });
-const axiosIPv4 = axios_1.default.create({ httpAgent, httpsAgent });
 // Cache keys for the shared rateLimiter cache
 const TRANSFER_LIST_CACHE_KEY = 'premiumize_transfers';
 // ===========================================================================
@@ -53,23 +45,6 @@ function premiumizeHeaders(overrideToken) {
  */
 function getBaseUrl() {
     return (config_1.config.premiumizeApiBase || 'https://www.premiumize.me/api').replace(/\/$/, '');
-}
-/**
- * Sanitises a string for use as a filesystem path component.
- * Removes or replaces characters that are problematic on common filesystems
- * (Windows NTFS, macOS HFS+, Linux ext4).
- *
- * @param name - The raw name to sanitise.
- * @returns A filesystem-safe string.
- */
-function sanitiseName(name) {
-    return name
-        .replace(/[\x00-\x1F\x7F]/g, '')
-        .replace(/[<>:"/\\|?*]/g, '_')
-        .replace(/_+/g, '_')
-        .replace(/\s+/g, ' ')
-        .replace(/^[.\s]+|[.\s]+$/g, '')
-        || 'unnamed';
 }
 /**
  * Maps a Premiumize transfer status string to a normalised progress percentage.
@@ -159,7 +134,7 @@ class PremiumizeProvider {
         const base = getBaseUrl();
         const url = `${base}/transfer/list`;
         try {
-            const res = await axiosIPv4.get(url, {
+            const res = await httpClient_1.axiosIPv4.get(url, {
                 headers: premiumizeHeaders(),
                 timeout: 20000,
             });
@@ -204,7 +179,7 @@ class PremiumizeProvider {
             // Premiumize expects form-encoded data for transfer creation
             const formData = new URLSearchParams();
             formData.append('src', magnet);
-            const res = await axiosIPv4.post(url, formData.toString(), {
+            const res = await httpClient_1.axiosIPv4.post(url, formData.toString(), {
                 headers: {
                     ...premiumizeHeaders(),
                     'Content-Type': 'application/x-www-form-urlencoded',
@@ -247,7 +222,7 @@ class PremiumizeProvider {
         try {
             const formData = new FormData();
             formData.append('src', new Blob([new Uint8Array(fileBuffer)], { type: 'application/x-bittorrent' }), name || 'upload.torrent');
-            const res = await axiosIPv4.post(url, formData, {
+            const res = await httpClient_1.axiosIPv4.post(url, formData, {
                 headers: premiumizeHeaders(),
                 timeout: 30000,
             });
@@ -288,7 +263,7 @@ class PremiumizeProvider {
         console.log(`[${new Date().toISOString()}][premiumize] checking existing transfers`, { searchTitle: title });
         const started = Date.now();
         try {
-            const res = await axiosIPv4.get(url, {
+            const res = await httpClient_1.axiosIPv4.get(url, {
                 headers: premiumizeHeaders(),
                 timeout: 20000,
             });
@@ -357,7 +332,7 @@ class PremiumizeProvider {
         try {
             const formData = new URLSearchParams();
             formData.append('id', torrentId);
-            await axiosIPv4.post(url, formData.toString(), {
+            await httpClient_1.axiosIPv4.post(url, formData.toString(), {
                 headers: {
                     ...premiumizeHeaders(),
                     'Content-Type': 'application/x-www-form-urlencoded',
@@ -403,7 +378,7 @@ class PremiumizeProvider {
         const base = getBaseUrl();
         const url = `${base}/transfer/list`;
         try {
-            const res = await axiosIPv4.get(url, {
+            const res = await httpClient_1.axiosIPv4.get(url, {
                 headers: premiumizeHeaders(),
                 timeout: 20000,
             });
@@ -489,7 +464,7 @@ class PremiumizeProvider {
         const base = getBaseUrl();
         try {
             const url = `${base}/transfer/list`;
-            const res = await axiosIPv4.get(url, {
+            const res = await httpClient_1.axiosIPv4.get(url, {
                 headers: premiumizeHeaders(),
                 timeout: 30000,
             });
@@ -518,7 +493,7 @@ class PremiumizeProvider {
                 }
                 directories.push({
                     id: String(t.id),
-                    name: sanitiseName(t.name || String(t.id)),
+                    name: (0, utils_1.sanitiseName)(t.name || String(t.id)),
                     originalName: t.name || String(t.id),
                     files,
                 });
@@ -553,7 +528,7 @@ class PremiumizeProvider {
         try {
             // First, try to get the transfer details to find the folder_id
             const transferUrl = `${base}/transfer/list`;
-            const transferRes = await axiosIPv4.get(transferUrl, {
+            const transferRes = await httpClient_1.axiosIPv4.get(transferUrl, {
                 headers: premiumizeHeaders(downloadToken),
                 timeout: 20000,
             });
@@ -564,7 +539,7 @@ class PremiumizeProvider {
             // Fetch folder contents to find the file's direct link
             await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
             const folderUrl = `${base}/folder/list`;
-            const folderRes = await axiosIPv4.get(folderUrl, {
+            const folderRes = await httpClient_1.axiosIPv4.get(folderUrl, {
                 headers: premiumizeHeaders(downloadToken),
                 params: { id: folderId },
                 timeout: 20000,
@@ -651,7 +626,7 @@ class PremiumizeProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         const base = getBaseUrl();
         const url = `${base}/folder/list`;
-        const res = await axiosIPv4.get(url, {
+        const res = await httpClient_1.axiosIPv4.get(url, {
             headers: premiumizeHeaders(),
             params: { id: folderId },
             timeout: 20000,
@@ -660,7 +635,7 @@ class PremiumizeProvider {
         const content = Array.isArray(res?.data?.content) ? res.data.content : [];
         return this.flattenFolderContent(content).map((f) => ({
             id: String(f.id),
-            name: sanitiseName(f.name || `file_${f.id}`),
+            name: (0, utils_1.sanitiseName)(f.name || `file_${f.id}`),
             size: typeof f.size === 'number' ? f.size : 0,
         }));
     }

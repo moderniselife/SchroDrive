@@ -20,7 +20,7 @@ import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
-import { config, requireEnv } from "./core/config";
+import { config } from "./core/config";
 import { searchIndexer, pickBestResult, getMagnet, getProviderName, isIndexerConfigured } from "./indexers/index";
 import { registry, type DebridProvider, type TorrentInfo, type DownloadInfo } from "./providers";
 import { startOverseerrPoller } from "./services/overseerr";
