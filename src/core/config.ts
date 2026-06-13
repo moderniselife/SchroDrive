@@ -23,11 +23,12 @@ export const config = {
   indexerProvider: (process.env.INDEXER_PROVIDER || "auto") as "prowlarr" | "jackett" | "auto",
   torboxApiKey: process.env.TORBOX_API_KEY || "",
   torboxBaseUrl: process.env.TORBOX_BASE_URL || "https://api.torbox.app",
-  overseerrAuth: process.env.OVERSEERR_AUTH || process.env.JELLYSEERR_AUTH || "",
-  // Overseerr / Jellyseerr API (poller) configuration
-  // Jellyseerr is API-compatible with Overseerr — either set of env vars works
-  overseerrUrl: process.env.OVERSEERR_URL || process.env.JELLYSEERR_URL || "",
-  overseerrApiKey: process.env.OVERSEERR_API_KEY || process.env.JELLYSEERR_API_KEY || "",
+  overseerrAuth: process.env.SEERR_AUTH || process.env.OVERSEERR_AUTH || process.env.JELLYSEERR_AUTH || "",
+  // Seerr / Overseerr / Jellyseerr API (poller) configuration
+  // Seerr is the merged successor to Overseerr + Jellyseerr — all three share the same API.
+  // Priority: SEERR_* > OVERSEERR_* > JELLYSEERR_* (all are supported for backward compatibility)
+  overseerrUrl: process.env.SEERR_URL || process.env.OVERSEERR_URL || process.env.JELLYSEERR_URL || "",
+  overseerrApiKey: process.env.SEERR_API_KEY || process.env.OVERSEERR_API_KEY || process.env.JELLYSEERR_API_KEY || "",
   pollIntervalSeconds: Number(process.env.POLL_INTERVAL_S || 30),
   // Runtime toggles
   runWebhook: String(process.env.RUN_WEBHOOK ?? "true").toLowerCase() !== "false",

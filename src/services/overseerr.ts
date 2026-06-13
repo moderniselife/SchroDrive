@@ -31,7 +31,7 @@ async function fetchTitleYearFromOverseerr(mediaType: string, tmdbId: number): P
   const base = config.overseerrUrl.replace(/\/$/, "");
   const path = mediaType?.toLowerCase() === 'movie' ? `/movie/${tmdbId}` : `/tv/${tmdbId}`;
   const url = `${base}${path}`;
-  console.log(`[${new Date().toISOString()}][poller->overseerr] GET ${url} (details)`);
+  console.log(`[${new Date().toISOString()}][poller->seerr] GET ${url} (details)`);
   const headers: any = {};
   if (config.overseerrApiKey) headers["X-Api-Key"] = config.overseerrApiKey;
   if (config.overseerrAuth) headers["Authorization"] = config.overseerrAuth.startsWith("Bearer ") ? config.overseerrAuth : `Bearer ${config.overseerrAuth}`;
@@ -92,7 +92,7 @@ async function fetchApprovedRequests(): Promise<MediaRequestLike[]> {
   const base = config.overseerrUrl.replace(/\/$/, "");
   const url = `${base}/request`;
   const started = Date.now();
-  console.log(`[${new Date().toISOString()}][poller->overseerr] GET ${url}`, {
+  console.log(`[${new Date().toISOString()}][poller->seerr] GET ${url}`, {
     params: { filter: "approved", sort: "modified", take: 50, skip: 0 },
   });
   const headers: any = {};
@@ -104,7 +104,7 @@ async function fetchApprovedRequests(): Promise<MediaRequestLike[]> {
     timeout: 30000,
   });
   const results = res?.data?.results || [];
-  console.log(`[${new Date().toISOString()}][poller->overseerr] response`, { count: Array.isArray(results) ? results.length : 0, ms: Date.now() - started });
+  console.log(`[${new Date().toISOString()}][poller->seerr] response`, { count: Array.isArray(results) ? results.length : 0, ms: Date.now() - started });
   return Array.isArray(results) ? results : [];
 }
 
@@ -115,7 +115,7 @@ export function startOverseerrPoller() {
   }
   // Accept either Overseerr API key or Bearer token
   if (!config.overseerrUrl || (!config.overseerrApiKey && !config.overseerrAuth)) {
-    throw new Error("Missing Overseerr credentials. Set OVERSEERR_URL and either OVERSEERR_API_KEY or OVERSEERR_AUTH.");
+    throw new Error("Missing Seerr/Overseerr/Jellyseerr credentials. Set SEERR_URL (or OVERSEERR_URL / JELLYSEERR_URL) and either SEERR_API_KEY or SEERR_AUTH.");
   }
 
   // Ensure at least one provider is configured
@@ -133,9 +133,9 @@ export function startOverseerrPoller() {
   function loadProcessedFromDb(): void {
     try {
       processed = getProcessedOverseerrKeys();
-      console.log(`[${new Date().toISOString()}][poller→overseerr] Loaded ${processed.size} processed request(s) from database`);
+      console.log(`[${new Date().toISOString()}][poller→seerr] Loaded ${processed.size} processed request(s) from database`);
     } catch (e: any) {
-      console.warn(`[${new Date().toISOString()}][poller→overseerr] Failed to load processed state from DB: ${e?.message}`);
+      console.warn(`[${new Date().toISOString()}][poller→seerr] Failed to load processed state from DB: ${e?.message}`);
     }
   }
   loadProcessedFromDb();
