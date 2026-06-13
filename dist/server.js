@@ -35,6 +35,7 @@ const configApi_1 = require("./core/configApi");
 const logger_1 = require("./core/logger");
 const rateLimiter_1 = require("./core/rateLimiter");
 const mount_1 = require("./services/mount");
+const bridge_1 = require("./services/cloudLinks/bridge");
 const blacklist_1 = require("./core/blacklist");
 const tokenRotator_1 = require("./core/tokenRotator");
 // ===========================================================================
@@ -56,7 +57,11 @@ function startServer() {
     // ===========================================================================
     /** GET /health — Simple liveness probe. */
     app.get("/health", (_req, res) => {
-        res.json({ ok: true });
+        const preWarm = (0, bridge_1.getPreWarmStatus)();
+        res.json({
+            ok: true,
+            cloudLinksPreWarm: preWarm,
+        });
     });
     // ===========================================================================
     // Configuration API

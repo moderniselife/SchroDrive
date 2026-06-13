@@ -22,15 +22,16 @@ and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.
   - `skipOrganiser: true` (default) — mount is excluded from organiser scans (pre-sorted content)
   - `skipOrganiser: false` — mount is added to organiser scan roots for classification
   - New exports: `getWebdavSkipList()`, `getWebdavOrganiserRoots()`
-- **Plex auto-start after cache pre-warm** (`src/services/cloudLinks/plexIntegration.ts`):
-  - `startPlexContainer()` — runs `docker start plex` and waits for HTTP reachability (up to 90s)
-  - Wired into bridge: pre-warm complete → start Plex → trigger scan
-  - Prevents Plex from scanning empty directories during cold cache (which deletes library items)
+- **Post-pre-warm Plex scan trigger** (`src/services/cloudLinks/bridge.ts`):
+  - After PROPFIND cache pre-warm completes, logs a "safe to start" message
+  - Triggers Plex library scan if Plex is already running (`triggerPlexScan()`)
+  - Plex container start is handled externally (e.g. deploy script) — SchrosDrive no longer requires Docker socket access
 
 ### Changed 🔄
 - **Deploy script** (`deploy-schrodrive.sh`):
   - Creates Plex container without starting it (`docker compose create plex`)
-  - SchrosDrive auto-starts Plex after cache pre-warm completes
+  - Waits for SchrosDrive pre-warm to complete (monitors logs for up to 10 minutes)
+  - Starts Plex container only after pre-warm is confirmed
   - Copies `webdav.json` to remote alongside `cloud_links.json`
 - **429 log spam suppressed** (`src/services/cloudLinks/httpAdapter.ts`, `bridge.ts`):
   - Per-request "Fetch failed" logs for 429 errors suppressed (already logged via rate-limit summary)
