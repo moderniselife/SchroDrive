@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.11.0] - 2026-06-14 🔄
+*Status: Seerr (Overseerr + Jellyseerr merger) support, codebase deduplication*
+
+### Added ✨
+- **Seerr support** (`src/core/config.ts`, `src/core/configApi.ts`, `src/services/overseerr.ts`):
+  - Seerr is the merged successor to Overseerr + Jellyseerr — all three share the same API
+  - New `SEERR_URL`, `SEERR_API_KEY`, `SEERR_AUTH` env vars (highest priority)
+  - Full backward compatibility: `OVERSEERR_*` and `JELLYSEERR_*` env vars still work as fallbacks
+  - Priority chain: `SEERR_*` > `OVERSEERR_*` > `JELLYSEERR_*`
+  - Updated config GUI labels and error messages to reflect Seerr as primary
+- **Pre-warm status on `/health` endpoint** (`src/server.ts`, `src/services/cloudLinks/bridge.ts`):
+  - `GET /health` now returns `cloudLinksPreWarm: { complete: boolean, completedAt: string | null }`
+  - Deploy scripts can poll this to gate Plex start on cache readiness
+- **Shared utility modules** (`src/core/utils.ts`, `src/core/httpClient.ts`):
+  - `sanitiseName()` — filesystem-safe name sanitiser (was duplicated 13×)
+  - `sleep()` — promise-based delay (was duplicated 2×)
+  - `axiosIPv4` — IPv4-forced axios instance (was duplicated 13×)
+
+### Changed 🔄
+- **Codebase deduplication** — removed 633 lines of duplicated code across 34 files
+- **Plex integration** — removed `startPlexContainer()` (required Docker socket access), replaced with `isPlexReachable()` check before triggering scan
+- **Deploy script** — polls `/health` endpoint for pre-warm status instead of scraping docker logs
+
+### Removed 🗑️
+- `startPlexContainer()` from `plexIntegration.ts` — was a user-specific hack requiring Docker socket mount
+- `pad3()` from `organizer.ts` — never called anywhere
+- `getWebdavSkipList()` from `mount.ts` — exported but never imported
+- Unused `requireEnv` imports from 3 files
+
 ### Version [0.10.0] - 2026-06-14 🌐
 *Status: External WebDAV mounts, Plex auto-start safety, 429 spam fixes*
 
