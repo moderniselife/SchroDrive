@@ -53,6 +53,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getWebdavOrganiserRoots = getWebdavOrganiserRoots;
+exports.getExternalWebdavStatus = getExternalWebdavStatus;
 exports.getBridgeStatuses = getBridgeStatuses;
 exports.refreshBridges = refreshBridges;
 exports.getActiveBridges = getActiveBridges;
@@ -143,6 +144,33 @@ function getWebdavOrganiserRoots() {
         }
     }
     return roots;
+}
+/**
+ * Returns status information for all configured external WebDAV mounts.
+ * Used by the /health endpoint.
+ */
+function getExternalWebdavStatus() {
+    if (!config_1.config.webdavMountsEnabled)
+        return [];
+    const entries = loadWebdavMounts();
+    return entries.map((e) => {
+        const mountName = e.name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+        const mountPath = path.join(config_1.config.mountBase, 'webdav', mountName);
+        let healthy = false;
+        try {
+            fs.readdirSync(mountPath);
+            healthy = true;
+        }
+        catch { }
+        return {
+            name: e.name,
+            url: e.url,
+            mountPath,
+            healthy,
+            readOnly: e.readOnly !== false,
+            skipOrganiser: e.skipOrganiser !== false,
+        };
+    });
 }
 // ===========================================================================
 // Mount Utilities
