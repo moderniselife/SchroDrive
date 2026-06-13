@@ -1118,28 +1118,49 @@ async function mountVirtualDrive() {
                     console.warn(`[${new Date().toISOString()}][mount] WebDAV "${entry.name}" — remote test failed, skipping mount`);
                     continue;
                 }
+                // Build rclone mount args — start with defaults, then apply user overrides
+                const defaults = {
+                    'vfs-cache-mode': 'off',
+                    'dir-cache-time': '12h',
+                    'poll-interval': '0',
+                    'transfers': '4',
+                    'log-level': 'NOTICE',
+                    'retries': '1',
+                    'low-level-retries': '3',
+                    'umask': '0022',
+                };
+                // Merge user mountOptions over defaults (user wins)
+                const opts = entry.mountOptions || {};
+                const merged = { ...defaults };
+                for (const [k, v] of Object.entries(opts)) {
+                    // Normalise key: strip leading dashes if user accidentally included them
+                    const key = k.replace(/^-+/, '');
+                    merged[key] = v;
+                }
                 const wdArgs = [
                     'mount', `webdav-${mountName}:`, mountPath,
                     '--daemon',
-                    '--vfs-cache-mode=off',
-                    '--dir-cache-time=12h',
-                    '--poll-interval=0',
                     '--allow-non-empty',
-                    '--transfers=4',
                     `--config=${wdConfigPath}`,
                     `--log-file=${path.join(tmpDir, `rclone-webdav-${mountName}.log`)}`,
-                    '--log-level=NOTICE',
                 ];
+                // Apply merged options as rclone flags
+                for (const [key, val] of Object.entries(merged)) {
+                    if (val === true) {
+                        wdArgs.push(`--${key}`);
+                    }
+                    else if (val !== false) {
+                        wdArgs.push(`--${key}=${String(val)}`);
+                    }
+                }
                 if (entry.readOnly !== false)
                     wdArgs.push('--read-only');
-                if (config_1.config.mountAllowOther)
+                if (config_1.config.mountAllowOther && !merged['allow-other'])
                     wdArgs.push('--allow-other');
                 if (typeof config_1.config.mountUid === 'number')
                     wdArgs.push('--uid', String(config_1.config.mountUid));
                 if (typeof config_1.config.mountGid === 'number')
                     wdArgs.push('--gid', String(config_1.config.mountGid));
-                // Retry flags to prevent D-state hangs
-                wdArgs.push('--retries', '1', '--low-level-retries', '3', '--umask', '0022');
                 console.log(`[${new Date().toISOString()}][mount] rclone mount webdav-${mountName}: ${mountPath} ${wdArgs.slice(2).join(' ')}`);
                 (0, child_process_1.spawn)(config_1.config.rclonePath, wdArgs, { stdio: 'inherit' });
                 mounts.push({
