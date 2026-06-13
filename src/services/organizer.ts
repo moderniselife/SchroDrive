@@ -21,6 +21,7 @@ import * as path from "path";
 import axios from "axios";
 import { config } from "../core/config";
 import { classifyTorrent } from "../core/mediaClassifier";
+import { getWebdavOrganiserRoots } from "./mount";
 
 // ===========================================================================
 // Types & Constants
@@ -801,6 +802,17 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
       roots.push(linksDir);
     } else {
       roots.push(b);
+    }
+  }
+
+  // Add WebDAV mount roots where skipOrganiser is false
+  if (config.webdavMountsEnabled) {
+    const webdavRoots = getWebdavOrganiserRoots();
+    for (const wr of webdavRoots) {
+      const wrStat = await fsp.stat(wr).catch(() => null);
+      if (wrStat?.isDirectory()) {
+        roots.push(wr);
+      }
     }
   }
   const files: string[] = [];

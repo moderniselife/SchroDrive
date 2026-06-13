@@ -284,6 +284,17 @@ export const config = {
   gdriveApiKey: process.env.GDRIVE_API_KEY || '',
   /** Port for the Cloud Links WebDAV bridge. */
   cloudLinksBridgePort: Number(process.env.CLOUD_LINKS_PORT || 9121),
+
+  // =========================================================================
+  // External WebDAV Mounts — Mount third-party WebDAV servers
+  // =========================================================================
+
+  /** Enable external WebDAV mounting via rclone. */
+  webdavMountsEnabled: String(process.env.WEBDAV_MOUNTS_ENABLED ?? 'false').toLowerCase() === 'true',
+  /** Path to JSON file containing WebDAV mount configurations. */
+  webdavMountsFile: process.env.WEBDAV_MOUNTS_FILE || '/config/webdav.json',
+  /** Inline JSON array of WebDAV mount configs (fallback if file not found). */
+  webdavMountsJson: process.env.WEBDAV_MOUNTS || '',
 };
 
 export function requireEnv(...keys: (keyof typeof config)[]) {
