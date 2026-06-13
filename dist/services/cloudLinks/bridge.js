@@ -24,6 +24,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.getPreWarmStatus = getPreWarmStatus;
 exports.waitForBridgeReady = waitForBridgeReady;
 exports.startCloudLinksBridge = startCloudLinksBridge;
 exports.stopCloudLinksBridge = stopCloudLinksBridge;
@@ -40,6 +41,20 @@ const plexIntegration_1 = require("./plexIntegration");
 // Constants
 // ===========================================================================
 const LOG_PREFIX = '[cloud-links]';
+// ===========================================================================
+// Pre-warm State (exposed via health endpoint)
+// ===========================================================================
+/** Whether the PROPFIND cache pre-warm has completed. */
+let _preWarmComplete = false;
+/** Timestamp when pre-warm finished (ISO string), or null if not yet done. */
+let _preWarmCompletedAt = null;
+/**
+ * Returns the current pre-warm status. Consumed by the health endpoint
+ * so external tools (e.g. deploy scripts) can gate on cache readiness.
+ */
+function getPreWarmStatus() {
+    return { complete: _preWarmComplete, completedAt: _preWarmCompletedAt };
+}
 /** Cache entry is considered fresh for 5 minutes — served without revalidation (dynamic providers). */
 const PROPFIND_FRESH_TTL_MS = 5 * 60 * 1000;
 /** Cache entry is considered stale after 1 hour — must be refetched (dynamic providers). */
@@ -847,18 +862,24 @@ async function preWarmCache() {
     const elapsedSec = (elapsedMs / 1000).toFixed(1);
     console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Pre-warm complete: ${totalCached} paths cached, ` +
         `${totalSkipped} skipped (already fresh). Total time: ${elapsedSec}s`);
-    // Start Plex container now that cache is fully warm, then trigger scan
-    (0, plexIntegration_1.startPlexContainer)().then((started) => {
-        if (started) {
-            console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Plex container started — triggering library scan...`);
-            return (0, plexIntegration_1.triggerPlexScan)();
-        }
-        else {
-            console.warn(`[${new Date().toISOString()}]${LOG_PREFIX} Plex container failed to start — skipping scan trigger`);
-        }
-    }).catch((err) => {
-        console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Post-pre-warm Plex start/scan failed: ${err?.message}`);
-    });
+    // Mark pre-warm as complete (exposed via health endpoint for deploy scripts)
+    _preWarmComplete = true;
+    _preWarmCompletedAt = new Date().toISOString();
+    // Trigger Plex library scan if Plex is reachable.
+    // NOTE: Plex must already be running — SchrosDrive does NOT auto-start it.
+    // If you need delayed Plex start, handle it externally (e.g. deploy script
+    // can poll GET /health and check cloudLinksPreWarm.complete === true).
+    console.log(`[${new Date().toISOString()}]${LOG_PREFIX} ✅ Pre-warm complete — safe to start your media server if it isn't already running.`);
+    const plexUp = await (0, plexIntegration_1.isPlexReachable)();
+    if (plexUp) {
+        console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Plex is reachable — triggering library scan...`);
+        (0, plexIntegration_1.triggerPlexScan)().catch((err) => {
+            console.error(`[${new Date().toISOString()}]${LOG_PREFIX} Post-pre-warm Plex scan failed: ${err?.message}`);
+        });
+    }
+    else {
+        console.log(`[${new Date().toISOString()}]${LOG_PREFIX} Plex is not reachable — skipping scan trigger. Start Plex manually when ready.`);
+    }
 }
 // ===========================================================================
 // Public API

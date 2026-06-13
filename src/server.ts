@@ -29,6 +29,7 @@ import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDock
 import { logBuffer } from "./core/logger";
 import { rateLimiter } from "./core/rateLimiter";
 import { getBridgeStatuses, refreshBridges } from "./services/mount";
+import { getPreWarmStatus } from "./services/cloudLinks/bridge";
 import { getBlacklistEntries, getBlacklistCount, addToBlacklist, removeFromBlacklist, isBlacklisted } from "./core/blacklist";
 import { tokenRotator } from "./core/tokenRotator";
 
@@ -54,7 +55,11 @@ export function startServer() {
 
   /** GET /health — Simple liveness probe. */
   app.get("/health", (_req, res) => {
-    res.json({ ok: true });
+    const preWarm = getPreWarmStatus();
+    res.json({
+      ok: true,
+      cloudLinksPreWarm: preWarm,
+    });
   });
 
   // ===========================================================================
