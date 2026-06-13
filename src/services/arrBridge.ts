@@ -22,6 +22,7 @@ import path from 'path';
 import { config } from '../core/config';
 import { registry } from '../providers';
 import type { AddMagnetResult } from '../providers';
+import { sanitiseName } from '../core/utils';
 
 // ===========================================================================
 // Constants
@@ -381,14 +382,7 @@ function isMediaFile(name: string): boolean {
   ].includes(ext);
 }
 
-/** Sanitises a torrent name for use as a directory name. */
-function sanitiseName(name: string): string {
-  return name
-    .replace(/[<>:"/\\|?*]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 200);
-}
+
 
 // ===========================================================================
 // qBittorrent API v2 — Route Handlers

@@ -150,14 +150,6 @@ function pickCandidateTitleFromPath(fullPath: string): string | undefined {
 function pad2(n: number): string { return n < 10 ? `0${n}` : String(n); }
 
 /**
- * Pads a number to at least 3 digits (e.g. 1 → "001", 42 → "042").
- *
- * @param n - The number to pad.
- * @returns The zero-padded string.
- */
-function pad3(n: number): string { return n < 10 ? `00${n}` : n < 100 ? `0${n}` : String(n); }
-
-/**
  * Pads a number to at least 4 digits (e.g. 1 → "0001").
  *
  * @param n - The number to pad.

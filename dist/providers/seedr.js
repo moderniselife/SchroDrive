@@ -20,14 +20,10 @@
  *
  * @module providers/seedr
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SeedrProvider = void 0;
-const axios_1 = __importDefault(require("axios"));
-const https_1 = __importDefault(require("https"));
-const http_1 = __importDefault(require("http"));
+const httpClient_1 = require("../core/httpClient");
+const utils_1 = require("../core/utils");
 const config_1 = require("../core/config");
 const rateLimiter_1 = require("../core/rateLimiter");
 const tokenRotator_1 = require("../core/tokenRotator");
@@ -36,10 +32,6 @@ const registry_1 = require("./registry");
 // Constants & HTTP Configuration
 // ===========================================================================
 const PROVIDER_NAME = 'seedr';
-/** Force IPv4 to avoid IPv6 timeout issues in Docker containers. */
-const httpAgent = new http_1.default.Agent({ family: 4 });
-const httpsAgent = new https_1.default.Agent({ family: 4 });
-const axiosIPv4 = axios_1.default.create({ httpAgent, httpsAgent });
 // Cache keys for the shared rateLimiter cache
 const TORRENT_LIST_CACHE_KEY = 'seedr_torrents';
 // ===========================================================================
@@ -80,23 +72,6 @@ function authHeaders(overrideToken) {
     return {
         Authorization: `Bearer ${overrideToken || config_1.config.seedrApiKey}`,
     };
-}
-/**
- * Sanitises a string for use as a filesystem path component.
- * Removes or replaces characters that are problematic on common filesystems
- * (Windows NTFS, macOS HFS+, Linux ext4).
- *
- * @param name - The raw name to sanitise.
- * @returns A filesystem-safe string.
- */
-function sanitiseName(name) {
-    return name
-        .replace(/[\x00-\x1F\x7F]/g, '')
-        .replace(/[<>:"/\\|?*]/g, '_')
-        .replace(/_+/g, '_')
-        .replace(/\s+/g, ' ')
-        .replace(/^[.\s]+|[.\s]+$/g, '')
-        || 'unnamed';
 }
 /**
  * Validates a Seedr API response and throws on error.
@@ -192,7 +167,7 @@ class SeedrProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = `${getBaseUrl()}/torrents`;
-            const res = await axiosIPv4.get(url, {
+            const res = await httpClient_1.axiosIPv4.get(url, {
                 headers: authHeaders(),
                 timeout: 30000,
             });
@@ -233,7 +208,7 @@ class SeedrProvider {
             const url = `${getBaseUrl()}/torrents`;
             const params = new URLSearchParams();
             params.set('magnet', magnet);
-            const res = await axiosIPv4.post(url, params, {
+            const res = await httpClient_1.axiosIPv4.post(url, params, {
                 headers: {
                     ...authHeaders(),
                     'Content-Type': 'application/x-www-form-urlencoded',
@@ -276,7 +251,7 @@ class SeedrProvider {
             console.log(`[${new Date().toISOString()}][seedr] Uploading .torrent file${name ? `: ${name}` : ''}`);
             const formData = new FormData();
             formData.append('file', new Blob([new Uint8Array(fileBuffer)], { type: 'application/x-bittorrent' }), name || 'upload.torrent');
-            const res = await axiosIPv4.post(url, formData, {
+            const res = await httpClient_1.axiosIPv4.post(url, formData, {
                 headers: authHeaders(),
                 timeout: 30000,
             });
@@ -350,7 +325,7 @@ class SeedrProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = `${getBaseUrl()}/torrents/${encodeURIComponent(torrentId)}`;
-            await axiosIPv4.delete(url, {
+            await httpClient_1.axiosIPv4.delete(url, {
                 headers: authHeaders(),
                 timeout: 20000,
             });
@@ -384,7 +359,7 @@ class SeedrProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = `${getBaseUrl()}/torrents`;
-            const res = await axiosIPv4.get(url, {
+            const res = await httpClient_1.axiosIPv4.get(url, {
                 headers: authHeaders(),
                 timeout: 20000,
             });
@@ -455,7 +430,7 @@ class SeedrProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = `${getBaseUrl()}/torrents`;
-            const res = await axiosIPv4.get(url, {
+            const res = await httpClient_1.axiosIPv4.get(url, {
                 headers: authHeaders(),
                 timeout: 30000,
             });
@@ -475,7 +450,7 @@ class SeedrProvider {
                     const files = await this.fetchFolderFiles(String(folderId));
                     directories.push({
                         id: String(t.id),
-                        name: sanitiseName(t.name || String(t.id)),
+                        name: (0, utils_1.sanitiseName)(t.name || String(t.id)),
                         originalName: t.name || String(t.id),
                         files,
                     });
@@ -484,7 +459,7 @@ class SeedrProvider {
                     console.warn(`[${new Date().toISOString()}][seedr] failed to fetch files for torrent ${t.id}`, { error: fileErr?.message });
                     directories.push({
                         id: String(t.id),
-                        name: sanitiseName(t.name || String(t.id)),
+                        name: (0, utils_1.sanitiseName)(t.name || String(t.id)),
                         originalName: t.name || String(t.id),
                         files: [],
                     });
@@ -518,7 +493,7 @@ class SeedrProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = `${getBaseUrl()}/file/${encodeURIComponent(fileId)}`;
-            const res = await axiosIPv4.get(url, {
+            const res = await httpClient_1.axiosIPv4.get(url, {
                 headers: authHeaders(downloadToken),
                 timeout: 30000,
             });
@@ -596,7 +571,7 @@ class SeedrProvider {
     async fetchFolderFiles(folderId) {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         const url = `${getBaseUrl()}/folder/${encodeURIComponent(folderId)}`;
-        const res = await axiosIPv4.get(url, {
+        const res = await httpClient_1.axiosIPv4.get(url, {
             headers: authHeaders(),
             timeout: 20000,
         });
@@ -605,7 +580,7 @@ class SeedrProvider {
         const rawFiles = Array.isArray(data?.files) ? data.files : (Array.isArray(data) ? data : []);
         return rawFiles.map((f, idx) => ({
             id: String(f.id ?? idx),
-            name: sanitiseName(f.name || `file_${idx}`),
+            name: (0, utils_1.sanitiseName)(f.name || `file_${idx}`),
             size: typeof f.size === 'number' ? f.size : 0,
         }));
     }

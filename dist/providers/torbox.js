@@ -22,8 +22,8 @@ exports.isTorboxApiDisabled = isTorboxApiDisabled;
 exports.getTorboxApiDisabledReason = getTorboxApiDisabledReason;
 const node_torbox_api_1 = require("node-torbox-api");
 const axios_1 = __importDefault(require("axios"));
-const http_1 = __importDefault(require("http"));
-const https_1 = __importDefault(require("https"));
+const httpClient_1 = require("../core/httpClient");
+const utils_1 = require("../core/utils");
 const config_1 = require("../core/config");
 const rateLimiter_1 = require("../core/rateLimiter");
 const rateLimitStore_1 = require("../core/rateLimitStore");
@@ -32,10 +32,6 @@ const tokenRotator_1 = require("../core/tokenRotator");
 // Constants & HTTP Configuration
 // ===========================================================================
 const PROVIDER_NAME = 'torbox';
-/** Force IPv4 to avoid IPv6 timeout issues in Docker containers. */
-const httpAgent = new http_1.default.Agent({ family: 4 });
-const httpsAgent = new https_1.default.Agent({ family: 4 });
-const axiosIPv4 = axios_1.default.create({ httpAgent, httpsAgent });
 // Cache keys for the shared rateLimiter cache
 const TORRENT_LIST_CACHE_KEY = 'torbox_torrents';
 const WEB_DOWNLOADS_CACHE_KEY = 'torbox_webdownloads';
@@ -123,23 +119,6 @@ function torboxHeaders() {
  */
 function getBaseUrl() {
     return (config_1.config.torboxBaseUrl || 'https://api.torbox.app').replace(/\/$/, '');
-}
-/**
- * Sanitises a string for use as a filesystem path component.
- * Removes or replaces characters that are problematic on common filesystems
- * (Windows NTFS, macOS HFS+, Linux ext4).
- *
- * @param name - The raw name to sanitise.
- * @returns A filesystem-safe string.
- */
-function sanitiseName(name) {
-    return name
-        .replace(/[\x00-\x1F\x7F]/g, '')
-        .replace(/[<>:"/\\|?*]/g, '_')
-        .replace(/_+/g, '_')
-        .replace(/\s+/g, ' ')
-        .replace(/^[.\s]+|[.\s]+$/g, '')
-        || 'unnamed';
 }
 // ===========================================================================
 // TorBoxProvider
@@ -297,7 +276,7 @@ class TorBoxProvider {
             formData.append('file', new Blob([new Uint8Array(fileBuffer)], { type: 'application/x-bittorrent' }), name || 'upload.torrent');
             if (name)
                 formData.append('name', name);
-            const res = await axiosIPv4.post(url, formData, {
+            const res = await httpClient_1.axiosIPv4.post(url, formData, {
                 headers: {
                     Authorization: `Bearer ${config_1.config.torboxApiKey}`,
                 },
@@ -411,7 +390,7 @@ class TorBoxProvider {
         const base = getBaseUrl();
         const url = `${base}/v1/api/torrents/controltorrent`;
         try {
-            await axiosIPv4.post(url, { torrent_id: Number(torrentId), operation: 'delete' }, { headers: torboxHeaders(), timeout: 20000 });
+            await httpClient_1.axiosIPv4.post(url, { torrent_id: Number(torrentId), operation: 'delete' }, { headers: torboxHeaders(), timeout: 20000 });
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             console.log(`[${new Date().toISOString()}][torbox] deleted torrent ${torrentId}`);
         }
@@ -445,7 +424,7 @@ class TorBoxProvider {
         const base = getBaseUrl();
         const url = `${base}/v1/api/torrents/torrentstatus?id=${encodeURIComponent(torrentId)}`;
         try {
-            const res = await axiosIPv4.get(url, { headers: torboxHeaders(), timeout: 20000 });
+            const res = await httpClient_1.axiosIPv4.get(url, { headers: torboxHeaders(), timeout: 20000 });
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             const hash = res.data?.data?.hash;
             return typeof hash === 'string' && hash.length >= 32 ? hash : null;
@@ -608,11 +587,11 @@ class TorBoxProvider {
             const files = Array.isArray(t.files) ? t.files : [];
             return {
                 id: String(t.id),
-                name: sanitiseName(t.name || String(t.id)),
+                name: (0, utils_1.sanitiseName)(t.name || String(t.id)),
                 originalName: t.name || String(t.id),
                 files: files.map((f) => ({
                     id: String(f.id),
-                    name: sanitiseName(f.short_name || f.name || `file_${f.id}`),
+                    name: (0, utils_1.sanitiseName)(f.short_name || f.name || `file_${f.id}`),
                     size: typeof f.size === 'number' ? f.size : 0,
                 })),
             };
@@ -637,7 +616,7 @@ class TorBoxProvider {
         const base = getBaseUrl();
         try {
             const url = `${base}/v1/api/torrents/mylist`;
-            const res = await axiosIPv4.get(url, {
+            const res = await httpClient_1.axiosIPv4.get(url, {
                 headers: { Authorization: `Bearer ${config_1.config.torboxApiKey}` },
                 timeout: 30000,
             });
@@ -684,7 +663,7 @@ class TorBoxProvider {
                 zip_link: 'false',
             });
             const url = `${base}/v1/api/torrents/requestdl?${params.toString()}`;
-            const res = await axiosIPv4.get(url, { timeout: 30000 });
+            const res = await httpClient_1.axiosIPv4.get(url, { timeout: 30000 });
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             const downloadUrl = res?.data?.data;
             if (!downloadUrl || typeof downloadUrl !== 'string') {

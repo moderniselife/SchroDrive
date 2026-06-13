@@ -26,6 +26,7 @@ import { config, providersSet } from "../core/config";
 import { WebDAVBridge } from "./webdavBridge";
 import type { BridgeStatus } from "./webdavBridge";
 import { waitForBridgeReady } from "./cloudLinks/bridge";
+import { sleep } from "../core/utils";
 
 // ===========================================================================
 // Module-level State
@@ -39,7 +40,7 @@ let tmpDir = path.join(os.tmpdir(), "schrodrive");
 // ===========================================================================
 
 /** Configuration for a single external WebDAV mount. */
-export interface WebdavMountConfig {
+interface WebdavMountConfig {
   /** Human-readable name — becomes the mount directory name. */
   name: string;
   /** WebDAV server URL. */
@@ -116,22 +117,6 @@ function isValidWebdavMount(item: any): item is WebdavMountConfig {
     typeof item.name === 'string' && item.name.length > 0 &&
     typeof item.url === 'string' && item.url.length > 0
   );
-}
-
-/**
- * Returns the list of WebDAV mount names that should be SKIPPED by the organiser.
- * Exported for use by organizer.ts.
- */
-export function getWebdavSkipList(): Set<string> {
-  const entries = loadWebdavMounts();
-  const skipSet = new Set<string>();
-  for (const e of entries) {
-    // Default to skip=true if not explicitly set to false
-    if (e.skipOrganiser !== false) {
-      skipSet.add(e.name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase());
-    }
-  }
-  return skipSet;
 }
 
 /**
@@ -522,15 +507,7 @@ function hasUserLogFlags(opts: string | undefined): boolean {
   return tokens.some((t) => t === "-v" || t === "-vv" || t === "-vvv" || t.startsWith("--log-level"));
 }
 
-/**
- * Returns a promise that resolves after the specified number of milliseconds.
- *
- * @param ms - The number of milliseconds to sleep.
- * @returns A promise that resolves after the delay.
- */
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+
 
 /**
  * Checks whether the FUSE `allow_other` option is available on the system.

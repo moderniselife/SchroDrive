@@ -21,14 +21,10 @@
  *
  * @module providers/alldebrid
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AllDebridProvider = void 0;
-const axios_1 = __importDefault(require("axios"));
-const https_1 = __importDefault(require("https"));
-const http_1 = __importDefault(require("http"));
+const httpClient_1 = require("../core/httpClient");
+const utils_1 = require("../core/utils");
 const config_1 = require("../core/config");
 const rateLimiter_1 = require("../core/rateLimiter");
 const tokenRotator_1 = require("../core/tokenRotator");
@@ -36,10 +32,6 @@ const tokenRotator_1 = require("../core/tokenRotator");
 // Constants & HTTP Configuration
 // ===========================================================================
 const PROVIDER_NAME = 'alldebrid';
-/** Force IPv4 to avoid IPv6 timeout issues in Docker containers. */
-const httpAgent = new http_1.default.Agent({ family: 4 });
-const httpsAgent = new https_1.default.Agent({ family: 4 });
-const axiosIPv4 = axios_1.default.create({ httpAgent, httpsAgent });
 // Cache keys for the shared rateLimiter cache
 const TORRENT_LIST_CACHE_KEY = 'alldebrid_torrents';
 // ===========================================================================
@@ -123,23 +115,6 @@ function buildUrl(path, extra = {}) {
         url.searchParams.set(key, value);
     }
     return url.toString();
-}
-/**
- * Sanitises a string for use as a filesystem path component.
- * Removes or replaces characters that are problematic on common filesystems
- * (Windows NTFS, macOS HFS+, Linux ext4).
- *
- * @param name - The raw name to sanitise.
- * @returns A filesystem-safe string.
- */
-function sanitiseName(name) {
-    return name
-        .replace(/[\x00-\x1F\x7F]/g, '')
-        .replace(/[<>:"/\\|?*]/g, '_')
-        .replace(/_+/g, '_')
-        .replace(/\s+/g, ' ')
-        .replace(/^[.\s]+|[.\s]+$/g, '')
-        || 'unnamed';
 }
 /**
  * Extracts the response data from an AllDebrid API response.
@@ -236,7 +211,7 @@ class AllDebridProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = buildUrl('/v4.1/magnet/status');
-            const res = await axiosIPv4.post(url, null, { headers: authHeaders(), timeout: 30000 });
+            const res = await httpClient_1.axiosIPv4.post(url, null, { headers: authHeaders(), timeout: 30000 });
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             const data = unwrapResponse(res, 'list magnets');
             const magnets = Array.isArray(data?.magnets) ? data.magnets : [];
@@ -279,7 +254,7 @@ class AllDebridProvider {
             const uploadUrl = buildUrl('/v4/magnet/upload');
             const params = new URLSearchParams();
             params.set('magnets[]', magnet);
-            const uploadRes = await axiosIPv4.post(uploadUrl, params, {
+            const uploadRes = await httpClient_1.axiosIPv4.post(uploadUrl, params, {
                 headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
                 timeout: 20000,
             });
@@ -324,7 +299,7 @@ class AllDebridProvider {
             console.log(`[${new Date().toISOString()}][ad] Uploading .torrent file${name ? `: ${name}` : ''}`);
             const formData = new FormData();
             formData.append('files[]', new Blob([new Uint8Array(fileBuffer)], { type: 'application/x-bittorrent' }), name || 'upload.torrent');
-            const uploadRes = await axiosIPv4.post(url, formData, {
+            const uploadRes = await httpClient_1.axiosIPv4.post(url, formData, {
                 headers: { ...authHeaders() },
                 timeout: 30000,
             });
@@ -368,7 +343,7 @@ class AllDebridProvider {
             const selectParams = new URLSearchParams();
             selectParams.set('id', id);
             selectParams.set('files[]', 'all');
-            await axiosIPv4.post(url, selectParams, {
+            await httpClient_1.axiosIPv4.post(url, selectParams, {
                 headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
                 timeout: 20000,
             });
@@ -438,7 +413,7 @@ class AllDebridProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = buildUrl('/v4/magnet/delete', { id: torrentId });
-            await axiosIPv4.post(url, null, { headers: authHeaders(), timeout: 20000 });
+            await httpClient_1.axiosIPv4.post(url, null, { headers: authHeaders(), timeout: 20000 });
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             console.log(`[${new Date().toISOString()}][ad] deleted magnet ${torrentId}`);
         }
@@ -470,7 +445,7 @@ class AllDebridProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = buildUrl('/v4.1/magnet/status', { id: torrentId });
-            const res = await axiosIPv4.post(url, null, { headers: authHeaders(), timeout: 20000 });
+            const res = await httpClient_1.axiosIPv4.post(url, null, { headers: authHeaders(), timeout: 20000 });
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             const data = unwrapResponse(res, 'get magnet info');
             // Single magnet query returns { magnets: { ... } } (object, not array)
@@ -549,7 +524,7 @@ class AllDebridProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = buildUrl('/v4.1/magnet/status');
-            const res = await axiosIPv4.post(url, null, { headers: authHeaders(), timeout: 30000 });
+            const res = await httpClient_1.axiosIPv4.post(url, null, { headers: authHeaders(), timeout: 30000 });
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             const data = unwrapResponse(res, 'fetch directories');
             const magnets = Array.isArray(data?.magnets) ? data.magnets : [];
@@ -564,12 +539,12 @@ class AllDebridProvider {
                 const rawLinks = Array.isArray(m.links) ? m.links : [];
                 const files = rawLinks.map((link, idx) => ({
                     id: String(idx),
-                    name: sanitiseName(link.filename || link.n || `file_${idx}`),
+                    name: (0, utils_1.sanitiseName)(link.filename || link.n || `file_${idx}`),
                     size: typeof link.size === 'number' ? link.size : (typeof link.s === 'number' ? link.s : 0),
                 }));
                 return {
                     id: String(m.id),
-                    name: sanitiseName(m.filename || m.name || String(m.id)),
+                    name: (0, utils_1.sanitiseName)(m.filename || m.name || String(m.id)),
                     originalName: m.filename || m.name || String(m.id),
                     files,
                 };
@@ -604,7 +579,7 @@ class AllDebridProvider {
         try {
             // Fetch the magnet info to retrieve the file link
             const infoUrl = buildUrl('/v4.1/magnet/status', { id: torrentId });
-            const infoRes = await axiosIPv4.post(infoUrl, null, { headers: authHeaders(downloadToken), timeout: 30000 });
+            const infoRes = await httpClient_1.axiosIPv4.post(infoUrl, null, { headers: authHeaders(downloadToken), timeout: 30000 });
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             const infoData = unwrapResponse(infoRes, 'magnet info');
             // When querying a single magnet, AllDebrid returns { magnets: { ... } } (object, not array)
@@ -626,7 +601,7 @@ class AllDebridProvider {
             const unlockUrl = buildUrl('/v4/link/unlock');
             const params = new URLSearchParams();
             params.set('link', fileLink);
-            const unlockRes = await axiosIPv4.post(unlockUrl, params, {
+            const unlockRes = await httpClient_1.axiosIPv4.post(unlockUrl, params, {
                 headers: { ...authHeaders(downloadToken), 'Content-Type': 'application/x-www-form-urlencoded' },
                 timeout: 20000,
             });

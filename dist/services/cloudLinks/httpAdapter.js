@@ -54,6 +54,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.HttpAdapter = void 0;
+const utils_1 = require("../../core/utils");
 // ===========================================================================
 // Helpers
 // ===========================================================================
@@ -69,10 +70,6 @@ function safeDecodeURIComponent(str) {
     catch {
         return str;
     }
-}
-/** Promise-based delay for rate-limiting. */
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 // ===========================================================================
 // HTML Directory Listing Parsers
@@ -443,7 +440,7 @@ class HttpAdapter {
         }
         else {
             // Need to fetch
-            await sleep(this.crawlDelayMs);
+            await (0, utils_1.sleep)(this.crawlDelayMs);
             const fetched = await this.fetchRemoteListing(url);
             if (!fetched)
                 return; // Failed — skip this branch

@@ -1,5 +1,5 @@
 import axios from "axios";
-import { config, requireEnv } from "../core/config";
+import { config } from "../core/config";
 import { searchIndexer, pickBestResult, getMagnet, getMagnetOrResolve, testIndexerConnection, getProviderName, isIndexerConfigured } from "../indexers/index";
 import { registry } from "../providers";
 import { upsertOverseerrRequest, getAllOverseerrRequests, isOverseerrProcessed, markOverseerrProcessed, getProcessedOverseerrKeys } from "../core/db";
