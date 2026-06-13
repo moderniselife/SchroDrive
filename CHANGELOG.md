@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.10.0] - 2026-06-14 🌐
+*Status: External WebDAV mounts, Plex auto-start safety, 429 spam fixes*
+
+### Added ✨
+- **External WebDAV mount support** (`src/services/mount.ts`, `src/core/config.ts`):
+  - Mount third-party WebDAV servers as read-only FUSE filesystems via rclone
+  - Configured via `webdav.json` file (gitignored — never committed) or `WEBDAV_MOUNTS` env var
+  - Each entry supports: `name`, `url`, `username`, `password`, `skipOrganiser`, `readOnly`
+  - Mounts appear under `/mnt/schrodrive/webdav/<name>/`
+  - Dedicated rclone config per mount with obscured passwords
+  - Remote test (`rclone lsd`) before mounting — skips unreachable servers
+  - Health monitoring and automatic cleanup on shutdown
+  - Retry limits (`--retries 1 --low-level-retries 3`) to prevent D-state kernel hangs
+- **Organiser skip flag for WebDAV mounts** (`src/services/organizer.ts`):
+  - `skipOrganiser: true` (default) — mount is excluded from organiser scans (pre-sorted content)
+  - `skipOrganiser: false` — mount is added to organiser scan roots for classification
+  - New exports: `getWebdavSkipList()`, `getWebdavOrganiserRoots()`
+- **Plex auto-start after cache pre-warm** (`src/services/cloudLinks/plexIntegration.ts`):
+  - `startPlexContainer()` — runs `docker start plex` and waits for HTTP reachability (up to 90s)
+  - Wired into bridge: pre-warm complete → start Plex → trigger scan
+  - Prevents Plex from scanning empty directories during cold cache (which deletes library items)
+
+### Changed 🔄
+- **Deploy script** (`deploy-schrodrive.sh`):
+  - Creates Plex container without starting it (`docker compose create plex`)
+  - SchrosDrive auto-starts Plex after cache pre-warm completes
+  - Copies `webdav.json` to remote alongside `cloud_links.json`
+- **429 log spam suppressed** (`src/services/cloudLinks/httpAdapter.ts`, `bridge.ts`):
+  - Per-request "Fetch failed" logs for 429 errors suppressed (already logged via rate-limit summary)
+  - Pre-warm per-path error logs for 429s suppressed
+- **Disk cache OOM fix** (`src/services/cloudLinks/httpAdapter.ts`):
+  - `MAX_DISK_CACHE_SIZE` reduced from 3000 → 500 to prevent OOM on serialisation for large directories (31K+ folders)
+
 ### Version [0.9.0] - 2026-06-07 🌐
 *Status: 11-provider debrid ecosystem — the most provider support of any debrid automation tool*
 
