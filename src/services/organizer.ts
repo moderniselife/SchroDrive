@@ -21,6 +21,7 @@ import * as path from "path";
 import axios from "axios";
 import { config } from "../core/config";
 import { classifyTorrent } from "../core/mediaClassifier";
+import { getWebdavOrganiserRoots } from "./mount";
 
 // ===========================================================================
 // Types & Constants
@@ -147,14 +148,6 @@ function pickCandidateTitleFromPath(fullPath: string): string | undefined {
  * @returns The zero-padded string.
  */
 function pad2(n: number): string { return n < 10 ? `0${n}` : String(n); }
-
-/**
- * Pads a number to at least 3 digits (e.g. 1 → "001", 42 → "042").
- *
- * @param n - The number to pad.
- * @returns The zero-padded string.
- */
-function pad3(n: number): string { return n < 10 ? `00${n}` : n < 100 ? `0${n}` : String(n); }
 
 /**
  * Pads a number to at least 4 digits (e.g. 1 → "0001").
@@ -801,6 +794,17 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
       roots.push(linksDir);
     } else {
       roots.push(b);
+    }
+  }
+
+  // Add WebDAV mount roots where skipOrganiser is false
+  if (config.webdavMountsEnabled) {
+    const webdavRoots = getWebdavOrganiserRoots();
+    for (const wr of webdavRoots) {
+      const wrStat = await fsp.stat(wr).catch(() => null);
+      if (wrStat?.isDirectory()) {
+        roots.push(wr);
+      }
     }
   }
   const files: string[] = [];

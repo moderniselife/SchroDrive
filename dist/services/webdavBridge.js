@@ -26,24 +26,17 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.WebDAVBridge = void 0;
 const express_1 = __importDefault(require("express"));
-const http_1 = __importDefault(require("http"));
-const https_1 = __importDefault(require("https"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
-const axios_1 = __importDefault(require("axios"));
 const config_1 = require("../core/config");
+const utils_1 = require("../core/utils");
+const httpClient_1 = require("../core/httpClient");
 const rateLimiter_1 = require("../core/rateLimiter");
 const tokenRotator_1 = require("../core/tokenRotator");
 const providers_1 = require("../providers");
 const db_1 = require("../core/db");
 const errors_1 = require("../core/errors");
 const mediaClassifier_1 = require("../core/mediaClassifier");
-// ===========================================================================
-// HTTP Client (IPv4 forced — matches realdebrid.ts pattern)
-// ===========================================================================
-const httpAgent = new http_1.default.Agent({ family: 4 });
-const httpsAgent = new https_1.default.Agent({ family: 4 });
-const axiosIPv4 = axios_1.default.create({ httpAgent, httpsAgent });
 /**
  * Number of consecutive download failures before a torrent is flagged as dead.
  * Once flagged, the dead scanner can delete it from the provider, blacklist
@@ -105,31 +98,6 @@ function logError(provider, message, data) {
     else {
         console.error(`${prefix} ${message}`);
     }
-}
-// ===========================================================================
-// Filesystem Name Sanitisation
-// ===========================================================================
-/**
- * Sanitises a string for use as a filesystem path component.
- * Removes or replaces characters that are problematic on common filesystems
- * (Windows NTFS, macOS HFS+, Linux ext4).
- *
- * @param name - The raw name to sanitise.
- * @returns A filesystem-safe string.
- */
-function sanitiseName(name) {
-    return name
-        // Remove control characters
-        .replace(/[\x00-\x1F\x7F]/g, "")
-        // Replace characters illegal on Windows/macOS
-        .replace(/[<>:"/\\|?*]/g, "_")
-        // Collapse multiple underscores/spaces
-        .replace(/_+/g, "_")
-        .replace(/\s+/g, " ")
-        // Trim leading/trailing dots and spaces (Windows restriction)
-        .replace(/^[.\s]+|[.\s]+$/g, "")
-        // Fallback if the name is now empty
-        || "unnamed";
 }
 // ===========================================================================
 // Retry Utility
@@ -468,7 +436,7 @@ async function fetchRDDirectories() {
     try {
         while (true) {
             const url = `${base}/torrents?limit=${limit}&page=${page}`;
-            const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
+            const res = await httpClient_1.axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
             rateLimiter_1.rateLimiter.recordSuccess(providerName);
             const arr = Array.isArray(res?.data) ? res.data : [];
             allTorrents.push(...arr);
@@ -485,7 +453,7 @@ async function fetchRDDirectories() {
         log(providerName, `Fetched ${completed.length} completed torrents out of ${allTorrents.length} total`);
         return completed.map((t) => ({
             id: String(t.id),
-            name: sanitiseName(t.filename || t.id),
+            name: (0, utils_1.sanitiseName)(t.filename || t.id),
             originalName: t.filename || t.id,
             files: [], // Files are fetched lazily via torrent info endpoint
         }));
@@ -517,7 +485,7 @@ async function fetchRDTorrentFiles(torrentId) {
     const base = (config_1.config.rdApiBase || "https://api.real-debrid.com/rest/1.0").replace(/\/$/, "");
     try {
         const url = `${base}/torrents/info/${encodeURIComponent(torrentId)}`;
-        const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
+        const res = await httpClient_1.axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
         rateLimiter_1.rateLimiter.recordSuccess(providerName);
         const files = Array.isArray(res?.data?.files) ? res.data.files : [];
         const links = Array.isArray(res?.data?.links) ? res.data.links : [];
@@ -538,7 +506,7 @@ async function fetchRDTorrentFiles(torrentId) {
             const fileName = pathParts[pathParts.length - 1] || `file_${f.id}`;
             result.push({
                 id: String(f.id),
-                name: sanitiseName(fileName),
+                name: (0, utils_1.sanitiseName)(fileName),
                 size: typeof f.bytes === 'number' ? f.bytes : 0,
                 linkIndex: linkIdx,
             });
@@ -576,7 +544,7 @@ async function resolveRDDownloadUrl(torrentId, linkIndex) {
     try {
         // First, get the torrent info to retrieve the link
         const infoUrl = `${base}/torrents/info/${encodeURIComponent(torrentId)}`;
-        const infoRes = await axiosIPv4.get(infoUrl, { headers: rdHeaders(downloadToken), timeout: 30000 });
+        const infoRes = await httpClient_1.axiosIPv4.get(infoUrl, { headers: rdHeaders(downloadToken), timeout: 30000 });
         rateLimiter_1.rateLimiter.recordSuccess(providerName);
         const links = Array.isArray(infoRes?.data?.links) ? infoRes.data.links : [];
         if (linkIndex < 0 || linkIndex >= links.length) {
@@ -588,7 +556,7 @@ async function resolveRDDownloadUrl(torrentId, linkIndex) {
         const unrestrictUrl = `${base}/unrestrict/link`;
         const params = new URLSearchParams();
         params.set("link", link);
-        const unrestrictRes = await axiosIPv4.post(unrestrictUrl, params, {
+        const unrestrictRes = await httpClient_1.axiosIPv4.post(unrestrictUrl, params, {
             headers: { ...rdHeaders(downloadToken), "Content-Type": "application/x-www-form-urlencoded" },
             timeout: 20000,
         });
@@ -644,7 +612,7 @@ async function fetchTBDirectories() {
     const base = (config_1.config.torboxBaseUrl || "https://api.torbox.app").replace(/\/$/, "");
     try {
         const url = `${base}/v1/api/torrents/mylist`;
-        const res = await axiosIPv4.get(url, {
+        const res = await httpClient_1.axiosIPv4.get(url, {
             headers: { Authorization: `Bearer ${config_1.config.torboxApiKey}` },
             timeout: 30000,
         });
@@ -658,11 +626,11 @@ async function fetchTBDirectories() {
             const files = Array.isArray(t.files) ? t.files : [];
             return {
                 id: String(t.id),
-                name: sanitiseName(t.name || String(t.id)),
+                name: (0, utils_1.sanitiseName)(t.name || String(t.id)),
                 originalName: t.name || String(t.id),
                 files: files.map((f) => ({
                     id: String(f.id),
-                    name: sanitiseName(f.short_name || f.name || `file_${f.id}`),
+                    name: (0, utils_1.sanitiseName)(f.short_name || f.name || `file_${f.id}`),
                     size: typeof f.size === "number" ? f.size : 0,
                 })),
             };
@@ -702,7 +670,7 @@ async function resolveTBDownloadUrl(torrentId, fileId) {
             zip_link: "false",
         });
         const url = `${base}/v1/api/torrents/requestdl?${params.toString()}`;
-        const res = await axiosIPv4.get(url, { timeout: 30000 });
+        const res = await httpClient_1.axiosIPv4.get(url, { timeout: 30000 });
         rateLimiter_1.rateLimiter.recordSuccess(providerName);
         const downloadUrl = res?.data?.data;
         if (!downloadUrl || typeof downloadUrl !== "string") {

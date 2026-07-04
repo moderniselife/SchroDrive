@@ -228,10 +228,10 @@ const tests: Array<{ name: string; fn: () => Promise<string | void>; timeoutMs?:
     },
   },
 
-  // 6. Downloads (longer timeout — hits multiple provider APIs)
+  // 6. Downloads (longer timeout — paginates through all provider downloads, can be thousands)
   {
     name: 'Downloads endpoint',
-    timeoutMs: 30_000,
+    timeoutMs: 120_000,
     fn: async () => {
       const { body } = await fetchJson('/api/downloads');
       assert(body.ok === true, 'Expected ok: true');

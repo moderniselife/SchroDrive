@@ -13,14 +13,10 @@
  *
  * @module providers/realdebrid
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RealDebridProvider = void 0;
-const axios_1 = __importDefault(require("axios"));
-const https_1 = __importDefault(require("https"));
-const http_1 = __importDefault(require("http"));
+const httpClient_1 = require("../core/httpClient");
+const utils_1 = require("../core/utils");
 const config_1 = require("../core/config");
 const rateLimiter_1 = require("../core/rateLimiter");
 const tokenRotator_1 = require("../core/tokenRotator");
@@ -28,10 +24,6 @@ const tokenRotator_1 = require("../core/tokenRotator");
 // Constants & HTTP Configuration
 // ===========================================================================
 const PROVIDER_NAME = 'realdebrid';
-/** Force IPv4 to avoid IPv6 timeout issues in Docker containers. */
-const httpAgent = new http_1.default.Agent({ family: 4 });
-const httpsAgent = new https_1.default.Agent({ family: 4 });
-const axiosIPv4 = axios_1.default.create({ httpAgent, httpsAgent });
 // Cache keys for the shared rateLimiter cache
 const TORRENT_LIST_CACHE_KEY = 'realdebrid_torrents';
 const DOWNLOADS_CACHE_KEY = 'realdebrid_downloads';
@@ -53,23 +45,6 @@ function rdHeaders(overrideToken) {
  */
 function getBaseUrl() {
     return (config_1.config.rdApiBase || 'https://api.real-debrid.com/rest/1.0').replace(/\/$/, '');
-}
-/**
- * Sanitises a string for use as a filesystem path component.
- * Removes or replaces characters that are problematic on common filesystems
- * (Windows NTFS, macOS HFS+, Linux ext4).
- *
- * @param name - The raw name to sanitise.
- * @returns A filesystem-safe string.
- */
-function sanitiseName(name) {
-    return name
-        .replace(/[\x00-\x1F\x7F]/g, '')
-        .replace(/[<>:"/\\|?*]/g, '_')
-        .replace(/_+/g, '_')
-        .replace(/\s+/g, ' ')
-        .replace(/^[.\s]+|[.\s]+$/g, '')
-        || 'unnamed';
 }
 // ===========================================================================
 // RealDebridProvider
@@ -149,7 +124,7 @@ class RealDebridProvider {
         try {
             while (true) {
                 const url = `${base}/torrents?limit=${limit}&page=${page}`;
-                const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
+                const res = await httpClient_1.axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
                 rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
                 const arr = Array.isArray(res?.data) ? res.data : [];
                 allTorrents.push(...arr);
@@ -197,7 +172,7 @@ class RealDebridProvider {
         try {
             while (true) {
                 const url = `${base}/torrents?limit=${limit}&page=${page}`;
-                const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
+                const res = await httpClient_1.axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
                 rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
                 const arr = Array.isArray(res?.data) ? res.data : [];
                 if (arr.length > 0) {
@@ -236,7 +211,7 @@ class RealDebridProvider {
         const params = new URLSearchParams();
         params.set('magnet', magnet);
         try {
-            const res = await axiosIPv4.post(url, params, {
+            const res = await httpClient_1.axiosIPv4.post(url, params, {
                 headers: { ...rdHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
                 timeout: 20000,
             });
@@ -276,7 +251,7 @@ class RealDebridProvider {
         const url = `${base}/torrents/addTorrent`;
         console.log(`[${new Date().toISOString()}][rd] Uploading .torrent file${name ? `: ${name}` : ''}`);
         try {
-            const res = await axiosIPv4.put(url, fileBuffer, {
+            const res = await httpClient_1.axiosIPv4.put(url, fileBuffer, {
                 headers: {
                     ...rdHeaders(),
                     'Content-Type': 'application/x-bittorrent',
@@ -322,7 +297,7 @@ class RealDebridProvider {
         const maxAttempts = 3;
         while (attempts < maxAttempts) {
             try {
-                await axiosIPv4.post(url, params, {
+                await httpClient_1.axiosIPv4.post(url, params, {
                     headers: { ...rdHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
                     timeout: 20000,
                 });
@@ -412,7 +387,7 @@ class RealDebridProvider {
         const base = getBaseUrl();
         const url = `${base}/torrents/delete/${encodeURIComponent(torrentId)}`;
         try {
-            await axiosIPv4.delete(url, { headers: rdHeaders(), timeout: 20000 });
+            await httpClient_1.axiosIPv4.delete(url, { headers: rdHeaders(), timeout: 20000 });
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             console.log(`[${new Date().toISOString()}][rd] deleted torrent ${torrentId}`);
         }
@@ -437,7 +412,7 @@ class RealDebridProvider {
         const base = getBaseUrl();
         const url = `${base}/torrents/info/${encodeURIComponent(torrentId)}`;
         try {
-            const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 20000 });
+            const res = await httpClient_1.axiosIPv4.get(url, { headers: rdHeaders(), timeout: 20000 });
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             const hash = res.data?.hash;
             return typeof hash === 'string' && hash.length >= 32 ? hash : null;
@@ -538,7 +513,7 @@ class RealDebridProvider {
         try {
             while (true) {
                 const url = `${base}/downloads?limit=${limit}&page=${page}`;
-                const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
+                const res = await httpClient_1.axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
                 rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
                 const arr = Array.isArray(res?.data) ? res.data : [];
                 allDownloads.push(...arr);
@@ -586,7 +561,7 @@ class RealDebridProvider {
         try {
             while (true) {
                 const url = `${base}/downloads?limit=${limit}&page=${page}`;
-                const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
+                const res = await httpClient_1.axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
                 rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
                 const arr = Array.isArray(res?.data) ? res.data : [];
                 if (arr.length > 0) {
@@ -619,7 +594,7 @@ class RealDebridProvider {
         });
         return completed.map((t) => ({
             id: String(t.id),
-            name: sanitiseName(t.filename || t.id),
+            name: (0, utils_1.sanitiseName)(t.filename || t.id),
             originalName: t.filename || t.id,
             files: [],
         }));
@@ -645,7 +620,7 @@ class RealDebridProvider {
         try {
             while (true) {
                 const url = `${base}/torrents?limit=${limit}&page=${page}`;
-                const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
+                const res = await httpClient_1.axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
                 rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
                 const arr = Array.isArray(res?.data) ? res.data : [];
                 allTorrents.push(...arr);
@@ -686,7 +661,7 @@ class RealDebridProvider {
         const base = getBaseUrl();
         try {
             const url = `${base}/torrents/info/${encodeURIComponent(torrentId)}`;
-            const res = await axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
+            const res = await httpClient_1.axiosIPv4.get(url, { headers: rdHeaders(), timeout: 30000 });
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             const files = Array.isArray(res?.data?.files) ? res.data.files : [];
             const links = Array.isArray(res?.data?.links) ? res.data.links : [];
@@ -705,7 +680,7 @@ class RealDebridProvider {
                 const fileName = pathParts[pathParts.length - 1] || `file_${f.id}`;
                 result.push({
                     id: String(f.id),
-                    name: sanitiseName(fileName),
+                    name: (0, utils_1.sanitiseName)(fileName),
                     size: typeof f.bytes === 'number' ? f.bytes : 0,
                     linkIndex: linkIdx,
                 });
@@ -743,7 +718,7 @@ class RealDebridProvider {
         try {
             // First, get the torrent info to retrieve the link
             const infoUrl = `${base}/torrents/info/${encodeURIComponent(torrentId)}`;
-            const infoRes = await axiosIPv4.get(infoUrl, { headers: rdHeaders(downloadToken), timeout: 30000 });
+            const infoRes = await httpClient_1.axiosIPv4.get(infoUrl, { headers: rdHeaders(downloadToken), timeout: 30000 });
             rateLimiter_1.rateLimiter.recordSuccess(PROVIDER_NAME);
             const links = Array.isArray(infoRes?.data?.links) ? infoRes.data.links : [];
             if (linkIndex < 0 || linkIndex >= links.length) {
@@ -757,7 +732,7 @@ class RealDebridProvider {
             const unrestrictUrl = `${base}/unrestrict/link`;
             const params = new URLSearchParams();
             params.set('link', link);
-            const unrestrictRes = await axiosIPv4.post(unrestrictUrl, params, {
+            const unrestrictRes = await httpClient_1.axiosIPv4.post(unrestrictUrl, params, {
                 headers: { ...rdHeaders(downloadToken), 'Content-Type': 'application/x-www-form-urlencoded' },
                 timeout: 20000,
             });

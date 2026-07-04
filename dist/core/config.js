@@ -29,11 +29,12 @@ exports.config = {
     indexerProvider: (process.env.INDEXER_PROVIDER || "auto"),
     torboxApiKey: process.env.TORBOX_API_KEY || "",
     torboxBaseUrl: process.env.TORBOX_BASE_URL || "https://api.torbox.app",
-    overseerrAuth: process.env.OVERSEERR_AUTH || process.env.JELLYSEERR_AUTH || "",
-    // Overseerr / Jellyseerr API (poller) configuration
-    // Jellyseerr is API-compatible with Overseerr — either set of env vars works
-    overseerrUrl: process.env.OVERSEERR_URL || process.env.JELLYSEERR_URL || "",
-    overseerrApiKey: process.env.OVERSEERR_API_KEY || process.env.JELLYSEERR_API_KEY || "",
+    overseerrAuth: process.env.SEERR_AUTH || process.env.OVERSEERR_AUTH || process.env.JELLYSEERR_AUTH || "",
+    // Seerr / Overseerr / Jellyseerr API (poller) configuration
+    // Seerr is the merged successor to Overseerr + Jellyseerr — all three share the same API.
+    // Priority: SEERR_* > OVERSEERR_* > JELLYSEERR_* (all are supported for backward compatibility)
+    overseerrUrl: process.env.SEERR_URL || process.env.OVERSEERR_URL || process.env.JELLYSEERR_URL || "",
+    overseerrApiKey: process.env.SEERR_API_KEY || process.env.OVERSEERR_API_KEY || process.env.JELLYSEERR_API_KEY || "",
     pollIntervalSeconds: Number(process.env.POLL_INTERVAL_S || 30),
     // Runtime toggles
     runWebhook: String(process.env.RUN_WEBHOOK ?? "true").toLowerCase() !== "false",
@@ -282,6 +283,15 @@ exports.config = {
     gdriveApiKey: process.env.GDRIVE_API_KEY || '',
     /** Port for the Cloud Links WebDAV bridge. */
     cloudLinksBridgePort: Number(process.env.CLOUD_LINKS_PORT || 9121),
+    // =========================================================================
+    // External WebDAV Mounts — Mount third-party WebDAV servers
+    // =========================================================================
+    /** Enable external WebDAV mounting via rclone. */
+    webdavMountsEnabled: String(process.env.WEBDAV_MOUNTS_ENABLED ?? 'false').toLowerCase() === 'true',
+    /** Path to JSON file containing WebDAV mount configurations. */
+    webdavMountsFile: process.env.WEBDAV_MOUNTS_FILE || '/config/webdav.json',
+    /** Inline JSON array of WebDAV mount configs (fallback if file not found). */
+    webdavMountsJson: process.env.WEBDAV_MOUNTS || '',
 };
 function requireEnv(...keys) {
     const missing = keys.filter((k) => !String(exports.config[k] || "").trim());

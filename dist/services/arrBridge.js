@@ -25,6 +25,7 @@ const promises_1 = __importDefault(require("fs/promises"));
 const path_1 = __importDefault(require("path"));
 const config_1 = require("../core/config");
 const providers_1 = require("../providers");
+const utils_1 = require("../core/utils");
 // ===========================================================================
 // Constants
 // ===========================================================================
@@ -235,7 +236,7 @@ async function scanMountsForCompleted() {
             }
             if (foundPath && foundFiles.length > 0) {
                 // Create symlinks in the downloads staging directory
-                const torrentDir = path_1.default.join(getDownloadsPath(), torrent.category || '', sanitiseName(torrent.name));
+                const torrentDir = path_1.default.join(getDownloadsPath(), torrent.category || '', (0, utils_1.sanitiseName)(torrent.name));
                 await promises_1.default.mkdir(torrentDir, { recursive: true });
                 for (const file of foundFiles) {
                     const symlinkPath = path_1.default.join(torrentDir, file.name);
@@ -304,14 +305,6 @@ function isMediaFile(name) {
         '.srt', '.ass', '.sub', '.idx', '.ssa', '.vtt',
         '.nfo', '.jpg', '.jpeg', '.png',
     ].includes(ext);
-}
-/** Sanitises a torrent name for use as a directory name. */
-function sanitiseName(name) {
-    return name
-        .replace(/[<>:"/\\|?*]/g, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 200);
 }
 // ===========================================================================
 // qBittorrent API v2 — Route Handlers

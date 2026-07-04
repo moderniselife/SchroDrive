@@ -59,6 +59,7 @@ const path = __importStar(require("path"));
 const axios_1 = __importDefault(require("axios"));
 const config_1 = require("../core/config");
 const mediaClassifier_1 = require("../core/mediaClassifier");
+const mount_1 = require("./mount");
 // ===========================================================================
 // Types & Constants
 // ===========================================================================
@@ -178,13 +179,6 @@ function pickCandidateTitleFromPath(fullPath) {
  * @returns The zero-padded string.
  */
 function pad2(n) { return n < 10 ? `0${n}` : String(n); }
-/**
- * Pads a number to at least 3 digits (e.g. 1 → "001", 42 → "042").
- *
- * @param n - The number to pad.
- * @returns The zero-padded string.
- */
-function pad3(n) { return n < 10 ? `00${n}` : n < 100 ? `0${n}` : String(n); }
 /**
  * Pads a number to at least 4 digits (e.g. 1 → "0001").
  *
@@ -772,6 +766,16 @@ async function organizeOnce(opts) {
         }
         else {
             roots.push(b);
+        }
+    }
+    // Add WebDAV mount roots where skipOrganiser is false
+    if (config_1.config.webdavMountsEnabled) {
+        const webdavRoots = (0, mount_1.getWebdavOrganiserRoots)();
+        for (const wr of webdavRoots) {
+            const wrStat = await fsp.stat(wr).catch(() => null);
+            if (wrStat?.isDirectory()) {
+                roots.push(wr);
+            }
         }
     }
     const files = [];

@@ -20,7 +20,7 @@ import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
-import { config, requireEnv } from "./core/config";
+import { config } from "./core/config";
 import { searchIndexer, pickBestResult, getMagnet, getProviderName, isIndexerConfigured } from "./indexers/index";
 import { registry, type DebridProvider, type TorrentInfo, type DownloadInfo } from "./providers";
 import { startOverseerrPoller } from "./services/overseerr";
@@ -28,7 +28,8 @@ import { startAutoUpdater } from "./services/autoUpdate";
 import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDocker, CONFIG_SCHEMA } from "./core/configApi";
 import { logBuffer } from "./core/logger";
 import { rateLimiter } from "./core/rateLimiter";
-import { getBridgeStatuses, refreshBridges } from "./services/mount";
+import { getBridgeStatuses, refreshBridges, getExternalWebdavStatus } from "./services/mount";
+import { getPreWarmStatus } from "./services/cloudLinks/bridge";
 import { getBlacklistEntries, getBlacklistCount, addToBlacklist, removeFromBlacklist, isBlacklisted } from "./core/blacklist";
 import { tokenRotator } from "./core/tokenRotator";
 
@@ -54,7 +55,11 @@ export function startServer() {
 
   /** GET /health — Simple liveness probe. */
   app.get("/health", (_req, res) => {
-    res.json({ ok: true });
+    const preWarm = getPreWarmStatus();
+    res.json({
+      ok: true,
+      cloudLinksPreWarm: preWarm,
+    });
   });
 
   // ===========================================================================
@@ -141,6 +146,7 @@ export function startServer() {
         count: getBlacklistCount(),
       },
       webdavBridges: getBridgeStatuses(),
+      externalWebdavMounts: getExternalWebdavStatus(),
       tokenRotation: (() => {
         const status = tokenRotator.getAllStatus();
         const summary: Record<string, { activeTokens: number; limitedTokens: number; totalTokens: number }> = {};

@@ -22,11 +22,11 @@
 
 import express, { type Request, type Response, type NextFunction } from "express";
 import http from "http";
-import https from "https";
 import fs from "fs";
 import nodePath from "path";
-import axios from "axios";
 import { config } from "../core/config";
+import { sanitiseName } from "../core/utils";
+import { axiosIPv4 } from "../core/httpClient";
 import { rateLimiter } from "../core/rateLimiter";
 import { tokenRotator } from "../core/tokenRotator";
 import { registry } from "../providers";
@@ -46,13 +46,7 @@ import {
   type MediaView,
 } from "../core/mediaClassifier";
 
-// ===========================================================================
-// HTTP Client (IPv4 forced — matches realdebrid.ts pattern)
-// ===========================================================================
 
-const httpAgent = new http.Agent({ family: 4 });
-const httpsAgent = new https.Agent({ family: 4 });
-const axiosIPv4 = axios.create({ httpAgent, httpsAgent });
 
 // ===========================================================================
 // Types & Interfaces
@@ -199,32 +193,7 @@ function logError(provider: string, message: string, data?: Record<string, unkno
   }
 }
 
-// ===========================================================================
-// Filesystem Name Sanitisation
-// ===========================================================================
 
-/**
- * Sanitises a string for use as a filesystem path component.
- * Removes or replaces characters that are problematic on common filesystems
- * (Windows NTFS, macOS HFS+, Linux ext4).
- *
- * @param name - The raw name to sanitise.
- * @returns A filesystem-safe string.
- */
-function sanitiseName(name: string): string {
-  return name
-    // Remove control characters
-    .replace(/[\x00-\x1F\x7F]/g, "")
-    // Replace characters illegal on Windows/macOS
-    .replace(/[<>:"/\\|?*]/g, "_")
-    // Collapse multiple underscores/spaces
-    .replace(/_+/g, "_")
-    .replace(/\s+/g, " ")
-    // Trim leading/trailing dots and spaces (Windows restriction)
-    .replace(/^[.\s]+|[.\s]+$/g, "")
-    // Fallback if the name is now empty
-    || "unnamed";
-}
 
 // ===========================================================================
 // Retry Utility
