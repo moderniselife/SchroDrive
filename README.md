@@ -103,7 +103,7 @@ curl http://localhost:8978/health
 |----------|:--------:|:------------:|:------:|:------------:|:------:|--------|
 | **TorBox** | ✅ | ✅ | ✅ | ✅ | ✅ | Fully supported |
 | **RealDebrid** | ✅ | — | — | ✅ | ✅ | Fully supported |
-| **AllDebrid** | ✅ | — | — | ✅ | ✅ | In-testing 🧪 |
+| **AllDebrid** | ✅ | — | — | ✅ | ✅ | Fully supported |
 | **Premiumize** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
 | **Debrid-Link** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
 | **Deepbrid** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
@@ -114,7 +114,7 @@ curl http://localhost:8978/health
 | **PikPak** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
 
 > [!NOTE]
-> **AllDebrid** is currently in-testing with live accounts. **Premiumize, Debrid-Link, Deepbrid, Offcloud, Put.io, MegaDebrid, Seedr, and PikPak** are fully implemented but have not been tested with live accounts yet. If you have an account and want to help test, please open an issue with your findings.
+> **Premiumize, Debrid-Link, Deepbrid, Offcloud, Put.io, MegaDebrid, Seedr, and PikPak** are fully implemented but have not been tested with live accounts yet. If you have an account and want to help test, please open an issue with your findings.
 
 **Add strategies** — control how content is distributed across providers:
 
@@ -641,7 +641,7 @@ All configuration is done via environment variables. Below is the complete refer
 | `RD_WEBDAV_USERNAME` | — | WebDAV username |
 | `RD_WEBDAV_PASSWORD` | — | WebDAV password |
 
-#### AllDebrid 🧪 In-testing
+#### AllDebrid
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -1602,7 +1602,7 @@ Two CI workflows:
 - Duplicate detection uses bi-directional case-insensitive substring matching across ALL configured providers
 - The WebDAV bridge enables mounting without native WebDAV credentials — only an API key is needed
 - The webhook handler responds immediately with `202 Accepted` and processes in the background to avoid Overseerr's 20-second timeout
-- AllDebrid is currently in-testing with live accounts. Premiumize, Debrid-Link, Deepbrid, Offcloud, Put.io, MegaDebrid, Seedr, and PikPak are fully implemented but untested — community testing welcome!
+- Premiumize, Debrid-Link, Deepbrid, Offcloud, Put.io, MegaDebrid, Seedr, and PikPak are fully implemented but untested — community testing welcome!
 
 ---
 
