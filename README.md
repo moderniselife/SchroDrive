@@ -103,7 +103,7 @@ curl http://localhost:8978/health
 |----------|:--------:|:------------:|:------:|:------------:|:------:|--------|
 | **TorBox** | ✅ | ✅ | ✅ | ✅ | ✅ | Fully supported |
 | **RealDebrid** | ✅ | — | — | ✅ | ✅ | Fully supported |
-| **AllDebrid** | ✅ | — | — | ✅ | ✅ | In-testing 🧪 |
+| **AllDebrid** | ✅ | — | — | ✅ | ✅ | Fully supported |
 | **Premiumize** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
 | **Debrid-Link** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
 | **Deepbrid** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
@@ -114,7 +114,7 @@ curl http://localhost:8978/health
 | **PikPak** | ✅ | — | — | ✅ | ✅ | Untested ⚠️ |
 
 > [!NOTE]
-> **AllDebrid** is currently in-testing with live accounts. **Premiumize, Debrid-Link, Deepbrid, Offcloud, Put.io, MegaDebrid, Seedr, and PikPak** are fully implemented but have not been tested with live accounts yet. If you have an account and want to help test, please open an issue with your findings.
+> **Premiumize, Debrid-Link, Deepbrid, Offcloud, Put.io, MegaDebrid, Seedr, and PikPak** are fully implemented but have not been tested with live accounts yet. If you have an account and want to help test, please open an issue with your findings.
 
 **Add strategies** — control how content is distributed across providers:
 
@@ -144,7 +144,7 @@ Set via `ADD_STRATEGY` environment variable.
 - Works with Plex, Jellyfin, Emby, and any media server that reads local files
 - Per-provider mount points under a shared base directory
 - **Cloud storage mounts** — mount MEGA, Dropbox, Google Drive, and OneDrive alongside debrid content via rclone
-- **External WebDAV mounts** — mount third-party WebDAV servers (NAS shares, media servers) with optional organiser skip
+- **External WebDAV mounts** — mount third-party WebDAV servers (NAS shares, media servers) with optional organiser skip and per-mount rclone options
 
 #### Mount Structure
 
@@ -198,8 +198,8 @@ The organiser now outputs anime to a separate `Anime/` directory (alongside `Mov
 
 | Service | Description | Toggle |
 |---------|-------------|--------|
-| **Webhook** | Instant processing of Overseerr notifications | `RUN_WEBHOOK=true` |
-| **API Poller** | Polls Overseerr for approved requests | `RUN_POLLER=true` |
+| **Webhook** | Instant processing of Seerr/Overseerr/Jellyseerr notifications | `RUN_WEBHOOK=true` |
+| **API Poller** | Polls Seerr/Overseerr/Jellyseerr for approved requests | `RUN_POLLER=true` |
 | **Watchlist Poller** | Monitors Plex/Jellyfin/Emby watchlists | `RUN_WATCHLIST_POLLER=true` |
 | **Dead Scanner** | Detects stalled/failed torrents, deletes, blacklists, and auto-replaces | `RUN_DEAD_SCANNER_WATCH=true` |
 | **Organiser** | Creates symlinked views with TMDB/TVMaze metadata | `RUN_ORGANIZER_WATCH=true` |
@@ -641,7 +641,7 @@ All configuration is done via environment variables. Below is the complete refer
 | `RD_WEBDAV_USERNAME` | — | WebDAV username |
 | `RD_WEBDAV_PASSWORD` | — | WebDAV password |
 
-#### AllDebrid 🧪 In-testing
+#### AllDebrid
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -785,16 +785,19 @@ All configuration is done via environment variables. Below is the complete refer
 
 ### 📡 Overseerr / Jellyseerr
 
-> **Jellyseerr support**: Jellyseerr is API-compatible with Overseerr (it's a fork). You can use either set of env vars below — `OVERSEERR_*` or `JELLYSEERR_*`. If both are set, `OVERSEERR_*` takes priority.
+> **Seerr / Jellyseerr support**: [Seerr](https://github.com/seerr/Seerr) is the merged successor to Overseerr + Jellyseerr. All three share the same API. Priority chain: `SEERR_*` > `OVERSEERR_*` > `JELLYSEERR_*`. Existing `OVERSEERR_*` and `JELLYSEERR_*` env vars continue to work as fallbacks.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OVERSEERR_URL` | — | Overseerr API URL (include `/api/v1`) |
-| `OVERSEERR_API_KEY` | — | Overseerr API key |
-| `OVERSEERR_AUTH` | — | Optional webhook authorisation header |
-| `JELLYSEERR_URL` | — | Jellyseerr API URL (alias for `OVERSEERR_URL`) |
-| `JELLYSEERR_API_KEY` | — | Jellyseerr API key (alias for `OVERSEERR_API_KEY`) |
-| `JELLYSEERR_AUTH` | — | Jellyseerr auth header (alias for `OVERSEERR_AUTH`) |
+| `SEERR_URL` | — | Seerr API URL (include `/api/v1`) — highest priority |
+| `SEERR_API_KEY` | — | Seerr API key — highest priority |
+| `SEERR_AUTH` | — | Optional webhook authorisation header — highest priority |
+| `OVERSEERR_URL` | — | Overseerr API URL (fallback if `SEERR_URL` not set) |
+| `OVERSEERR_API_KEY` | — | Overseerr API key (fallback) |
+| `OVERSEERR_AUTH` | — | Optional webhook authorisation header (fallback) |
+| `JELLYSEERR_URL` | — | Jellyseerr API URL (lowest priority fallback) |
+| `JELLYSEERR_API_KEY` | — | Jellyseerr API key (lowest priority fallback) |
+| `JELLYSEERR_AUTH` | — | Jellyseerr auth header (lowest priority fallback) |
 | `POLL_INTERVAL_S` | `30` | Poller interval (seconds) |
 
 ### ☁️ Cloud Storage Mounts
@@ -1202,6 +1205,18 @@ Mount third-party WebDAV servers as read-only FUSE filesystems alongside your de
     "username": "admin",
     "password": "secret",
     "skipOrganiser": false
+  },
+  {
+    "name": "media-archive",
+    "url": "https://dav.example.com/archive/",
+    "username": "user",
+    "password": "pass",
+    "mountOptions": {
+      "vfs-cache-mode": "full",
+      "vfs-cache-max-size": "50G",
+      "dir-cache-time": "168h",
+      "tpslimit": 10
+    }
   }
 ]
 ```
@@ -1218,6 +1233,7 @@ Mount third-party WebDAV servers as read-only FUSE filesystems alongside your de
 | `password` | — | — | Auth password (obscured for rclone) |
 | `skipOrganiser` | — | `true` | Skip organiser for this mount (most WebDAVs are pre-sorted) |
 | `readOnly` | — | `true` | Mount as read-only |
+| `mountOptions` | — | — | Per-mount rclone flags object. Keys become `--key=value` flags, booleans become `--key`. Overrides built-in defaults. Example: `{"vfs-cache-mode": "full", "dir-cache-time": "168h"}` |
 
 ### Environment Variables
 
@@ -1387,7 +1403,7 @@ registry.register(new YourProvider());
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | Health check |
+| `GET` | `/health` | Health check (includes `cloudLinksPreWarm`, `externalWebdavMounts`, bridge statuses) |
 | `POST` | `/webhook/overseerr` | Overseerr webhook receiver |
 | `GET` | `/api/providers` | List all providers with status |
 | `GET` | `/api/torrents` | List torrents across all providers |
@@ -1420,11 +1436,11 @@ These endpoints are consumed by Radarr/Sonarr and are not intended for direct us
 
 ---
 
-## 🔗 Overseerr Webhook Setup
+## 🔗 Overseerr / Seerr Webhook Setup
 
-1. Go to **Overseerr Settings → Notifications → Webhook**
+1. Go to **Overseerr/Seerr Settings → Notifications → Webhook**
 2. Set **Webhook URL** to `http://<host>:8978/webhook/overseerr`
-3. Set **Authorisation Header** to your `OVERSEERR_AUTH` value (optional)
+3. Set **Authorisation Header** to your `SEERR_AUTH` / `OVERSEERR_AUTH` value (optional)
 4. Use this **JSON Payload**:
 
 ```json
@@ -1586,7 +1602,7 @@ Two CI workflows:
 - Duplicate detection uses bi-directional case-insensitive substring matching across ALL configured providers
 - The WebDAV bridge enables mounting without native WebDAV credentials — only an API key is needed
 - The webhook handler responds immediately with `202 Accepted` and processes in the background to avoid Overseerr's 20-second timeout
-- AllDebrid is currently in-testing with live accounts. Premiumize, Debrid-Link, Deepbrid, Offcloud, Put.io, MegaDebrid, Seedr, and PikPak are fully implemented but untested — community testing welcome!
+- Premiumize, Debrid-Link, Deepbrid, Offcloud, Put.io, MegaDebrid, Seedr, and PikPak are fully implemented but untested — community testing welcome!
 
 ---
 
