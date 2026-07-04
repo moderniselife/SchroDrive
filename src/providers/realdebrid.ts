@@ -13,9 +13,8 @@
  * @module providers/realdebrid
  */
 
-import axios from 'axios';
-import https from 'https';
-import http from 'http';
+import { axiosIPv4 } from '../core/httpClient';
+import { sanitiseName } from '../core/utils';
 import { config } from '../core/config';
 import { rateLimiter } from '../core/rateLimiter';
 import { tokenRotator } from '../core/tokenRotator';
@@ -36,10 +35,7 @@ import type {
 
 const PROVIDER_NAME = 'realdebrid';
 
-/** Force IPv4 to avoid IPv6 timeout issues in Docker containers. */
-const httpAgent = new http.Agent({ family: 4 });
-const httpsAgent = new https.Agent({ family: 4 });
-const axiosIPv4 = axios.create({ httpAgent, httpsAgent });
+
 
 // Cache keys for the shared rateLimiter cache
 const TORRENT_LIST_CACHE_KEY = 'realdebrid_torrents';
@@ -67,23 +63,7 @@ function getBaseUrl(): string {
   return (config.rdApiBase || 'https://api.real-debrid.com/rest/1.0').replace(/\/$/, '');
 }
 
-/**
- * Sanitises a string for use as a filesystem path component.
- * Removes or replaces characters that are problematic on common filesystems
- * (Windows NTFS, macOS HFS+, Linux ext4).
- *
- * @param name - The raw name to sanitise.
- * @returns A filesystem-safe string.
- */
-function sanitiseName(name: string): string {
-  return name
-    .replace(/[\x00-\x1F\x7F]/g, '')
-    .replace(/[<>:"/\\|?*]/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/\s+/g, ' ')
-    .replace(/^[.\s]+|[.\s]+$/g, '')
-    || 'unnamed';
-}
+
 
 // ===========================================================================
 // RealDebridProvider

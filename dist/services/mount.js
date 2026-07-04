@@ -52,6 +52,8 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.getWebdavOrganiserRoots = getWebdavOrganiserRoots;
+exports.getExternalWebdavStatus = getExternalWebdavStatus;
 exports.getBridgeStatuses = getBridgeStatuses;
 exports.refreshBridges = refreshBridges;
 exports.getActiveBridges = getActiveBridges;
@@ -64,11 +66,112 @@ const child_process_1 = require("child_process");
 const config_1 = require("../core/config");
 const webdavBridge_1 = require("./webdavBridge");
 const bridge_1 = require("./cloudLinks/bridge");
+const utils_1 = require("../core/utils");
 // ===========================================================================
 // Module-level State
 // ===========================================================================
 /** Temporary directory for rclone config and logs. Initialised by mountVirtualDrive. */
 let tmpDir = path.join(os.tmpdir(), "schrodrive");
+/** Loaded WebDAV mount entries — cached after first load. */
+let _webdavMountEntries = null;
+/**
+ * Loads WebDAV mount configurations from file and/or env var.
+ * Similar pattern to cloud_links.json loading.
+ */
+function loadWebdavMounts() {
+    if (_webdavMountEntries !== null)
+        return _webdavMountEntries;
+    const entries = [];
+    const seenNames = new Set();
+    // 1. Load from file
+    const configFile = config_1.config.webdavMountsFile;
+    if (configFile && fs.existsSync(configFile)) {
+        try {
+            const raw = fs.readFileSync(configFile, 'utf-8');
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                for (const item of parsed) {
+                    if (isValidWebdavMount(item) && !seenNames.has(item.name)) {
+                        entries.push(item);
+                        seenNames.add(item.name);
+                    }
+                }
+            }
+            console.log(`[${new Date().toISOString()}][mount] Loaded ${entries.length} WebDAV mount(s) from ${configFile}`);
+        }
+        catch (err) {
+            console.error(`[${new Date().toISOString()}][mount] Failed to parse ${configFile}: ${err?.message}`);
+        }
+    }
+    // 2. Merge from env var (JSON array)
+    const envJson = config_1.config.webdavMountsJson;
+    if (envJson) {
+        try {
+            const parsed = JSON.parse(envJson);
+            if (Array.isArray(parsed)) {
+                for (const item of parsed) {
+                    if (isValidWebdavMount(item) && !seenNames.has(item.name)) {
+                        entries.push(item);
+                        seenNames.add(item.name);
+                    }
+                }
+            }
+        }
+        catch (err) {
+            console.error(`[${new Date().toISOString()}][mount] Failed to parse WEBDAV_MOUNTS env: ${err?.message}`);
+        }
+    }
+    _webdavMountEntries = entries;
+    return entries;
+}
+/** Validates a WebDAV mount config entry. */
+function isValidWebdavMount(item) {
+    return (item &&
+        typeof item.name === 'string' && item.name.length > 0 &&
+        typeof item.url === 'string' && item.url.length > 0);
+}
+/**
+ * Returns the list of WebDAV mount paths that the organiser SHOULD process.
+ * These are entries with skipOrganiser explicitly set to false.
+ */
+function getWebdavOrganiserRoots() {
+    const entries = loadWebdavMounts();
+    const roots = [];
+    for (const e of entries) {
+        if (e.skipOrganiser === false) {
+            const mountName = e.name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+            roots.push(path.join(config_1.config.mountBase, 'webdav', mountName));
+        }
+    }
+    return roots;
+}
+/**
+ * Returns status information for all configured external WebDAV mounts.
+ * Used by the /health endpoint.
+ */
+function getExternalWebdavStatus() {
+    if (!config_1.config.webdavMountsEnabled)
+        return [];
+    const entries = loadWebdavMounts();
+    return entries.map((e) => {
+        const mountName = e.name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+        const mountPath = path.join(config_1.config.mountBase, 'webdav', mountName);
+        let healthy = false;
+        try {
+            fs.readdirSync(mountPath);
+            healthy = true;
+        }
+        catch { }
+        return {
+            name: e.name,
+            url: e.url,
+            mountPath,
+            healthy,
+            readOnly: e.readOnly !== false,
+            skipOrganiser: e.skipOrganiser !== false,
+        };
+    });
+}
 // ===========================================================================
 // Mount Utilities
 // ===========================================================================
@@ -436,15 +539,6 @@ function hasUserLogFlags(opts) {
     return tokens.some((t) => t === "-v" || t === "-vv" || t === "-vvv" || t.startsWith("--log-level"));
 }
 /**
- * Returns a promise that resolves after the specified number of milliseconds.
- *
- * @param ms - The number of milliseconds to sleep.
- * @returns A promise that resolves after the delay.
- */
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-/**
  * Checks whether the FUSE `allow_other` option is available on the system.
  * This requires `user_allow_other` to be uncommented in `/etc/fuse.conf`.
  *
@@ -537,7 +631,7 @@ async function mountVirtualDrive() {
     // -----------------------------------------------------------------------
     try {
         unmountAll();
-        await sleep(1000);
+        await (0, utils_1.sleep)(1000);
     }
     catch (err) {
         console.error(`[${new Date().toISOString()}][mount] Startup unmount cleanup failed (non-fatal):`, err?.message);
@@ -802,10 +896,10 @@ async function mountVirtualDrive() {
         // IMPORTANT: Do NOT use readdirSync here — FUSE mounts trigger PROPFIND
         // to the WebDAV bridge, which needs the event loop to respond.
         try {
-            await sleep(3000);
+            await (0, utils_1.sleep)(3000);
             const items = await Promise.race([
                 fs.promises.readdir(m.path),
-                sleep(10000).then(() => { throw new Error("readdir timed out after 10s"); }),
+                (0, utils_1.sleep)(10000).then(() => { throw new Error("readdir timed out after 10s"); }),
             ]);
             console.log(`[${new Date().toISOString()}][mount] verify ${m.remote} at ${m.path} -> entries=${items.length}`);
         }
@@ -901,10 +995,10 @@ async function mountVirtualDrive() {
             mounts.push({ remote: 'cloud:', path: cloudPath, configPath: cfg, customArgs: cloudRemountArgs });
             // Post-mount verification (best-effort)
             try {
-                await sleep(3000);
+                await (0, utils_1.sleep)(3000);
                 const items = await Promise.race([
                     fs.promises.readdir(cloudPath),
-                    sleep(10000).then(() => { throw new Error('readdir timed out after 10s'); }),
+                    (0, utils_1.sleep)(10000).then(() => { throw new Error('readdir timed out after 10s'); }),
                 ]);
                 console.log(`[${new Date().toISOString()}][mount] verify cloud: at ${cloudPath} -> entries=${items.length}`);
             }
@@ -991,6 +1085,94 @@ async function mountVirtualDrive() {
             console.error(`[${new Date().toISOString()}][mount] Deferred cloud-links mount failed: ${err?.message}`);
         });
     }
+    // =========================================================================
+    // Phase 5 — External WebDAV Mounts
+    // =========================================================================
+    if (config_1.config.webdavMountsEnabled) {
+        const webdavEntries = loadWebdavMounts();
+        if (webdavEntries.length > 0) {
+            console.log(`[${new Date().toISOString()}][mount] Mounting ${webdavEntries.length} external WebDAV server(s)...`);
+            const webdavBase = path.join(base, 'webdav');
+            ensureDir(webdavBase);
+            for (const entry of webdavEntries) {
+                const mountName = entry.name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+                const mountPath = path.join(webdavBase, mountName);
+                ensureDir(mountPath, { cleanupOnStale: true });
+                // Build a dedicated rclone config for this WebDAV mount
+                const wdConfigPath = path.join(tmpDir, `rclone-webdav-${mountName}.conf`);
+                const wdConfigLines = [
+                    `[webdav-${mountName}]`,
+                    `type = webdav`,
+                    `url = ${entry.url.replace(/\/+$/, '')}`,
+                    `vendor = other`,
+                ];
+                if (entry.username)
+                    wdConfigLines.push(`user = ${entry.username}`);
+                if (entry.password)
+                    wdConfigLines.push(`pass = ${obscurePassword(entry.password)}`);
+                wdConfigLines.push('');
+                fs.writeFileSync(wdConfigPath, wdConfigLines.join('\n'), 'utf-8');
+                // Test the remote before mounting
+                const testOk = await testRemote(`webdav-${mountName}:`, wdConfigPath);
+                if (!testOk) {
+                    console.warn(`[${new Date().toISOString()}][mount] WebDAV "${entry.name}" — remote test failed, skipping mount`);
+                    continue;
+                }
+                // Build rclone mount args — start with defaults, then apply user overrides
+                const defaults = {
+                    'vfs-cache-mode': 'off',
+                    'dir-cache-time': '12h',
+                    'poll-interval': '0',
+                    'transfers': '4',
+                    'log-level': 'NOTICE',
+                    'retries': '1',
+                    'low-level-retries': '3',
+                    'umask': '0022',
+                };
+                // Merge user mountOptions over defaults (user wins)
+                const opts = entry.mountOptions || {};
+                const merged = { ...defaults };
+                for (const [k, v] of Object.entries(opts)) {
+                    // Normalise key: strip leading dashes if user accidentally included them
+                    const key = k.replace(/^-+/, '');
+                    merged[key] = v;
+                }
+                const wdArgs = [
+                    'mount', `webdav-${mountName}:`, mountPath,
+                    '--daemon',
+                    '--allow-non-empty',
+                    `--config=${wdConfigPath}`,
+                    `--log-file=${path.join(tmpDir, `rclone-webdav-${mountName}.log`)}`,
+                ];
+                // Apply merged options as rclone flags
+                for (const [key, val] of Object.entries(merged)) {
+                    if (val === true) {
+                        wdArgs.push(`--${key}`);
+                    }
+                    else if (val !== false) {
+                        wdArgs.push(`--${key}=${String(val)}`);
+                    }
+                }
+                if (entry.readOnly !== false)
+                    wdArgs.push('--read-only');
+                if (config_1.config.mountAllowOther && !merged['allow-other'])
+                    wdArgs.push('--allow-other');
+                if (typeof config_1.config.mountUid === 'number')
+                    wdArgs.push('--uid', String(config_1.config.mountUid));
+                if (typeof config_1.config.mountGid === 'number')
+                    wdArgs.push('--gid', String(config_1.config.mountGid));
+                console.log(`[${new Date().toISOString()}][mount] rclone mount webdav-${mountName}: ${mountPath} ${wdArgs.slice(2).join(' ')}`);
+                (0, child_process_1.spawn)(config_1.config.rclonePath, wdArgs, { stdio: 'inherit' });
+                mounts.push({
+                    remote: `webdav-${mountName}:`,
+                    path: mountPath,
+                    configPath: wdConfigPath,
+                    customArgs: wdArgs.filter(a => a !== '--daemon'),
+                });
+                console.log(`[${new Date().toISOString()}][mount] ✅ WebDAV "${entry.name}" mounted at ${mountPath}`);
+            }
+        }
+    }
     console.log(`[${new Date().toISOString()}][mount] All mounts initiated at ${base}`);
     // Start the mount health monitor to detect and recover from IO errors
     startMountHealthMonitor(mounts, cfg, base);
@@ -1016,6 +1198,14 @@ function unmountAll() {
         mounts.push(path.join(base, "cloud"));
     if (config_1.config.cloudLinksEnabled)
         mounts.push(path.join(base, "cloud-links"));
+    // External WebDAV mounts
+    if (config_1.config.webdavMountsEnabled) {
+        const webdavEntries = loadWebdavMounts();
+        for (const entry of webdavEntries) {
+            const mountName = entry.name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+            mounts.push(path.join(base, 'webdav', mountName));
+        }
+    }
     console.log(`[${new Date().toISOString()}][mount] Cleaning up and unmounting all FUSE mount points...`);
     for (const m of mounts) {
         try {
@@ -1107,7 +1297,7 @@ function startMountHealthMonitor(mounts, rcloneConfigPath, _base) {
             try {
                 const items = await Promise.race([
                     fs.promises.readdir(m.path),
-                    sleep(5000).then(() => { throw new Error("readdir timed out"); }),
+                    (0, utils_1.sleep)(5000).then(() => { throw new Error("readdir timed out"); }),
                 ]);
                 if (items.length === 0) {
                     mountInaccessible = true;
@@ -1151,7 +1341,7 @@ async function attemptRemount(mount, rcloneConfigPath) {
     // Unmount the stale FUSE mount
     cleanupMountPath(mount.path);
     // Wait a moment for cleanup
-    await sleep(2000);
+    await (0, utils_1.sleep)(2000);
     // Ensure mount directory exists
     ensureDir(mount.path, { cleanupOnStale: false });
     // Resolve which rclone config to use — cloud-links and cloud mounts store
@@ -1221,10 +1411,10 @@ async function attemptRemount(mount, rcloneConfigPath) {
     });
     // Verify post-remount
     try {
-        await sleep(5000);
+        await (0, utils_1.sleep)(5000);
         const items = await Promise.race([
             fs.promises.readdir(mount.path),
-            sleep(10000).then(() => { throw new Error("readdir timed out"); }),
+            (0, utils_1.sleep)(10000).then(() => { throw new Error("readdir timed out"); }),
         ]);
         console.log(`[${ts()}][mount-health] remount verify ${mount.remote} → entries=${items.length}`);
     }

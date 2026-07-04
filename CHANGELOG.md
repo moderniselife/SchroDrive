@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.11.0] - 2026-06-14 🔄
+*Status: Seerr (Overseerr + Jellyseerr merger) support, codebase deduplication*
+
+### Added ✨
+- **Seerr support** (`src/core/config.ts`, `src/core/configApi.ts`, `src/services/overseerr.ts`):
+  - Seerr is the merged successor to Overseerr + Jellyseerr — all three share the same API
+  - New `SEERR_URL`, `SEERR_API_KEY`, `SEERR_AUTH` env vars (highest priority)
+  - Full backward compatibility: `OVERSEERR_*` and `JELLYSEERR_*` env vars still work as fallbacks
+  - Priority chain: `SEERR_*` > `OVERSEERR_*` > `JELLYSEERR_*`
+  - Updated config GUI labels and error messages to reflect Seerr as primary
+- **Pre-warm status on `/health` endpoint** (`src/server.ts`, `src/services/cloudLinks/bridge.ts`):
+  - `GET /health` now returns `cloudLinksPreWarm: { complete: boolean, completedAt: string | null }`
+  - Deploy scripts can poll this to gate Plex start on cache readiness
+- **Shared utility modules** (`src/core/utils.ts`, `src/core/httpClient.ts`):
+  - `sanitiseName()` — filesystem-safe name sanitiser (was duplicated 13×)
+  - `sleep()` — promise-based delay (was duplicated 2×)
+  - `axiosIPv4` — IPv4-forced axios instance (was duplicated 13×)
+
+### Changed 🔄
+- **Codebase deduplication** — removed 633 lines of duplicated code across 34 files
+- **Plex integration** — removed `startPlexContainer()` (required Docker socket access), replaced with `isPlexReachable()` check before triggering scan
+- **Deploy script** — polls `/health` endpoint for pre-warm status instead of scraping docker logs
+
+### Removed 🗑️
+- `startPlexContainer()` from `plexIntegration.ts` — was a user-specific hack requiring Docker socket mount
+- `pad3()` from `organizer.ts` — never called anywhere
+- `getWebdavSkipList()` from `mount.ts` — exported but never imported
+- Unused `requireEnv` imports from 3 files
+
+### Version [0.10.0] - 2026-06-14 🌐
+*Status: External WebDAV mounts, Plex auto-start safety, 429 spam fixes*
+
+### Added ✨
+- **External WebDAV mount support** (`src/services/mount.ts`, `src/core/config.ts`):
+  - Mount third-party WebDAV servers as read-only FUSE filesystems via rclone
+  - Configured via `webdav.json` file (gitignored — never committed) or `WEBDAV_MOUNTS` env var
+  - Each entry supports: `name`, `url`, `username`, `password`, `skipOrganiser`, `readOnly`
+  - Mounts appear under `/mnt/schrodrive/webdav/<name>/`
+  - Dedicated rclone config per mount with obscured passwords
+  - Remote test (`rclone lsd`) before mounting — skips unreachable servers
+  - Health monitoring and automatic cleanup on shutdown
+  - Retry limits (`--retries 1 --low-level-retries 3`) to prevent D-state kernel hangs
+- **Organiser skip flag for WebDAV mounts** (`src/services/organizer.ts`):
+  - `skipOrganiser: true` (default) — mount is excluded from organiser scans (pre-sorted content)
+  - `skipOrganiser: false` — mount is added to organiser scan roots for classification
+  - New exports: `getWebdavSkipList()`, `getWebdavOrganiserRoots()`
+- **Post-pre-warm Plex scan trigger** (`src/services/cloudLinks/bridge.ts`):
+  - After PROPFIND cache pre-warm completes, logs a "safe to start" message
+  - Triggers Plex library scan if Plex is already running (`triggerPlexScan()`)
+  - Plex container start is handled externally (e.g. deploy script) — SchrosDrive no longer requires Docker socket access
+
+### Changed 🔄
+- **Deploy script** (`deploy-schrodrive.sh`):
+  - Creates Plex container without starting it (`docker compose create plex`)
+  - Waits for SchrosDrive pre-warm to complete (monitors logs for up to 10 minutes)
+  - Starts Plex container only after pre-warm is confirmed
+  - Copies `webdav.json` to remote alongside `cloud_links.json`
+- **429 log spam suppressed** (`src/services/cloudLinks/httpAdapter.ts`, `bridge.ts`):
+  - Per-request "Fetch failed" logs for 429 errors suppressed (already logged via rate-limit summary)
+  - Pre-warm per-path error logs for 429s suppressed
+- **Disk cache OOM fix** (`src/services/cloudLinks/httpAdapter.ts`):
+  - `MAX_DISK_CACHE_SIZE` reduced from 3000 → 500 to prevent OOM on serialisation for large directories (31K+ folders)
+
 ### Version [0.9.0] - 2026-06-07 🌐
 *Status: 11-provider debrid ecosystem — the most provider support of any debrid automation tool*
 

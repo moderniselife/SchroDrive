@@ -26,14 +26,10 @@
  *
  * @module providers/pikpak
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PikPakProvider = void 0;
-const axios_1 = __importDefault(require("axios"));
-const https_1 = __importDefault(require("https"));
-const http_1 = __importDefault(require("http"));
+const httpClient_1 = require("../core/httpClient");
+const utils_1 = require("../core/utils");
 const config_1 = require("../core/config");
 const rateLimiter_1 = require("../core/rateLimiter");
 const tokenRotator_1 = require("../core/tokenRotator");
@@ -42,10 +38,6 @@ const registry_1 = require("./registry");
 // Constants & HTTP Configuration
 // ===========================================================================
 const PROVIDER_NAME = 'pikpak';
-/** Force IPv4 to avoid IPv6 timeout issues in Docker containers. */
-const httpAgent = new http_1.default.Agent({ family: 4 });
-const httpsAgent = new https_1.default.Agent({ family: 4 });
-const axiosIPv4 = axios_1.default.create({ httpAgent, httpsAgent });
 /** PikPak authentication base URL (separate from the API base). */
 const AUTH_BASE_URL = 'https://user.mypikpak.com';
 // Cache keys for the shared rateLimiter cache
@@ -76,23 +68,6 @@ const COMPLETED_STATUSES = new Set(['phase_type_complete']);
  */
 function getBaseUrl() {
     return (config_1.config.pikpakApiBase || 'https://api-drive.mypikpak.com').replace(/\/$/, '');
-}
-/**
- * Sanitises a string for use as a filesystem path component.
- * Removes or replaces characters that are problematic on common filesystems
- * (Windows NTFS, macOS HFS+, Linux ext4).
- *
- * @param name - The raw name to sanitise.
- * @returns A filesystem-safe string.
- */
-function sanitiseName(name) {
-    return name
-        .replace(/[\x00-\x1F\x7F]/g, '')
-        .replace(/[<>:"/\\|?*]/g, '_')
-        .replace(/_+/g, '_')
-        .replace(/\s+/g, ' ')
-        .replace(/^[.\s]+|[.\s]+$/g, '')
-        || 'unnamed';
 }
 /**
  * Validates a PikPak API response and throws on error.
@@ -190,7 +165,7 @@ class PikPakProvider {
             try {
                 console.log(`[${new Date().toISOString()}][pikpak] authenticating with username/password`);
                 const url = `${AUTH_BASE_URL}/v1/auth/signin`;
-                const res = await axiosIPv4.post(url, {
+                const res = await httpClient_1.axiosIPv4.post(url, {
                     username: config_1.config.pikpakUsername,
                     password: config_1.config.pikpakPassword,
                 }, {
@@ -262,7 +237,7 @@ class PikPakProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = `${getBaseUrl()}/drive/v1/tasks`;
-            const res = await axiosIPv4.get(url, {
+            const res = await httpClient_1.axiosIPv4.get(url, {
                 headers: this.authHeaders(),
                 params: { type: 'offline' },
                 timeout: 30000,
@@ -283,7 +258,7 @@ class PikPakProvider {
                     await this.ensureAuthenticated();
                     await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
                     const url = `${getBaseUrl()}/drive/v1/tasks`;
-                    const res = await axiosIPv4.get(url, {
+                    const res = await httpClient_1.axiosIPv4.get(url, {
                         headers: this.authHeaders(),
                         params: { type: 'offline' },
                         timeout: 30000,
@@ -330,7 +305,7 @@ class PikPakProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = `${getBaseUrl()}/drive/v1/tasks`;
-            const res = await axiosIPv4.post(url, {
+            const res = await httpClient_1.axiosIPv4.post(url, {
                 type: 'offline',
                 params: { url: magnet },
                 folder_id: '',
@@ -360,7 +335,7 @@ class PikPakProvider {
                     await this.ensureAuthenticated();
                     await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
                     const url = `${getBaseUrl()}/drive/v1/tasks`;
-                    const res = await axiosIPv4.post(url, {
+                    const res = await httpClient_1.axiosIPv4.post(url, {
                         type: 'offline',
                         params: { url: magnet },
                         folder_id: '',
@@ -415,7 +390,7 @@ class PikPakProvider {
             formData.append('type', 'offline');
             formData.append('folder_id', '');
             formData.append('file', new Blob([new Uint8Array(fileBuffer)], { type: 'application/x-bittorrent' }), name || 'upload.torrent');
-            const res = await axiosIPv4.post(url, formData, {
+            const res = await httpClient_1.axiosIPv4.post(url, formData, {
                 headers: this.authHeaders(),
                 timeout: 30000,
             });
@@ -491,7 +466,7 @@ class PikPakProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = `${getBaseUrl()}/drive/v1/tasks`;
-            await axiosIPv4.delete(url, {
+            await httpClient_1.axiosIPv4.delete(url, {
                 headers: this.authHeaders(),
                 params: { task_ids: torrentId },
                 timeout: 20000,
@@ -533,7 +508,7 @@ class PikPakProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = `${getBaseUrl()}/drive/v1/tasks`;
-            const res = await axiosIPv4.get(url, {
+            const res = await httpClient_1.axiosIPv4.get(url, {
                 headers: this.authHeaders(),
                 params: { type: 'offline' },
                 timeout: 20000,
@@ -614,7 +589,7 @@ class PikPakProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = `${getBaseUrl()}/drive/v1/tasks`;
-            const res = await axiosIPv4.get(url, {
+            const res = await httpClient_1.axiosIPv4.get(url, {
                 headers: this.authHeaders(),
                 params: { type: 'offline' },
                 timeout: 30000,
@@ -636,7 +611,7 @@ class PikPakProvider {
                         console.warn(`[${new Date().toISOString()}][pikpak] task ${t.id} has no file_id, skipping file fetch`);
                         directories.push({
                             id: String(t.id),
-                            name: sanitiseName(t.name || String(t.id)),
+                            name: (0, utils_1.sanitiseName)(t.name || String(t.id)),
                             originalName: t.name || String(t.id),
                             files: [],
                         });
@@ -645,7 +620,7 @@ class PikPakProvider {
                     const files = await this.fetchDriveFiles(String(fileId));
                     directories.push({
                         id: String(t.id),
-                        name: sanitiseName(t.name || String(t.id)),
+                        name: (0, utils_1.sanitiseName)(t.name || String(t.id)),
                         originalName: t.name || String(t.id),
                         files,
                     });
@@ -654,7 +629,7 @@ class PikPakProvider {
                     console.warn(`[${new Date().toISOString()}][pikpak] failed to fetch files for task ${t.id}`, { error: fileErr?.message });
                     directories.push({
                         id: String(t.id),
-                        name: sanitiseName(t.name || String(t.id)),
+                        name: (0, utils_1.sanitiseName)(t.name || String(t.id)),
                         originalName: t.name || String(t.id),
                         files: [],
                     });
@@ -690,7 +665,7 @@ class PikPakProvider {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         try {
             const url = `${getBaseUrl()}/drive/v1/files/${encodeURIComponent(fileId)}`;
-            const res = await axiosIPv4.get(url, {
+            const res = await httpClient_1.axiosIPv4.get(url, {
                 headers: this.authHeaders(),
                 params: { usage: 'DOWNLOAD' },
                 timeout: 30000,
@@ -713,7 +688,7 @@ class PikPakProvider {
                     await this.ensureAuthenticated();
                     await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
                     const url = `${getBaseUrl()}/drive/v1/files/${encodeURIComponent(fileId)}`;
-                    const res = await axiosIPv4.get(url, {
+                    const res = await httpClient_1.axiosIPv4.get(url, {
                         headers: this.authHeaders(),
                         params: { usage: 'DOWNLOAD' },
                         timeout: 30000,
@@ -787,7 +762,7 @@ class PikPakProvider {
     async fetchDriveFiles(parentId) {
         await rateLimiter_1.rateLimiter.throttle(PROVIDER_NAME);
         const url = `${getBaseUrl()}/drive/v1/files`;
-        const res = await axiosIPv4.get(url, {
+        const res = await httpClient_1.axiosIPv4.get(url, {
             headers: this.authHeaders(),
             params: { parent_id: parentId },
             timeout: 20000,
@@ -799,7 +774,7 @@ class PikPakProvider {
         const fileItems = rawFiles.filter((f) => f.kind !== 'drive#folder');
         return fileItems.map((f, idx) => ({
             id: String(f.id ?? idx),
-            name: sanitiseName(f.name || `file_${idx}`),
+            name: (0, utils_1.sanitiseName)(f.name || `file_${idx}`),
             size: typeof f.size === 'number' ? f.size : (typeof f.size === 'string' ? parseInt(f.size, 10) || 0 : 0),
         }));
     }

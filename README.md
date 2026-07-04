@@ -144,6 +144,7 @@ Set via `ADD_STRATEGY` environment variable.
 - Works with Plex, Jellyfin, Emby, and any media server that reads local files
 - Per-provider mount points under a shared base directory
 - **Cloud storage mounts** — mount MEGA, Dropbox, Google Drive, and OneDrive alongside debrid content via rclone
+- **External WebDAV mounts** — mount third-party WebDAV servers (NAS shares, media servers) with optional organiser skip
 
 #### Mount Structure
 
@@ -165,15 +166,20 @@ Set via `ADD_STRATEGY` environment variable.
 │   ├── dropbox/
 │   ├── gdrive/
 │   └── onedrive/
-└── cloud-links/          # Public shared folder links (no login)
-    ├── mega/
-    │   └── Australian.Survivor/
-    ├── gdrive/
-    │   └── Shared.Media/
-    └── http/
-        ├── media.example.com/
-        ├── 10.0.0.100/
-        └── RealDebrid.HTTP.Folder/
+├── cloud-links/          # Public shared folder links (no login)
+│   ├── mega/
+│   │   └── Australian.Survivor/
+│   ├── gdrive/
+│   │   └── Shared.Media/
+│   └── http/
+│       ├── media.example.com/
+│       ├── 10.0.0.100/
+│       └── RealDebrid.HTTP.Folder/
+└── webdav/               # External WebDAV mounts (third-party servers)
+    ├── media-server/
+    │   ├── movies/
+    │   └── tvs/
+    └── nas-share/
 ```
 
 ### 🔗 STRM Short-Code Service (Port 9120)
@@ -1170,6 +1176,62 @@ Mount any open directory, file server, or RD HTTP folder:
 | `CLOUD_LINKS_PORT` | `9121` | WebDAV bridge port for cloud links |
 
 ---
+
+## 🔌 External WebDAV Mounts
+
+Mount third-party WebDAV servers as read-only FUSE filesystems alongside your debrid content. Useful for NAS shares, media servers, or any WebDAV-compatible storage.
+
+### Setup
+
+1. Set `WEBDAV_MOUNTS_ENABLED=true` in your env
+2. Create a `webdav.json` file (this file is **gitignored** — it contains credentials):
+
+```json
+[
+  {
+    "name": "my-nas",
+    "url": "https://dav.example.com/media/",
+    "username": "user",
+    "password": "pass123",
+    "skipOrganiser": true,
+    "readOnly": true
+  },
+  {
+    "name": "unsorted-share",
+    "url": "http://192.168.1.50:8080/",
+    "username": "admin",
+    "password": "secret",
+    "skipOrganiser": false
+  }
+]
+```
+
+3. Mount appears at `/mnt/schrodrive/webdav/<name>/` (e.g. `/mnt/schrodrive/webdav/my-nas/`)
+
+### Config Fields
+
+| Field | Required | Default | Description |
+|-------|:--------:|---------|-------------|
+| `name` | ✅ | — | Mount name (becomes directory name) |
+| `url` | ✅ | — | WebDAV server URL |
+| `username` | — | — | Auth username |
+| `password` | — | — | Auth password (obscured for rclone) |
+| `skipOrganiser` | — | `true` | Skip organiser for this mount (most WebDAVs are pre-sorted) |
+| `readOnly` | — | `true` | Mount as read-only |
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEBDAV_MOUNTS_ENABLED` | `false` | Enable external WebDAV mounting |
+| `WEBDAV_MOUNTS_FILE` | `/config/webdav.json` | Path to JSON config file |
+| `WEBDAV_MOUNTS` | — | Inline JSON array (fallback if file not found) |
+
+> [!TIP]
+> Set `skipOrganiser: true` (the default) for WebDAV shares that are already sorted into proper media folders. Only set it to `false` for unsorted dumps that need the organiser to classify content.
+
+> [!WARNING]
+> **Never commit `webdav.json` to git** — it contains credentials. The file is already in `.gitignore`.
 
 ## 🐳 Docker Compose
 

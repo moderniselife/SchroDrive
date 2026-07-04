@@ -42,15 +42,15 @@ export const CONFIG_SCHEMA = {
   RD_WEBDAV_USERNAME: { type: "string", default: "", category: "realdebrid", label: "Real-Debrid WebDAV Username" },
   RD_WEBDAV_PASSWORD: { type: "password", default: "", category: "realdebrid", label: "Real-Debrid WebDAV Password" },
 
-  // Overseerr
-  OVERSEERR_URL: { type: "string", default: "", category: "overseerr", label: "Overseerr URL" },
-  OVERSEERR_API_KEY: { type: "password", default: "", category: "overseerr", label: "Overseerr API Key" },
-  OVERSEERR_AUTH: { type: "password", default: "", category: "overseerr", label: "Webhook Auth Header" },
-  POLL_INTERVAL_S: { type: "number", default: "30", category: "overseerr", label: "Poll Interval (seconds)" },
+  // Seerr / Overseerr / Jellyseerr (all API-compatible)
+  SEERR_URL: { type: "string", default: "", category: "seerr", label: "Seerr URL (or Overseerr/Jellyseerr)" },
+  SEERR_API_KEY: { type: "password", default: "", category: "seerr", label: "Seerr API Key (or Overseerr/Jellyseerr)" },
+  SEERR_AUTH: { type: "password", default: "", category: "seerr", label: "Webhook Auth Header" },
+  POLL_INTERVAL_S: { type: "number", default: "30", category: "seerr", label: "Poll Interval (seconds)" },
 
   // Runtime Services
   RUN_WEBHOOK: { type: "boolean", default: "true", category: "services", label: "Run Webhook Server" },
-  RUN_POLLER: { type: "boolean", default: "false", category: "services", label: "Run Overseerr Poller" },
+  RUN_POLLER: { type: "boolean", default: "false", category: "services", label: "Run Seerr Poller" },
   RUN_MOUNT: { type: "boolean", default: "false", category: "services", label: "Auto-Mount WebDAV" },
   RUN_DEAD_SCANNER: { type: "boolean", default: "false", category: "services", label: "Run Dead Scanner" },
   RUN_DEAD_SCANNER_WATCH: { type: "boolean", default: "false", category: "services", label: "Dead Scanner Watch Mode" },
