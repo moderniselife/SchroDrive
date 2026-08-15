@@ -12,6 +12,50 @@ function extractInfoHash(magnet: string): string | null {
 }
 
 /**
+ * Rejects .torrent URLs that aren't http(s) or point at loopback/private/
+ * link-local IP literals — these values come from indexer search results
+ * (Prowlarr/Jackett), which is semi-trusted third-party content, so a
+ * malicious result shouldn't be able to make this server fetch internal
+ * services (e.g. cloud metadata endpoints, admin UIs on the LAN).
+ *
+ * This only catches IP literals in the URL, not hostnames that resolve to
+ * a private address (DNS rebinding) — it's a baseline guard, not a full
+ * SSRF-proof sandbox.
+ */
+export function assertPublicHttpUrl(rawUrl: string): void {
+  const parsed = new URL(rawUrl);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Refusing to fetch .torrent URL with scheme "${parsed.protocol}"`);
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost')) {
+    throw new Error('Refusing to fetch .torrent URL pointing at localhost');
+  }
+
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+    const isPrivate =
+      a === 127 || // loopback
+      a === 10 || // 10.0.0.0/8
+      a === 0 || // 0.0.0.0/8
+      (a === 169 && b === 254) || // link-local / cloud metadata
+      (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12
+      (a === 192 && b === 168); // 192.168.0.0/16
+    if (isPrivate) {
+      throw new Error(`Refusing to fetch .torrent URL pointing at private address ${host}`);
+    }
+  }
+
+  // WHATWG URL keeps the brackets on hostname for IPv6 literals, e.g. "[::1]"
+  const ipv6 = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : null;
+  if (ipv6 && (ipv6 === '::1' || ipv6.startsWith('fe80:') || ipv6.startsWith('fc') || ipv6.startsWith('fd'))) {
+    throw new Error(`Refusing to fetch .torrent URL pointing at private IPv6 address ${host}`);
+  }
+}
+
+/**
  * Manages the lifecycle and lookup of registered debrid providers.
  */
 class ProviderRegistry {
@@ -183,6 +227,7 @@ class ProviderRegistry {
     console.log(`[${new Date().toISOString()}][registry] Downloading .torrent file: ${torrentUrl}`);
     let fileBuffer: Buffer;
     try {
+      assertPublicHttpUrl(torrentUrl);
       const resp = await axios.get(torrentUrl, {
         responseType: 'arraybuffer',
         timeout: 30000,
