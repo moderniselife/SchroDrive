@@ -91,7 +91,9 @@ export async function searchJackett(query: string, opts?: {
   const indexerPath = opts?.indexerIds?.length ? opts.indexerIds[0] : "all";
   const url = new URL(`/api/v2.0/indexers/${indexerPath}/results`, base);
   
-  const originalQuery = String(query || "");
+  // Cap length before regex processing — an unbounded run of whitespace here would make
+  // \s*TMDB\d+\b (combined with the global flag) do quadratic backtracking work.
+  const originalQuery = String(query || "").slice(0, 200);
   const stripTmdb = (q: string) => q.replace(/\s*TMDB\d+\b/gi, "").replace(/\s{2,}/g, " ").trim();
   const withoutTmdb = stripTmdb(originalQuery);
   const usedQuery = withoutTmdb || originalQuery;

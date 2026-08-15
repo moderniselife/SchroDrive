@@ -167,9 +167,10 @@ function parseGenericLinks(html: string, baseUrl: string): ParsedEntry[] {
     let href = match[1];
     const name = match[2].trim();
 
-    // Skip navigation, anchors, external, javascript, and query links
+    // Skip navigation, anchors, external, script-executing, and query links
     if (!href || href === '../' || href === './' || href.startsWith('#') ||
-        href.startsWith('javascript:') || href.startsWith('?') ||
+        href.startsWith('javascript:') || href.startsWith('data:') ||
+        href.startsWith('vbscript:') || href.startsWith('?') ||
         href.startsWith('mailto:')) continue;
 
     // Skip if it points to a completely different domain

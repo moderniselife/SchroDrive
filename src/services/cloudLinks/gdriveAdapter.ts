@@ -42,6 +42,17 @@ function extractFolderId(url: string): string {
   return url.trim();
 }
 
+/**
+ * Escapes a value for safe interpolation into a single-quoted Drive API
+ * query string literal. Backslashes must be escaped *before* quotes —
+ * escaping quotes first lets a value ending in an odd number of
+ * backslashes (e.g. `foo\`) smuggle an unescaped `'` past the sanitiser
+ * and break out of the string literal.
+ */
+export function escapeDriveQueryValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 // ===========================================================================
 // Adapter
 // ===========================================================================
@@ -203,7 +214,7 @@ export class GDriveAdapter implements CloudLinkAdapter {
 
     for (const seg of segments) {
       const res = await this.drive.files.list({
-        q: `'${currentId}' in parents and name='${seg.replace(/'/g, "\\'")}' and trashed=false`,
+        q: `'${currentId}' in parents and name='${escapeDriveQueryValue(seg)}' and trashed=false`,
         fields: 'files(id, mimeType)',
         pageSize: 1,
       });
