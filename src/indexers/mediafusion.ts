@@ -57,7 +57,7 @@ export async function searchMediafusion(
   );
 
   const started = Date.now();
-  console.log(`[${new Date().toISOString()}][${SOURCE}] GET ${url}`, {
+  console.log(`[${new Date().toISOString()}][${SOURCE}] GET`, url, {
     imdbId,
     type,
     season,
