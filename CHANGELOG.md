@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.11.2] - 2026-08-15 🔒
+*Status: multi-arch release images, CodeQL security review*
+
+### Fixed 🐛
+- **Release Docker images were amd64-only** (`.github/workflows/release.yml`): the release workflow's Docker build step never set `platforms`, unlike the separate multi-platform workflow, so every version tag (`v0.11.1` and earlier) only had a `linux/amd64` manifest despite `:latest` being properly multi-arch. Added QEMU + `platforms: linux/amd64,linux/arm64` so version tags build both architectures going forward
+- **SSRF via `.torrent` URL fetch** (`src/providers/registry.ts`): `addTorrentFileFromUrl()` fetches URLs sourced from Prowlarr/Jackett search results (semi-trusted third-party content), reachable via the watchlist poller / dead scanner with no user interaction. Added `assertPublicHttpUrl()` to reject non-http(s) schemes and loopback/private/link-local IP literals before fetching
+- **Google Drive query injection** (`src/services/cloudLinks/gdriveAdapter.ts`): the Drive API query builder escaped `'` but not `\`, and backslashes must be escaped *before* quotes or a value ending in `\` can smuggle an unescaped quote past the sanitiser. Extracted `escapeDriveQueryValue()` with the correct escape order
+- **Incomplete URL scheme check** (`src/services/cloudLinks/httpAdapter.ts`): link scraper blocked `javascript:` hrefs but not `data:`/`vbscript:`
+- **Tainted format strings** (`src/services/webdavBridge.ts`, `src/indexers/{torrentio,mediafusion,comet}.ts`): several `console.log()` calls folded a user-influenced value into the format-string argument itself; split into separate arguments
+- **Polynomial ReDoS** (`src/indexers/{prowlarr,jackett}.ts`): the TMDB-suffix-stripping regex does quadratic backtracking on a long run of non-matching whitespace; capped search query length to 200 chars first
+
+### Added ✨
+- Regression tests for the SSRF guard and Drive query escaping under `tests/regressions/`
+
 ### Version [0.11.1] - 2026-08-15 🐛
 *Status: *arr bridge startup fix, dependency security bump, test infrastructure*
 
