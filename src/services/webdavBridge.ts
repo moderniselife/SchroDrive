@@ -155,9 +155,9 @@ const LOG_PREFIX = "webdav-bridge";
 function log(provider: string, message: string, data?: Record<string, unknown>): void {
   const prefix = `[${new Date().toISOString()}][${LOG_PREFIX}][${provider}]`;
   if (data) {
-    console.log(`${prefix} ${message}`, data);
+    console.log(prefix, message, data);
   } else {
-    console.log(`${prefix} ${message}`);
+    console.log(prefix, message);
   }
 }
 
@@ -171,9 +171,9 @@ function log(provider: string, message: string, data?: Record<string, unknown>):
 function logWarn(provider: string, message: string, data?: Record<string, unknown>): void {
   const prefix = `[${new Date().toISOString()}][${LOG_PREFIX}][${provider}]`;
   if (data) {
-    console.warn(`${prefix} ${message}`, data);
+    console.warn(prefix, message, data);
   } else {
-    console.warn(`${prefix} ${message}`);
+    console.warn(prefix, message);
   }
 }
 
@@ -187,9 +187,9 @@ function logWarn(provider: string, message: string, data?: Record<string, unknow
 function logError(provider: string, message: string, data?: Record<string, unknown>): void {
   const prefix = `[${new Date().toISOString()}][${LOG_PREFIX}][${provider}]`;
   if (data) {
-    console.error(`${prefix} ${message}`, data);
+    console.error(prefix, message, data);
   } else {
-    console.error(`${prefix} ${message}`);
+    console.error(prefix, message);
   }
 }
 
