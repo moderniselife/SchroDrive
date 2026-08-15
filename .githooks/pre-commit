@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Runs typecheck + the test suite before allowing a commit.
+# Installed automatically via `bun install` (see package.json "prepare" script).
+set -e
+
+echo "[pre-commit] Typechecking..."
+bun run typecheck
+
+echo "[pre-commit] Running test suite..."
+bun run test
