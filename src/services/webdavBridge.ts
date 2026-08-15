@@ -872,8 +872,7 @@ async function resolveTBDownloadUrl(torrentId: string, fileId: string): Promise<
       if (!isRotated) {
         rateLimiter.recordRateLimit(providerName, errorMsg);
       } else {
-        const masked = downloadToken.length > 4 ? `***${downloadToken.slice(-4)}` : '****';
-        logWarn(providerName, `Rotated download token ${masked} hit 429 rate limit — bypassing global rate limit`);
+        logWarn(providerName, "Rotated download token hit 429 rate limit — bypassing global rate limit");
       }
     }
     if ((status === 503 || status === 429) && isRotated) {
