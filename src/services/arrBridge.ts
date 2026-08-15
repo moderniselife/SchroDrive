@@ -877,7 +877,7 @@ export async function startArrBridge(): Promise<void> {
   });
 
   // --- Catch-all for unimplemented endpoints ---
-  app.all('/api/v2/*', (req, res) => {
+  app.all('/api/v2/{*splat}', (req, res) => {
     console.log(`${LOG_PREFIX} Unimplemented endpoint: ${req.method} ${req.path}`);
     res.json({});
   });
