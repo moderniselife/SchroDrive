@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.11.1] - 2026-08-15 🐛
+*Status: *arr bridge startup fix, dependency security bump, test infrastructure*
+
+### Fixed 🐛
+- **`*arr` bridge failing to start under Express 5** (`src/services/arrBridge.ts`): the `/api/v2/*` catch-all route used bare-wildcard syntax dropped by path-to-regexp v8, throwing `pathToRegexpError` and leaving the bridge unbound on its port — Radarr/Sonarr got connection-refused. Switched to the named-wildcard syntax (`/api/v2/{*splat}`) already used in `webdavBridge.ts`. (#57)
+
+### Changed 🔄
+- **`next`** bumped 16.2.6 → 16.2.11 in `/web` — pulls in several high/moderate severity security fixes (App Router DoS, middleware/proxy bypass, SSRF in rewrites and Server Actions)
+
+### Added ✨
+- **Test suite** (`tests/{unit,e2e,regressions}/`) using `bun:test` — unit coverage for core utils/config, an e2e pass against the real *arr bridge, and a regression test tied to #57
+- **CI**: GitHub Actions workflow (`.github/workflows/test.yml`) running typecheck + the full test suite on PRs/pushes to `main`/`develop`
+- **Pre-commit hook** (`.githooks/pre-commit`, wired up via `core.hooksPath` and auto-installed through the `prepare` script) — runs typecheck + tests before a commit is allowed
+
 ### Version [0.11.0] - 2026-06-14 🔄
 *Status: Seerr (Overseerr + Jellyseerr merger) support, codebase deduplication*
 
