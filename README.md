@@ -1613,3 +1613,15 @@ This project is licenced under the terms specified in the [LICENCE](LICENSE) fil
 <p align="center">
   <sub>Built with ☕, AI and quantum uncertainty by <a href="https://github.com/moderniselife">moderniselife</a></sub>
 </p>
+## Impact tracking
+
+Before reviewing a change, see which source files depend on it:
+
+```sh
+bun run impact -- src/core/utils.ts
+bun run impact:changed
+```
+
+The report follows TypeScript imports transitively across `src/` and `web/src/`,
+including the frontend `@/` path alias, so affected services, pages, and tests
+are visible together.
