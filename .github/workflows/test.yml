@@ -29,3 +29,6 @@ jobs:
 
       - name: Run test suite
         run: bun run test
+
+      - name: Report impacted dependents
+        run: bun run impact:changed
