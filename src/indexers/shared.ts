@@ -13,3 +13,11 @@ export function buildMagnetFromHash(hash: string, title?: string): string | unde
   const dn = title ? `&dn=${encodeURIComponent(title)}` : "";
   return `magnet:?xt=urn:btih:${hashUpper}${dn}`;
 }
+
+export function requestTimeoutMs(customTimeoutMs?: number, maxMs = 120_000, defaultMs = 15_000): number {
+  return Math.max(5_000, Math.min(customTimeoutMs ?? defaultMs, maxMs));
+}
+
+export function normaliseBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, "");
+}
