@@ -1,3 +1,5 @@
+import { buildMagnetFromHash } from "./shared";
+
 /**
  * stremioScraper.ts — Shared utilities for all Stremio addon protocol scrapers.
  *
@@ -99,20 +101,6 @@ export function buildStremioUrl(
     return `${base}${cfgSegment}/stream/series/${imdbId}:${season}:${episode}.json`;
   }
   return `${base}${cfgSegment}/stream/movie/${imdbId}.json`;
-}
-
-/**
- * Build a magnet URI from a 40-hex or 32-base32 info hash.
- */
-function buildMagnetFromHash(hash: string, title?: string): string | undefined {
-  const trimmed = hash.trim();
-  const hex40 = /^[a-fA-F0-9]{40}$/;
-  const b32 = /^[A-Z2-7]{32,39}$/i;
-  if (!hex40.test(trimmed) && !b32.test(trimmed)) return undefined;
-
-  const hashUpper = trimmed.toUpperCase();
-  const dn = title ? `&dn=${encodeURIComponent(title)}` : "";
-  return `magnet:?xt=urn:btih:${hashUpper}${dn}`;
 }
 
 /**
