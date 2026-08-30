@@ -8,6 +8,7 @@
 
 import axios from "axios";
 import { config } from "../core/config";
+import { buildMagnetFromHash } from "./shared";
 import type { ScraperResult } from "./stremioScraper";
 
 const SOURCE = "zilean";
@@ -27,20 +28,6 @@ interface ZileanEntry {
  */
 export function isZileanConfigured(): boolean {
   return config.zileanEnabled && !!config.zileanUrl;
-}
-
-/**
- * Build a magnet URI from a 40-hex or 32-base32 info hash.
- */
-function buildMagnetFromHash(hash: string, title?: string): string | undefined {
-  const trimmed = hash.trim();
-  const hex40 = /^[a-fA-F0-9]{40}$/;
-  const b32 = /^[A-Z2-7]{32,39}$/i;
-  if (!hex40.test(trimmed) && !b32.test(trimmed)) return undefined;
-
-  const hashUpper = trimmed.toUpperCase();
-  const dn = title ? `&dn=${encodeURIComponent(title)}` : "";
-  return `magnet:?xt=urn:btih:${hashUpper}${dn}`;
 }
 
 /**
