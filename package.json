@@ -19,7 +19,9 @@
     "test:unit": "bun test tests/unit",
     "test:e2e": "bun test tests/e2e",
     "test:regressions": "bun test tests/regressions",
-    "test:integration": "bun tests/integration.test.ts"
+    "test:integration": "bun tests/integration.test.ts",
+    "impact": "bun scripts/impact.ts",
+    "impact:changed": "bun scripts/impact.ts --changed"
   },
   "engines": {
     "bun": ">=1.2.0"
