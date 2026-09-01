@@ -1,7 +1,7 @@
 import axios from "axios";
 import { config } from "../core/config";
 import { requestTimeoutMs } from "../core/httpClient";
-import { normaliseBaseUrl, stripTmdbQuery } from "./shared";
+import { buildMagnetFromHash, normaliseBaseUrl, stripTmdbQuery } from "./shared";
 
 export type JackettResult = {
   Title?: string;
