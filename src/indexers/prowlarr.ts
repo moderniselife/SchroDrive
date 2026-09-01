@@ -1,6 +1,7 @@
 import axios from "axios";
 import { config } from "../core/config";
-import { buildMagnetFromHash, normaliseBaseUrl, requestTimeoutMs, stripTmdbQuery } from "./shared";
+import { requestTimeoutMs } from "../core/httpClient";
+import { buildMagnetFromHash, normaliseBaseUrl, stripTmdbQuery } from "./shared";
 
 export type ProwlarrResult = {
   title?: string;
