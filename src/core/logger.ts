@@ -10,8 +10,6 @@ export interface LogEntry {
   message: string;
 }
 
-type LogListener = (entry: LogEntry) => void;
-
 export function getLogTimestamp(): string {
   return new Date().toISOString();
 }
