@@ -1,5 +1,7 @@
 import axios from "axios";
 import { config } from "../core/config";
+import { requestTimeoutMs } from "../core/httpClient";
+import { normaliseBaseUrl, stripTmdbQuery } from "./shared";
 
 export type JackettResult = {
   Title?: string;
@@ -49,16 +51,17 @@ function normalizeResult(r: JackettResult): JackettResult {
 
 export async function testJackettConnection(): Promise<boolean> {
   try {
-    const base = config.jackettUrl?.replace(/\/$/, "");
+    const base = normaliseBaseUrl(config.jackettUrl ?? "");
     if (!base || !config.jackettApiKey) return false;
 
     const started = Date.now();
-    console.log(`[${new Date().toISOString()}][jackett] testing connection to ${base}`, { timeoutMs: Math.max(5000, Math.min(config.jackettTimeoutMs || 10000, 60000)) });
+    const timeoutMs = requestTimeoutMs(config.jackettTimeoutMs, 60_000, 10_000);
+    console.log(`[${new Date().toISOString()}][jackett] testing connection to ${base}`, { timeoutMs });
 
     // Jackett uses /api/v2.0/indexers/all/results for search, but we can test with /api/v2.0/server/config
     const res = await axios.get(`${base}/api/v2.0/server/config`, {
       params: { apikey: config.jackettApiKey },
-      timeout: Math.max(5000, Math.min(config.jackettTimeoutMs || 10000, 60000)),
+      timeout: timeoutMs,
     });
 
     console.log(`[${new Date().toISOString()}][jackett] connection test successful`, {
@@ -86,7 +89,7 @@ export async function searchJackett(query: string, opts?: {
     throw new Error("Jackett not configured. Set JACKETT_URL and JACKETT_API_KEY.");
   }
 
-  const base = config.jackettUrl.replace(/\/$/, "");
+  const base = normaliseBaseUrl(config.jackettUrl);
   // Jackett Torznab API endpoint - use "all" to search all indexers, or specific indexer ID
   const indexerPath = opts?.indexerIds?.length ? opts.indexerIds[0] : "all";
   const url = new URL(`/api/v2.0/indexers/${indexerPath}/results`, base);
@@ -94,8 +97,7 @@ export async function searchJackett(query: string, opts?: {
   // Cap length before regex processing — an unbounded run of whitespace here would make
   // \s*TMDB\d+\b (combined with the global flag) do quadratic backtracking work.
   const originalQuery = String(query || "").slice(0, 200);
-  const stripTmdb = (q: string) => q.replace(/\s*TMDB\d+\b/gi, "").replace(/\s{2,}/g, " ").trim();
-  const withoutTmdb = stripTmdb(originalQuery);
+  const withoutTmdb = stripTmdbQuery(originalQuery);
   const usedQuery = withoutTmdb || originalQuery;
 
   const params: any = {
@@ -119,9 +121,10 @@ export async function searchJackett(query: string, opts?: {
     timeoutMs: config.jackettTimeoutMs,
   });
 
+  const timeoutMs = requestTimeoutMs(config.jackettTimeoutMs, 120_000, 15_000);
   const res = await axios.get(url.toString(), {
     params,
-    timeout: Math.max(5000, Math.min(config.jackettTimeoutMs || 15000, 120000)),
+    timeout: timeoutMs,
   }).catch((err: any) => {
     console.error(`[${new Date().toISOString()}][jackett] request failed`, {
       query,
@@ -130,7 +133,7 @@ export async function searchJackett(query: string, opts?: {
       status: err?.response?.status,
       statusText: err?.response?.statusText,
       url: url.toString(),
-      timeout: `${Math.max(5000, Math.min(config.jackettTimeoutMs || 15000, 120000))}ms`
+      timeout: `${timeoutMs}ms`
     });
 
     if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
@@ -185,7 +188,7 @@ export async function searchJackett(query: string, opts?: {
       });
       const res2 = await axios.get(url.toString(), {
         params: params2,
-        timeout: Math.max(5000, Math.min(config.jackettTimeoutMs || 15000, 120000)),
+        timeout: timeoutMs,
       }).catch((err: any) => {
         console.error(`[${new Date().toISOString()}][jackett] fallback request failed`, {
           originalQuery,
@@ -226,7 +229,7 @@ export async function searchJackett(query: string, opts?: {
     });
     const res3 = await axios.get(url.toString(), {
       params: params3,
-      timeout: Math.max(5000, Math.min(config.jackettTimeoutMs || 15000, 120000)),
+      timeout: timeoutMs,
     }).catch((err: any) => {
       console.error(`[${new Date().toISOString()}][jackett] fallback (no categories) failed`, {
         originalQuery,
@@ -286,12 +289,8 @@ export function getMagnet(r: JackettResult | undefined): string | undefined {
   // Try to build a magnet from info hash if present
   const hashCand = (r.infoHash || r.InfoHash || "").toString().trim();
   if (hashCand) {
-    const hex40 = /^[a-fA-F0-9]{40}$/;
-    const b32 = /^[A-Z2-7]{32,39}$/i;
-    if (hex40.test(hashCand) || b32.test(hashCand)) {
-      const hashUpper = hashCand.toUpperCase();
-      const dn = r.title ? `&dn=${encodeURIComponent(r.title)}` : "";
-      const built = `magnet:?xt=urn:btih:${hashUpper}${dn}`;
+    const built = buildMagnetFromHash(hashCand, r.title);
+    if (built) {
       console.log(`[${new Date().toISOString()}][jackett] getMagnet built from infoHash`, { built: true });
       return built;
     }
@@ -311,7 +310,7 @@ export async function getMagnetOrResolve(r: JackettResult | undefined): Promise<
   if (!r) return undefined;
   const direct = getMagnet(r);
   if (direct) return direct;
-  const base = config.jackettUrl.replace(/\/$/, "");
+  const base = normaliseBaseUrl(config.jackettUrl);
   const candidate = r.Link || r.link || r.Guid || r.guid;
   let url = typeof candidate === 'string' ? absoluteUrl(candidate, base) : '';
   if (!url || !(url.startsWith('http://') || url.startsWith('https://'))) return undefined;
@@ -322,10 +321,10 @@ export async function getMagnetOrResolve(r: JackettResult | undefined): Promise<
     hops++;
     let resp: any;
     try {
-      resp = await axios.head(url, { maxRedirects: 0, validateStatus: () => true, timeout: Math.max(5000, Math.min(config.jackettTimeoutMs || 15000, 120000)) });
+      resp = await axios.head(url, { maxRedirects: 0, validateStatus: () => true, timeout: requestTimeoutMs(config.jackettTimeoutMs, 120_000, 15_000) });
     } catch {
       try {
-        resp = await axios.get(url, { maxRedirects: 0, validateStatus: () => true, timeout: Math.max(5000, Math.min(config.jackettTimeoutMs || 15000, 120000)) });
+        resp = await axios.get(url, { maxRedirects: 0, validateStatus: () => true, timeout: requestTimeoutMs(config.jackettTimeoutMs, 120_000, 15_000) });
       } catch (e) {
         console.warn(`[${new Date().toISOString()}][jackett] resolveMagnet failed`, { url, err: (e as any)?.message });
         return undefined;

@@ -1,4 +1,6 @@
-// Real-time log buffer and streaming system
+// Real-time log buffer and streaming system.
+// The project was previously logging ad-hoc timestamp prefixes in many modules;
+// this central abstraction keeps event-scoped output consistent.
 
 export interface LogEntry {
   id: string;
@@ -6,6 +8,70 @@ export interface LogEntry {
   level: "info" | "warn" | "error" | "debug";
   service: string;
   message: string;
+}
+
+type LogListener = (entry: LogEntry) => void;
+
+export function getLogTimestamp(): string {
+  return new Date().toISOString();
+}
+
+export function formatLogPrefix(service: string): string {
+  return `[${getLogTimestamp()}][${service}]`;
+}
+
+function safeSerialize(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+export function createLogger(service: string) {
+  return {
+    info: (message: string, data?: Record<string, unknown>) => logInfo(service, message, data),
+    warn: (message: string, data?: Record<string, unknown>) => logWarn(service, message, data),
+    error: (message: string, data?: Record<string, unknown>) => logError(service, message, data),
+    debug: (message: string, data?: Record<string, unknown>) => logDebug(service, message, data),
+  };
+}
+
+export function logInfo(service: string, message: string, data?: Record<string, unknown>): void {
+  const prefix = formatLogPrefix(service);
+  if (data) {
+    console.log(prefix, message, data);
+    return;
+  }
+  console.log(prefix, message);
+}
+
+export function logWarn(service: string, message: string, data?: Record<string, unknown>): void {
+  const prefix = formatLogPrefix(service);
+  if (data) {
+    console.warn(prefix, message, data);
+    return;
+  }
+  console.warn(prefix, message);
+}
+
+export function logError(service: string, message: string, data?: Record<string, unknown>): void {
+  const prefix = formatLogPrefix(service);
+  if (data) {
+    console.error(prefix, message, data);
+    return;
+  }
+  console.error(prefix, message);
+}
+
+export function logDebug(service: string, message: string, data?: Record<string, unknown>): void {
+  const prefix = formatLogPrefix(service);
+  if (data) {
+    console.debug(prefix, message, data);
+    return;
+  }
+  console.debug(prefix, message);
 }
 
 type LogListener = (entry: LogEntry) => void;
@@ -49,21 +115,12 @@ class LogBuffer {
 
   private parseLogMessage(args: any[]): { service: string; message: string } {
     const fullMessage = args
-      .map((arg) => {
-        if (typeof arg === "string") return arg;
-        try {
-          return JSON.stringify(arg);
-        } catch {
-          return String(arg);
-        }
-      })
+      .map((arg) => safeSerialize(arg))
       .join(" ");
 
-    // Parse service from log format: [timestamp][service] message
     const serviceMatch = fullMessage.match(/\]\[([^\]]+)\]/);
     const service = serviceMatch ? serviceMatch[1] : "system";
 
-    // Remove timestamp prefix if present
     const cleanMessage = fullMessage.replace(/^\[[\d\-T:.Z]+\]/, "").trim();
 
     return { service, message: cleanMessage };
@@ -71,10 +128,10 @@ class LogBuffer {
 
   private addLog(level: LogEntry["level"], args: any[]) {
     const { service, message } = this.parseLogMessage(args);
-    
+
     const entry: LogEntry = {
       id: `log-${++this.idCounter}`,
-      timestamp: new Date().toISOString(),
+      timestamp: getLogTimestamp(),
       level,
       service,
       message,
@@ -82,16 +139,14 @@ class LogBuffer {
 
     this.logs.push(entry);
 
-    // Trim old logs
     if (this.logs.length > this.maxLogs) {
       this.logs = this.logs.slice(-this.maxLogs);
     }
 
-    // Notify listeners
     this.listeners.forEach((listener) => {
       try {
         listener(entry);
-      } catch (err) {
+      } catch {
         // Ignore listener errors
       }
     });
@@ -117,5 +172,4 @@ class LogBuffer {
   }
 }
 
-// Singleton instance
 export const logBuffer = new LogBuffer();
