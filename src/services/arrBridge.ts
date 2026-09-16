@@ -15,6 +15,7 @@
  */
 
 import express, { type Request, type Response } from 'express';
+import Busboy from 'busboy';
 import http from 'http';
 import fs from 'fs';
 import fsp from 'fs/promises';
@@ -393,6 +394,56 @@ function handleLogin(_req: Request, res: Response): void {
   // Always accept — no real auth needed (internal network)
   res.setHeader('Set-Cookie', 'SID=schrodrive; Path=/');
   res.send('Ok.');
+}
+
+/**
+ * Parse qBittorrent's multipart form requests without buffering file uploads.
+ *
+ * Radarr and Sonarr switch from urlencoded data to multipart when the magnet
+ * URI is larger than their form-data threshold.  The qBittorrent endpoint is
+ * field-oriented for the URL path, so PR0 only collects fields and drains any
+ * file stream; it deliberately does not claim to support `.torrent` uploads.
+ */
+function parseMultipartForm(req: Request, res: Response, next: (err?: unknown) => void): void {
+  if (!req.is('multipart/form-data')) {
+    next();
+    return;
+  }
+
+  let parser: ReturnType<typeof Busboy>;
+  try {
+    parser = Busboy({
+      headers: req.headers,
+      limits: {
+        fields: 32,
+        fieldSize: 2 * 1024 * 1024,
+        files: 0,
+      },
+    });
+  } catch (err) {
+    next(err);
+    return;
+  }
+
+  const body: Record<string, string | string[]> = {};
+  const addField = (name: string, value: string): void => {
+    const previous = body[name];
+    if (previous === undefined) body[name] = value;
+    else if (Array.isArray(previous)) previous.push(value);
+    else body[name] = [previous, value];
+  };
+
+  parser.on('field', (name, value) => addField(name, value));
+  // Drain unexpected file parts so the request can complete without creating
+  // temporary files. Binary `.torrent` upload remains intentionally unsupported.
+  parser.on('file', (_name, file) => file.resume());
+  parser.once('error', next);
+  parser.once('finish', () => {
+    req.body = body;
+    next();
+  });
+
+  req.pipe(parser);
 }
 
 /** GET /api/v2/auth/logout */
@@ -847,7 +898,7 @@ export async function startArrBridge(): Promise<void> {
   app.get('/api/v2/app/buildInfo', handleBuildInfo);
 
   // --- Torrents ---
-  app.post('/api/v2/torrents/add', handleAddTorrent);
+  app.post('/api/v2/torrents/add', parseMultipartForm, handleAddTorrent);
   app.get('/api/v2/torrents/info', handleTorrentInfo);
   app.get('/api/v2/torrents/properties', handleTorrentProperties);
   app.get('/api/v2/torrents/files', handleTorrentFiles);
