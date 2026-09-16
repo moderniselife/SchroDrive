@@ -5,6 +5,7 @@ import {
   listOrganizerReviewAudit,
   listOrganizerReviews,
   recordOrganizerReview,
+  validateReviewOverride,
 } from "../../../src/services/organizerReview";
 
 const parsed = {
@@ -36,5 +37,23 @@ describe("Organizer review queue", () => {
   test("returns undefined for an unknown review id", () => {
     clearOrganizerReviews();
     expect(decideOrganizerReview("missing", "dismissed")).toBeUndefined();
+  });
+
+  test("filters review status and preserves deterministic pagination", () => {
+    clearOrganizerReviews();
+    const pending = recordOrganizerReview("/mount/Pending.mkv", parsed);
+    const accepted = recordOrganizerReview("/mount/Accepted.mkv", parsed);
+    decideOrganizerReview(accepted.id, "accepted", { title: "Accepted" });
+    expect(listOrganizerReviews(true, "accepted").map((entry) => entry.id)).toEqual([accepted.id]);
+    expect(listOrganizerReviews(true, "pending").map((entry) => entry.id)).toEqual([pending.id]);
+    clearOrganizerReviews();
+  });
+
+  test("validates review overrides before persistence", () => {
+    expect(validateReviewOverride({ title: "  Film  ", year: 2024, kind: "movie" })).toEqual({ title: "Film", year: 2024, kind: "movie" });
+    expect(() => validateReviewOverride({ year: 1700 })).toThrow();
+    expect(() => validateReviewOverride({ title: "" })).toThrow();
+    expect(() => validateReviewOverride({ unexpected: true })).toThrow();
+    expect(validateReviewOverride(undefined)).toBeUndefined();
   });
 });

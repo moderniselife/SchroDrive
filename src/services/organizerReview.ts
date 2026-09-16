@@ -13,13 +13,42 @@ export interface OrganizerReviewEntry {
   decision: ReviewDecision;
   createdAt: string;
   updatedAt: string;
-  override?: {
-    title?: string;
-    year?: number;
-    season?: number;
-    episode?: number;
-    kind?: "movie" | "episode";
-  };
+  override?: ReviewOverride;
+}
+
+export interface ReviewOverride {
+  title?: string;
+  year?: number;
+  season?: number;
+  episode?: number;
+  kind?: "movie" | "episode";
+}
+
+export function validateReviewOverride(value: unknown): ReviewOverride | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error("override must be an object");
+  const input = value as Record<string, unknown>;
+  const result: ReviewOverride = {};
+  if (input.title !== undefined) {
+    if (typeof input.title !== "string" || input.title.trim().length < 1 || input.title.length > 300) {
+      throw new Error("override.title must be a non-empty string of at most 300 characters");
+    }
+    result.title = input.title.trim();
+  }
+  for (const [key, min, max] of [["year", 1800, 2200], ["season", 0, 99], ["episode", 0, 9999]] as const) {
+    if (input[key] !== undefined) {
+      if (typeof input[key] !== "number" || !Number.isInteger(input[key]) || input[key] < min || input[key] > max) {
+        throw new Error(`override.${key} is outside the supported range`);
+      }
+      result[key] = input[key];
+    }
+  }
+  if (input.kind !== undefined) {
+    if (input.kind !== "movie" && input.kind !== "episode") throw new Error("override.kind is invalid");
+    result.kind = input.kind;
+  }
+  if (Object.keys(result).length === 0) throw new Error("override must contain a supported field");
+  return result;
 }
 
 function keyFor(sourcePath: string): string {
@@ -46,10 +75,12 @@ export function recordOrganizerReview(sourcePath: string, parsed: ParsedMediaIde
   return entry;
 }
 
-export function listOrganizerReviews(includeResolved = false): OrganizerReviewEntry[] {
-  const rows = getDb().prepare(includeResolved
-    ? "SELECT * FROM organizer_reviews ORDER BY updated_at DESC"
-    : "SELECT * FROM organizer_reviews WHERE decision = 'pending' ORDER BY updated_at DESC").all() as any[];
+export function listOrganizerReviews(includeResolved = false, status?: ReviewDecision): OrganizerReviewEntry[] {
+  const decision = status || (includeResolved ? undefined : "pending");
+  const query = decision
+    ? "SELECT * FROM organizer_reviews WHERE decision = ? ORDER BY updated_at DESC"
+    : "SELECT * FROM organizer_reviews ORDER BY updated_at DESC";
+  const rows = (decision ? getDb().prepare(query).all(decision) : getDb().prepare(query).all()) as any[];
   return rows.map((row) => ({
     id: row.id, sourcePath: row.source_path, sourceBasename: row.source_basename,
     parsed: JSON.parse(row.parsed_json), decision: row.decision,
@@ -61,7 +92,7 @@ export function listOrganizerReviews(includeResolved = false): OrganizerReviewEn
 export function decideOrganizerReview(
   id: string,
   decision: Exclude<ReviewDecision, "pending">,
-  override?: OrganizerReviewEntry["override"],
+  override?: ReviewOverride,
 ): OrganizerReviewEntry | undefined {
   const database = getDb();
   const row = database.prepare("SELECT * FROM organizer_reviews WHERE id = ?").get(id) as any;

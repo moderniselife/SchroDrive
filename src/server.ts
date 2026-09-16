@@ -32,7 +32,7 @@ import { getBridgeStatuses, refreshBridges, getExternalWebdavStatus } from "./se
 import { getPreWarmStatus } from "./services/cloudLinks/bridge";
 import { getBlacklistEntries, getBlacklistCount, addToBlacklist, removeFromBlacklist, isBlacklisted } from "./core/blacklist";
 import { tokenRotator } from "./core/tokenRotator";
-import { decideOrganizerReview, listOrganizerReviewAudit, listOrganizerReviews } from "./services/organizerReview";
+import { decideOrganizerReview, listOrganizerReviewAudit, listOrganizerReviews, validateReviewOverride } from "./services/organizerReview";
 
 // ===========================================================================
 // Server Initialisation
@@ -187,7 +187,12 @@ export function startServer() {
   /** GET /api/organizer/review — Lists pending identity decisions. */
   app.get('/api/organizer/review', (req, res) => {
     const includeResolved = String(req.query.includeResolved || '') === 'true';
-    res.json({ ok: true, entries: listOrganizerReviews(includeResolved) });
+    const status = req.query.status === 'pending' || req.query.status === 'accepted' || req.query.status === 'dismissed'
+      ? req.query.status : undefined;
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const all = listOrganizerReviews(includeResolved, status);
+    res.json({ ok: true, entries: all.slice(offset, offset + limit), total: all.length, limit, offset });
   });
 
   /** POST /api/organizer/review/:id — Records a manual review decision. */
@@ -196,7 +201,10 @@ export function startServer() {
     if (decision !== 'accepted' && decision !== 'dismissed') {
       return res.status(400).json({ ok: false, error: 'decision must be accepted or dismissed' });
     }
-    const entry = decideOrganizerReview(String(req.params.id), decision, req.body?.override);
+    let override;
+    try { override = validateReviewOverride(req.body?.override); }
+    catch (err: any) { return res.status(400).json({ ok: false, error: err?.message || 'Invalid override' }); }
+    const entry = decideOrganizerReview(String(req.params.id), decision, override);
     if (!entry) return res.status(404).json({ ok: false, error: 'Review entry not found' });
     res.json({ ok: true, entry });
   });
