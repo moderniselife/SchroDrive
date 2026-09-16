@@ -415,9 +415,10 @@ async function scanMountsForCompleted(): Promise<void> {
         await fsp.mkdir(torrentDir, { recursive: true });
 
         for (const file of foundFiles) {
-          const symlinkPath = path.join(torrentDir, file.name);
+            const symlinkPath = path.join(torrentDir, file.name);
           try {
             // Create relative symlink
+            await fsp.mkdir(path.dirname(symlinkPath), { recursive: true });
             const relativePath = path.relative(path.dirname(symlinkPath), file.path);
             // Remove existing symlink if it exists
             try { await fsp.unlink(symlinkPath); } catch { /* doesn't exist */ }
@@ -447,17 +448,20 @@ async function scanMountsForCompleted(): Promise<void> {
 }
 
 /** Recursively scans a directory for video files. */
-async function scanDirRecursive(dir: string): Promise<Array<{ name: string; size: number; path: string }>> {
+export async function scanDirRecursive(
+  dir: string,
+  rootDir = dir,
+): Promise<Array<{ name: string; size: number; path: string }>> {
   const results: Array<{ name: string; size: number; path: string }> = [];
   try {
     const entries = await fsp.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        results.push(...await scanDirRecursive(full));
+        results.push(...await scanDirRecursive(full, rootDir));
       } else if (entry.isFile() && isMediaFile(entry.name)) {
         const stat = await fsp.stat(full);
-        results.push({ name: entry.name, size: stat.size, path: full });
+        results.push({ name: path.relative(rootDir, full), size: stat.size, path: full });
       }
     }
   } catch {

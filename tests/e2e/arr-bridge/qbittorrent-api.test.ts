@@ -12,7 +12,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { config } from '../../../src/core/config';
-import { startArrBridge, stopArrBridge } from '../../../src/services/arrBridge';
+import { scanDirRecursive, startArrBridge, stopArrBridge } from '../../../src/services/arrBridge';
 
 const PORT = 18283;
 const BASE_URL = `http://localhost:${PORT}`;
@@ -31,6 +31,16 @@ afterAll(async () => {
 });
 
 describe('*arr bridge qBittorrent-compatible API', () => {
+  test('preserves relative paths while scanning multi-file content', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'schrodrive-multifile-'));
+    fs.mkdirSync(path.join(root, 'Season 01'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'Extras'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'Season 01', 'Episode.mkv'), 'episode');
+    fs.writeFileSync(path.join(root, 'Extras', 'Episode.mkv'), 'extra');
+    const files = await scanDirRecursive(root);
+    expect(files.map((file) => file.name).sort()).toEqual(['Extras/Episode.mkv', 'Season 01/Episode.mkv']);
+  });
+
   test('reports a webapi version on GET /api/v2/app/webapiVersion', async () => {
     const res = await fetch(`${BASE_URL}/api/v2/app/webapiVersion`);
     expect(res.status).toBe(200);
