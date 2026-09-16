@@ -22,6 +22,7 @@ import axios from "axios";
 import { config } from "../core/config";
 import { classifyTorrent } from "../core/mediaClassifier";
 import { getWebdavOrganiserRoots } from "./mount";
+import { parseMediaFilename } from "./mediaParser";
 
 // ===========================================================================
 // Types & Constants
@@ -390,6 +391,54 @@ function parseFilename(fileName: string, fullPath: string): Parsed {
   }
 
   return { type: "unknown", ext };
+}
+
+/**
+ * Applies the pure structured parser only where it adds identity information
+ * without changing provider classification or Arr naming. The legacy parser
+ * remains the fallback for unsupported/ambiguous releases.
+ */
+function enrichWithStructuredIdentity(parsed: Parsed, fileName: string, fullPath: string): Parsed {
+  const structured = parseMediaFilename(fileName, fullPath);
+  if (structured.status !== "matched" || !structured.title || structured.confidence < 0.8) {
+    return parsed;
+  }
+
+  if (structured.kind === "episode") {
+    return {
+      type: "tv",
+      show: structured.title,
+      season: structured.season,
+      episode: structured.episode,
+      absolute: undefined,
+      year: structured.year ?? parsed.year,
+      ext: parsed.ext,
+    };
+  }
+
+  if (structured.kind === "anime-episode") {
+    return {
+      type: "tv",
+      show: structured.title,
+      absolute: structured.absoluteEpisode,
+      year: structured.year ?? parsed.year,
+      ext: parsed.ext,
+    };
+  }
+
+  // An explicit movie year is allowed to correct a false TV/absolute parse.
+  if (structured.kind === "movie" && structured.year) {
+    return {
+      type: "movie",
+      title: structured.title,
+      year: structured.year,
+      ext: parsed.ext,
+    };
+  }
+
+  return parsed.type === "unknown"
+    ? { type: "movie", title: structured.title, year: structured.year, ext: parsed.ext }
+    : parsed;
 }
 
 // ===========================================================================
@@ -860,7 +909,7 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
   const unknownSamples: string[] = [];
   for (const src of files) {
     const base = path.basename(src);
-    let parsed = parseFilename(base, src);
+    let parsed = enrichWithStructuredIdentity(parseFilename(base, src), base, src);
 
     // Enrich parsed results with metadata from external APIs
     if (parsed.type === "movie" && parsed.title) {
