@@ -32,6 +32,7 @@ import { getBridgeStatuses, refreshBridges, getExternalWebdavStatus } from "./se
 import { getPreWarmStatus } from "./services/cloudLinks/bridge";
 import { getBlacklistEntries, getBlacklistCount, addToBlacklist, removeFromBlacklist, isBlacklisted } from "./core/blacklist";
 import { tokenRotator } from "./core/tokenRotator";
+import { decideOrganizerReview, listOrganizerReviewAudit, listOrganizerReviews } from "./services/organizerReview";
 
 // ===========================================================================
 // Server Initialisation
@@ -177,6 +178,32 @@ export function startServer() {
       createdAt: e.blacklistedAt,
     }));
     res.json({ ok: true, entries });
+  });
+
+  // ===========================================================================
+  // Organizer Review API
+  // ===========================================================================
+
+  /** GET /api/organizer/review — Lists pending identity decisions. */
+  app.get('/api/organizer/review', (req, res) => {
+    const includeResolved = String(req.query.includeResolved || '') === 'true';
+    res.json({ ok: true, entries: listOrganizerReviews(includeResolved) });
+  });
+
+  /** POST /api/organizer/review/:id — Records a manual review decision. */
+  app.post('/api/organizer/review/:id', (req, res) => {
+    const decision = req.body?.decision;
+    if (decision !== 'accepted' && decision !== 'dismissed') {
+      return res.status(400).json({ ok: false, error: 'decision must be accepted or dismissed' });
+    }
+    const entry = decideOrganizerReview(String(req.params.id), decision, req.body?.override);
+    if (!entry) return res.status(404).json({ ok: false, error: 'Review entry not found' });
+    res.json({ ok: true, entry });
+  });
+
+  /** GET /api/organizer/review/:id/audit — Returns the decision history. */
+  app.get('/api/organizer/review/:id/audit', (req, res) => {
+    res.json({ ok: true, audit: listOrganizerReviewAudit(String(req.params.id)) });
   });
 
   /** GET /api/infringement-list/check — Checks if a name matches the blacklist. */

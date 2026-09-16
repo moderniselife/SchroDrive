@@ -12,6 +12,7 @@ import {
   Activity,
   Download,
   Magnet,
+  ClipboardCheck,
 } from "lucide-react"
 
 import {
@@ -44,6 +45,7 @@ const navigation = [
       { name: "Browse Files", href: "/files", icon: FolderOpen },
       { name: "Search", href: "/search", icon: Search },
       { name: "Add Content", href: "/add", icon: Plus },
+      { name: "Organizer Review", href: "/review", icon: ClipboardCheck },
     ],
   },
   {

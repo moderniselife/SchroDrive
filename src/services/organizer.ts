@@ -23,6 +23,7 @@ import { config } from "../core/config";
 import { classifyTorrent } from "../core/mediaClassifier";
 import { getWebdavOrganiserRoots } from "./mount";
 import { parseMediaFilename, selectMediaCandidate } from "./mediaParser";
+import { recordOrganizerReview } from "./organizerReview";
 
 // ===========================================================================
 // Types & Constants
@@ -940,6 +941,7 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
   const unknownSamples: string[] = [];
   for (const src of files) {
     const base = path.basename(src);
+    const structuredIdentity = parseMediaFilename(base, src);
     let parsed = enrichWithStructuredIdentity(parseFilename(base, src), base, src);
 
     // Enrich parsed results with metadata from external APIs
@@ -1000,6 +1002,10 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
     if (parsed.type === "movie") movieCount++; else if (parsed.type === "tv") tvCount++; else {
       unknownCount++;
       if (unknownSamples.length < 10) unknownSamples.push(src);
+    }
+
+    if (structuredIdentity.status !== "matched" && parsed.type === "unknown") {
+      recordOrganizerReview(src, structuredIdentity);
     }
 
     const dst = computeTarget(parsed, base, src);
