@@ -22,8 +22,9 @@ import fsp from 'fs/promises';
 import path from 'path';
 import { config } from '../core/config';
 import { registry } from '../providers';
-import type { AddMagnetResult } from '../providers';
+import type { AddMagnetResult, TorrentInfo } from '../providers';
 import { sanitiseName } from '../core/utils';
+import { refreshRcloneMount } from './mount';
 
 // ===========================================================================
 // Constants
@@ -92,6 +93,8 @@ interface TrackedTorrent {
   pollAttempts: number;
   /** Whether we've already scanned for mount files. */
   mountScanned: boolean;
+  /** Whether a targeted rclone refresh was requested after provider readiness. */
+  mountRefreshRequested: boolean;
 }
 
 // ===========================================================================
@@ -100,6 +103,58 @@ interface TrackedTorrent {
 
 /** All tracked torrents, keyed by uppercase info hash. */
 const tracked = new Map<string, TrackedTorrent>();
+
+/** Normalises release names for deterministic provider fallback matching. */
+export function normaliseTorrentName(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase()
+    .replace(/[._-]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+interface ProviderTorrentSnapshot {
+  provider: string;
+  torrent: TorrentInfo;
+}
+
+/**
+ * Correlates an Arr-tracked torrent with provider state. Provider ID is the
+ * authoritative key; normalised and fuzzy names are explicit fallbacks only.
+ */
+export function correlateProviderTorrent(
+  torrent: Pick<TrackedTorrent, 'name' | 'providerResults'>,
+  snapshots: ProviderTorrentSnapshot[],
+): ProviderTorrentSnapshot | undefined {
+  const successful = torrent.providerResults.filter((result) => result.success && result.id);
+  if (torrent.providerResults.length > 0 && successful.length === 0) return undefined;
+
+  for (const result of successful) {
+    const exact = snapshots.find((snapshot) =>
+      snapshot.provider === result.provider && String(snapshot.torrent.id) === String(result.id));
+    if (exact) return exact;
+  }
+
+  const normalisedName = normaliseTorrentName(torrent.name);
+  if (!normalisedName) return undefined;
+
+  const preferredSnapshots = successful.length > 0
+    ? snapshots.filter((snapshot) => successful.some((result) => result.provider === snapshot.provider))
+    : snapshots;
+  const normalised = preferredSnapshots.find((snapshot) =>
+    normaliseTorrentName(snapshot.torrent.name) === normalisedName);
+  if (normalised) return normalised;
+
+  const fuzzy = preferredSnapshots.find((snapshot) => {
+    const providerName = normaliseTorrentName(snapshot.torrent.name);
+    return providerName.length >= 20 && normalisedName.length >= 20 &&
+      (providerName.includes(normalisedName.slice(0, 20)) ||
+       normalisedName.includes(providerName.slice(0, 20)));
+  });
+  return fuzzy;
+}
 
 /** Express server instance. */
 let server: http.Server | null = null;
@@ -177,21 +232,13 @@ async function pollDebridStatus(): Promise<void> {
 
   // Fetch torrent lists from all configured providers (cached, cheap)
   const providers = registry.ordered();
-  const allTorrents = new Map<string, { provider: string; status: string; progress: number; bytes: number; name: string }>();
+  const allTorrents: ProviderTorrentSnapshot[] = [];
 
   for (const p of providers) {
     try {
       const torrents = await p.listTorrents();
       for (const t of torrents) {
-        // Try to match by info hash or name
-        const key = t.name?.toUpperCase() || t.id;
-        allTorrents.set(key, {
-          provider: p.id,
-          status: t.status,
-          progress: t.progress,
-          bytes: t.bytes,
-          name: t.name,
-        });
+        allTorrents.push({ provider: p.id, torrent: t });
       }
     } catch (err: any) {
       // Non-fatal — provider might be temporarily unavailable
@@ -201,23 +248,31 @@ async function pollDebridStatus(): Promise<void> {
   for (const torrent of pending) {
     torrent.pollAttempts++;
 
-    // Try to find this torrent across providers
-    let found = false;
-    for (const [, info] of allTorrents) {
-      // Match by name (fuzzy — torrent names might differ slightly)
-      if (info.name && torrent.name &&
-          (info.name.toLowerCase().includes(torrent.name.toLowerCase().slice(0, 30)) ||
-           torrent.name.toLowerCase().includes(info.name.toLowerCase().slice(0, 30)))) {
-        found = true;
+    const match = correlateProviderTorrent(torrent, allTorrents);
+    const found = !!match;
+    if (match) {
+        const info = match.torrent;
+        const wasReady = torrent.progress >= 1.0;
         torrent.progress = info.progress / 100; // Normalise to 0.0–1.0
         torrent.size = info.bytes || torrent.size;
-        torrent.name = info.name || torrent.name;
 
         // Map debrid status to qBit state
         const s = info.status.toLowerCase();
         if (s === 'downloaded' || s === 'seeding' || s === 'finished' ||
             s === 'cached' || s === 'completed' || info.progress >= 100) {
           torrent.progress = 1.0;
+          if (!wasReady && !torrent.mountRefreshRequested) {
+            torrent.mountRefreshRequested = true;
+            refreshRcloneMount(match.provider, `__all__/${sanitiseName(info.name || torrent.name)}`)
+              .then((refreshed) => {
+                if (!refreshed) {
+                  console.warn(`${LOG_PREFIX} Targeted mount refresh unavailable for ${match.provider}`);
+                }
+              })
+              .catch((err: any) => {
+                console.warn(`${LOG_PREFIX} Targeted mount refresh failed for ${match.provider}: ${err?.message || String(err)}`);
+              });
+          }
           // Don't set to uploading yet — wait for mount scan to find files
           if (!torrent.mountScanned) {
             torrent.state = 'stalledDL'; // Signal: ready but waiting for mount
@@ -229,8 +284,6 @@ async function pollDebridStatus(): Promise<void> {
         } else {
           torrent.state = 'downloading';
         }
-        break;
-      }
     }
 
     // If torrent has been pending for ages with no match, mark as error
@@ -279,11 +332,17 @@ async function scanMountsForCompleted(): Promise<void> {
             for (const entry of entries) {
               const entryLower = entry.toLowerCase();
               const nameLower = torrent.name.toLowerCase();
+              const entryNormalised = normaliseTorrentName(entry);
+              const nameNormalised = normaliseTorrentName(torrent.name);
 
               // Fuzzy match: entry contains significant portion of torrent name or vice versa
               if (entryLower.includes(nameLower.slice(0, 20)) ||
                   nameLower.includes(entryLower.slice(0, 20)) ||
-                  entryLower.replace(/[.\-_]/g, ' ') === nameLower.replace(/[.\-_]/g, ' ')) {
+                  entryLower.replace(/[.\-_]/g, ' ') === nameLower.replace(/[.\-_]/g, ' ') ||
+                  entryNormalised === nameNormalised ||
+                  (entryNormalised.length >= 20 && nameNormalised.length >= 20 &&
+                   (entryNormalised.includes(nameNormalised.slice(0, 20)) ||
+                    nameNormalised.includes(entryNormalised.slice(0, 20))))) {
                 const fullPath = path.join(searchDir, entry);
                 const stat = await fsp.stat(fullPath);
 
@@ -536,6 +595,7 @@ async function handleAddTorrent(req: Request, res: Response): Promise<void> {
         files: [],
         pollAttempts: 0,
         mountScanned: false,
+        mountRefreshRequested: false,
       };
 
       tracked.set(hash, torrent);

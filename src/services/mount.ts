@@ -34,6 +34,23 @@ import { sleep } from "../core/utils";
 
 /** Temporary directory for rclone config and logs. Initialised by mountVirtualDrive. */
 let tmpDir = path.join(os.tmpdir(), "schrodrive");
+const activeRcloneRcPorts = new Map<string, number>();
+
+/** Invalidate one provider path in rclone's VFS directory cache. */
+export async function refreshRcloneMount(provider: string, relativePath: string): Promise<boolean> {
+  const port = activeRcloneRcPorts.get(provider.replace(":", ""));
+  if (!port) return false;
+  const response = await fetch(`http://127.0.0.1:${port}/vfs/refresh`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    // rclone's RC parser expects scalar parameters as strings, including
+    // recursive=true, when they are sent as JSON.
+    body: JSON.stringify({ dir: relativePath, recursive: "true" }),
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok) throw new Error(`rclone VFS refresh returned HTTP ${response.status}`);
+  return true;
+}
 
 // ===========================================================================
 // External WebDAV Mount Config
@@ -862,7 +879,7 @@ export async function mountVirtualDrive(): Promise<void> {
     return;
   }
 
-  for (const m of mounts) {
+  for (const [mountIndex, m] of mounts.entries()) {
     // Safe to cleanup the leaf mount path only
     ensureDir(m.path, { cleanupOnStale: true });
     if (!(await testRemote(m.remote, cfg))) {
@@ -882,6 +899,12 @@ export async function mountVirtualDrive(): Promise<void> {
       console.log(`[${new Date().toISOString()}][mount] skipping --allow-other (no user_allow_other in /etc/fuse.conf)`);
     }
     args.push("--allow-non-empty");
+
+    if (config.mountRcloneRcPort > 0) {
+      const rcPort = config.mountRcloneRcPort + mountIndex;
+      args.push("--rc", `--rc-addr=127.0.0.1:${rcPort}`, "--rc-no-auth");
+      activeRcloneRcPorts.set(m.remote.replace(":", ""), rcPort);
+    }
 
     // Apply user-provided mount options or fall back to configured defaults
     if (config.mountOptions && config.mountOptions.trim()) {
@@ -928,7 +951,10 @@ export async function mountVirtualDrive(): Promise<void> {
     }
     args.push(`--log-file=${logFile}`);
 
-    args.push("--daemon");
+    // Keep the rclone process attached when RC is enabled. With --daemon the
+    // RC server can remain in the launcher process while the FUSE child owns
+    // the VFS, making vfs/refresh unable to address the mount.
+    if (config.mountRcloneRcPort <= 0) args.push("--daemon");
     console.log(`[${new Date().toISOString()}][mount] rclone ${args.join(" ")}`);
     const p = spawn(config.rclonePath, args, { stdio: "inherit" });
     p.on("error", (e) => {
@@ -1277,6 +1303,7 @@ export function unmountAll(): void {
       cleanupMountPath(m);
     } catch {}
   }
+  activeRcloneRcPorts.clear();
 }
 
 // ===========================================================================
@@ -1475,6 +1502,14 @@ async function attemptRemount(mount: MountTarget, rcloneConfigPath: string): Pro
     }
     args.push("--allow-non-empty");
 
+    const rcKey = mount.remote.replace(":", "");
+    const rcPort = activeRcloneRcPorts.get(rcKey) ||
+      (config.mountRcloneRcPort > 0 ? config.mountRcloneRcPort : 0);
+    if (rcPort > 0) {
+      args.push("--rc", `--rc-addr=127.0.0.1:${rcPort}`, "--rc-no-auth");
+      activeRcloneRcPorts.set(rcKey, rcPort);
+    }
+
     // Apply configured mount options
     if (config.mountOptions && config.mountOptions.trim()) {
       args.push(...splitArgs(config.mountOptions));
@@ -1505,7 +1540,7 @@ async function attemptRemount(mount: MountTarget, rcloneConfigPath: string): Pro
     args.push(`--log-file=${logFile}`);
   }
 
-  args.push("--daemon");
+  if (config.mountRcloneRcPort <= 0) args.push("--daemon");
 
   console.log(`[${ts()}][mount-health] re-mounting: rclone ${args.join(" ")}`);
 

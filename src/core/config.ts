@@ -128,6 +128,7 @@ export const config = {
   mountBase: defaultMountBase,
   rclonePath: process.env.RCLONE_PATH || "rclone",
   mountOptions: process.env.MOUNT_OPTIONS || "--vfs-cache-mode=full --dir-cache-time=12h --poll-interval=0 --buffer-size=64M",
+  mountRcloneRcPort: Number(process.env.MOUNT_RCLONE_RC_PORT || 0),
   // Mount permissions/ownership
   mountAllowOther: String(process.env.MOUNT_ALLOW_OTHER ?? "true").toLowerCase() === "true",
   mountUid: (() => {
