@@ -4,7 +4,9 @@ import { normalizeMediaTitle, parseMediaFilename, scoreMediaCandidates, selectMe
 describe("structured media parser", () => {
   test.each([
     ["The Conversation (1974).mkv", "movie", "The Conversation", 1974],
+    ["Dune.Part.Two.2024.ITA.2160p.WEB-DL.HEVC.mkv", "movie", "Dune Part Two", 2024],
     ["Atomic.S01E03-E04.ITA.1080p.WEB-DL.mkv", "episode", "Atomic", undefined],
+    ["The.Bear.S02E01E02.1080p.WEB-DL.mkv", "episode", "The Bear", undefined],
     ["The.Boys.3x02.1080p.WEB-DL.mkv", "episode", "The Boys", undefined],
     ["One.Piece - 1100.mkv", "anime-episode", "One Piece", undefined],
   ])("parses %s", (filename, kind, title, year) => {
@@ -75,5 +77,24 @@ describe("structured media parser", () => {
 
   test("returns unmatched when no identity can be inferred", () => {
     expect(parseMediaFilename("1080p.REPACK.mkv").status).toBe("unmatched");
+  });
+
+  test.each([
+    ["Movie.Without.Year.1080p.mkv", "ambiguous"],
+    ["Show.S03E07.mkv", "matched"],
+    ["Film.2023.mkv", "matched"],
+    ["clip.txt", "ambiguous"],
+  ])("classifies edge case %s as %s", (filename, status) => {
+    expect(parseMediaFilename(filename).status).toBe(status);
+  });
+
+  test("keeps matching deterministic for ties and accented titles", () => {
+    const parsed = parseMediaFilename("Citta.Violenta.1970.ITA.mkv");
+    const ranked = scoreMediaCandidates(parsed, [
+      { id: "b", title: "Città Violenta", kind: "movie", year: 1970 },
+      { id: "a", title: "Citta Violenta", kind: "movie", year: 1970 },
+    ]);
+    expect(ranked.map((candidate) => candidate.id)).toEqual(["a", "b"]);
+    expect(selectMediaCandidate(parsed, ranked).status).toBe("ambiguous");
   });
 });
