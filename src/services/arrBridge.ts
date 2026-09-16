@@ -25,6 +25,7 @@ import { registry } from '../providers';
 import type { AddMagnetResult, TorrentInfo } from '../providers';
 import { sanitiseName } from '../core/utils';
 import { refreshRcloneMount } from './mount';
+import { getDb } from '../core/db';
 
 // ===========================================================================
 // Constants
@@ -103,6 +104,39 @@ interface TrackedTorrent {
 
 /** All tracked torrents, keyed by uppercase info hash. */
 const tracked = new Map<string, TrackedTorrent>();
+let trackedStateLoaded = false;
+
+function persistTrackedTorrent(torrent: TrackedTorrent): void {
+  try {
+    getDb().prepare(`INSERT INTO arr_tracked_torrents (hash, state_json, updated_at)
+      VALUES (?, ?, ?) ON CONFLICT(hash) DO UPDATE SET state_json=excluded.state_json, updated_at=excluded.updated_at`)
+      .run(torrent.hash, JSON.stringify(torrent), Date.now());
+  } catch (err: any) {
+    console.warn(`${LOG_PREFIX} Could not persist tracked torrent ${torrent.hash.slice(0, 8)}: ${err?.message || String(err)}`);
+  }
+}
+
+function removePersistedTorrent(hash: string): void {
+  try { getDb().prepare('DELETE FROM arr_tracked_torrents WHERE hash = ?').run(hash); }
+  catch (err: any) { console.warn(`${LOG_PREFIX} Could not remove persisted torrent: ${err?.message || String(err)}`); }
+}
+
+function loadTrackedTorrents(): void {
+  if (trackedStateLoaded) return;
+  trackedStateLoaded = true;
+  try {
+    const rows = getDb().prepare('SELECT state_json FROM arr_tracked_torrents').all() as Array<{ state_json: string }>;
+    for (const row of rows) {
+      try {
+        const torrent = JSON.parse(row.state_json) as TrackedTorrent;
+        if (torrent?.hash && torrent?.magnet && torrent?.name) tracked.set(torrent.hash.toUpperCase(), torrent);
+      } catch { /* Ignore a corrupt record while restoring other torrents. */ }
+    }
+    if (rows.length) console.log(`${LOG_PREFIX} Restored ${tracked.size} tracked torrent(s) from SQLite`);
+  } catch (err: any) {
+    console.warn(`${LOG_PREFIX} Could not restore tracked torrents: ${err?.message || String(err)}`);
+  }
+}
 
 /** Normalises release names for deterministic provider fallback matching. */
 export function normaliseTorrentName(value: string): string {
@@ -246,6 +280,7 @@ async function pollDebridStatus(): Promise<void> {
   }
 
   for (const torrent of pending) {
+    const before = `${torrent.state}|${torrent.progress}|${torrent.size}|${torrent.pollAttempts}`;
     torrent.pollAttempts++;
 
     const match = correlateProviderTorrent(torrent, allTorrents);
@@ -291,6 +326,8 @@ async function pollDebridStatus(): Promise<void> {
       console.warn(`${LOG_PREFIX} Torrent "${torrent.name}" not found on any provider after ${torrent.pollAttempts} polls — marking as error`);
       torrent.state = 'error';
     }
+    const after = `${torrent.state}|${torrent.progress}|${torrent.size}|${torrent.pollAttempts}`;
+    if (before !== after) persistTrackedTorrent(torrent);
   }
 }
 
@@ -397,6 +434,7 @@ async function scanMountsForCompleted(): Promise<void> {
         torrent.savePath = path.join(getDownloadsPath(), torrent.category || '');
         torrent.contentPath = torrentDir;
         torrent.size = foundFiles.reduce((sum, f) => sum + f.size, 0);
+        persistTrackedTorrent(torrent);
 
         console.log(`${LOG_PREFIX} ✅ Torrent "${torrent.name}" completed — ${foundFiles.length} file(s) symlinked to ${torrentDir}`);
       }
@@ -599,6 +637,7 @@ async function handleAddTorrent(req: Request, res: Response): Promise<void> {
       };
 
       tracked.set(hash, torrent);
+      persistTrackedTorrent(torrent);
 
       // Submit to debrid providers in background (don't block the response)
       const addStrategy = config.addStrategy || 'all';
@@ -609,10 +648,12 @@ async function handleAddTorrent(req: Request, res: Response): Promise<void> {
             id: r.result?.id || '',
             success: r.success,
           }));
+          persistTrackedTorrent(torrent);
 
           const successCount = results.filter((r) => r.success).length;
           if (successCount === 0) {
             torrent.state = 'error';
+            persistTrackedTorrent(torrent);
             console.error(`${LOG_PREFIX} ❌ All providers failed for "${name}"`);
           } else {
             console.log(`${LOG_PREFIX} ✅ Submitted "${name}" to ${successCount} provider(s)`);
@@ -620,6 +661,7 @@ async function handleAddTorrent(req: Request, res: Response): Promise<void> {
         })
         .catch((err: any) => {
           torrent.state = 'error';
+          persistTrackedTorrent(torrent);
           console.error(`${LOG_PREFIX} ❌ Failed to submit "${name}": ${err?.message}`);
         });
     }
@@ -810,6 +852,7 @@ function handleDeleteTorrent(req: Request, res: Response): void {
       }
 
       tracked.delete(hash);
+      removePersistedTorrent(hash);
     }
   }
 
@@ -836,6 +879,7 @@ function handleSetCategory(req: Request, res: Response): void {
     if (torrent) {
       torrent.category = category;
       torrent.savePath = path.join(getDownloadsPath(), category);
+      persistTrackedTorrent(torrent);
     }
   }
 
@@ -940,6 +984,7 @@ export async function startArrBridge(): Promise<void> {
   console.log(`${LOG_PREFIX} Starting *arr bridge (fake qBittorrent v${FAKE_QBIT_VERSION}) on port ${port}...`);
 
   await ensureDownloadsDir();
+  loadTrackedTorrents();
 
   const app = express();
 
@@ -1045,4 +1090,10 @@ export async function stopArrBridge(): Promise<void> {
       resolve();
     });
   });
+}
+
+/** Test-only process reset used to verify SQLite recovery without a second process. */
+export function resetArrBridgeStateForTests(): void {
+  tracked.clear();
+  trackedStateLoaded = false;
 }

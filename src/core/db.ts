@@ -192,6 +192,11 @@ function runMigrations(database: Database): void {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_organizer_reviews_decision
       ON organizer_reviews (decision, updated_at)`,
+    `CREATE TABLE IF NOT EXISTS arr_tracked_torrents (
+      hash TEXT PRIMARY KEY,
+      state_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
   ];
 
   for (const sql of migrations) {
