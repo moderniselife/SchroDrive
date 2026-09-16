@@ -20,6 +20,9 @@ const BASE_URL = `http://localhost:${PORT}`;
 beforeAll(async () => {
   config.arrBridgePort = PORT;
   config.mountBase = fs.mkdtempSync(path.join(os.tmpdir(), 'schrodrive-arrbridge-'));
+  // Keep add tests provider-free: the bridge must parse the request without
+  // submitting the fixture magnet to a real debrid account.
+  config.providers = [];
   await startArrBridge();
 });
 
@@ -52,5 +55,61 @@ describe('*arr bridge qBittorrent-compatible API', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toMatchObject({ status: 'ok', service: 'arr-bridge' });
+  });
+
+  test('continues to accept urlencoded magnet adds', async () => {
+    const magnet = 'magnet:?xt=urn:btih:1111111111111111111111111111111111111111&dn=urlencoded-test';
+    const body = new URLSearchParams({ urls: magnet, category: 'radarr' });
+    const res = await fetch(`${BASE_URL}/api/v2/torrents/add`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    const torrents = await (await fetch(`${BASE_URL}/api/v2/torrents/info`)).json();
+    expect(torrents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ hash: '1111111111111111111111111111111111111111', category: 'radarr' }),
+    ]));
+  });
+
+  test.each(['radarr', 'sonarr'])('accepts multipart %s magnet adds', async (category) => {
+    const hash = category === 'radarr'
+      ? '2222222222222222222222222222222222222222'
+      : '3333333333333333333333333333333333333333';
+    // Radarr/Sonarr make the request multipart when the magnet exceeds 1024 B.
+    const magnet = `magnet:?xt=urn:btih:${hash}&dn=${'long-release-name-'.repeat(80)}`;
+    const form = new FormData();
+    form.append('urls', magnet);
+    form.append('savepath', `/downloads/${category}`);
+    form.append('category', category);
+    form.append('tags', 'cinecircle-test');
+    form.append('skip_checking', 'false');
+    form.append('paused', 'false');
+    form.append('sequentialDownload', 'false');
+    form.append('firstLastPiecePrio', 'false');
+
+    const res = await fetch(`${BASE_URL}/api/v2/torrents/add`, {
+      method: 'POST',
+      body: form,
+    });
+
+    expect(res.status).toBe(200);
+    const torrents = await (await fetch(`${BASE_URL}/api/v2/torrents/info`)).json();
+    expect(torrents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ hash, category, tags: 'cinecircle-test' }),
+    ]));
+  });
+
+  test('rejects an add request without urls', async () => {
+    const form = new FormData();
+    form.append('category', 'radarr');
+    const res = await fetch(`${BASE_URL}/api/v2/torrents/add`, {
+      method: 'POST',
+      body: form,
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe('No URLs provided');
   });
 });
