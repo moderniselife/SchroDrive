@@ -161,6 +161,11 @@ export const config = {
   tmdbApiKey: process.env.TMDB_API_KEY || "",
   organizedBase: process.env.ORGANIZED_BASE || `${defaultMountBase}/organized`,
   organizerMode: (process.env.ORGANIZER_MODE || "symlink") as "symlink" | "copy" | "move",
+  // Filename policy for the organised view. Canonical preserves the existing
+  // behaviour; original keeps the source release basename in the symlink.
+  organizerFilenameMode: (process.env.ORGANIZER_FILENAME_MODE || "canonical").toLowerCase() === "original"
+    ? "original" as const
+    : "canonical" as const,
   runOrganizerWatch: String(process.env.RUN_ORGANIZER_WATCH ?? "false").toLowerCase() === "true",
   orgScanIntervalSeconds: Number(process.env.ORG_SCAN_INTERVAL_S || 300),
   // --- Media Server Integration ---

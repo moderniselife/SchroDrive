@@ -165,7 +165,7 @@ function pad4(n: number): string { return `${n}`.padStart(4, "0"); }
  * Result of parsing a media filename. Contains the classified type and
  * extracted metadata (title/show name, season, episode, year, etc.).
  */
-interface Parsed {
+export interface Parsed {
   /** The classified media type. */
   type: MediaType;
   /** Movie title (only for type "movie"). */
@@ -514,13 +514,33 @@ async function itunesMovieSearch(title: string, year?: number): Promise<{
  * @param srcFullPath - The full path to the source file (used for torrent dir classification).
  * @returns The absolute target path, or `null` if type is unknown.
  */
-function computeTarget(p: Parsed, srcBaseName: string, srcFullPath?: string): string | null {
+export type OrganizerFilenameMode = "canonical" | "original";
+
+/**
+ * Selects the final basename without changing the canonical directory layout.
+ * The source basename is already a filesystem basename, so preserving it does
+ * not allow a release filename to escape the computed destination directory.
+ */
+export function selectOrganizerFilename(
+  mode: OrganizerFilenameMode,
+  canonicalFilename: string,
+  sourceFilename: string,
+): string {
+  return mode === "original" ? path.basename(sourceFilename) : canonicalFilename;
+}
+
+export function computeTarget(
+  p: Parsed,
+  srcBaseName: string,
+  srcFullPath?: string,
+  filenameMode: OrganizerFilenameMode = config.organizerFilenameMode,
+): string | null {
   const orgBase = config.organizedBase;
   if (p.type === "movie") {
     const title = p.title ? sanitize(p.title) : sanitize(path.parse(srcBaseName).name);
     const folder = p.year ? `${title} (${p.year})` : title;
     const dstDir = path.join(orgBase, "Movies", folder);
-    const dstName = `${folder}${p.ext}`;
+    const dstName = selectOrganizerFilename(filenameMode, `${folder}${p.ext}`, srcBaseName);
     return path.join(dstDir, dstName);
   }
   if (p.type === "tv") {
@@ -547,28 +567,35 @@ function computeTarget(p: Parsed, srcBaseName: string, srcFullPath?: string): st
       if (typeof p.season === "number" && typeof p.episode === "number") {
         const seasonDir = `Season ${pad2(p.season)}`;
         const epStr = `${show} S${pad2(p.season)}E${pad2(p.episode)}`;
-        return path.join(orgBase, "Anime", showDir, seasonDir, `${epStr}${p.ext}`);
+        const dstName = selectOrganizerFilename(filenameMode, `${epStr}${p.ext}`, srcBaseName);
+        return path.join(orgBase, "Anime", showDir, seasonDir, dstName);
       }
       if (typeof p.absolute === "number") {
-        return path.join(orgBase, "Anime", showDir, `${show} - ${pad4(p.absolute)}${p.ext}`);
+        const dstName = selectOrganizerFilename(filenameMode, `${show} - ${pad4(p.absolute)}${p.ext}`, srcBaseName);
+        return path.join(orgBase, "Anime", showDir, dstName);
       }
-      return path.join(orgBase, "Anime", showDir, `${show}${p.ext}`);
+      const dstName = selectOrganizerFilename(filenameMode, `${show}${p.ext}`, srcBaseName);
+      return path.join(orgBase, "Anime", showDir, dstName);
     }
 
     if (typeof p.season === "number" && typeof p.episode === "number") {
       const seasonDir = `Season ${pad2(p.season)}`;
       const dstDir = path.join(orgBase, "TV", showDir, seasonDir);
-      const fileName = `${show} S${pad2(p.season)}E${pad2(p.episode)}${p.ext}`;
+      const fileName = selectOrganizerFilename(
+        filenameMode,
+        `${show} S${pad2(p.season)}E${pad2(p.episode)}${p.ext}`,
+        srcBaseName,
+      );
       return path.join(dstDir, fileName);
     }
     if (typeof p.absolute === "number") {
       const dstDir = path.join(orgBase, "TV", showDir);
-      const fileName = `${show} - ${pad4(p.absolute)}${p.ext}`;
+      const fileName = selectOrganizerFilename(filenameMode, `${show} - ${pad4(p.absolute)}${p.ext}`, srcBaseName);
       return path.join(dstDir, fileName);
     }
     // TV with no episode info — place directly in the show directory
     const dstDir = path.join(orgBase, "TV", showDir);
-    const fileName = `${show}${p.ext}`;
+    const fileName = selectOrganizerFilename(filenameMode, `${show}${p.ext}`, srcBaseName);
     return path.join(dstDir, fileName);
   }
   return null;
@@ -593,7 +620,7 @@ async function ensureDir(p: string) {
  * @param dst - The absolute path where the symlink should be created.
  * @param dryRun - If `true`, log but do not actually create the symlink.
  */
-async function makeSymlink(src: string, dst: string, dryRun: boolean) {
+export async function makeSymlink(src: string, dst: string, dryRun: boolean, avoidCollision = false) {
   const dstDir = path.dirname(dst);
   await ensureDir(dstDir);
   const relTarget = path.relative(dstDir, src);
@@ -605,6 +632,14 @@ async function makeSymlink(src: string, dst: string, dryRun: boolean) {
         const cur = await fsp.readlink(dst).catch(() => "");
         const resolved = path.resolve(dstDir, cur);
         if (resolved === src) return; // Already correct — skip
+        if (avoidCollision) {
+          console.warn(`[${new Date().toISOString()}][organize] filename collision; keeping existing symlink`, {
+            path: dst,
+            existingTarget: resolved,
+            incomingTarget: src,
+          });
+          return;
+        }
         await fsp.unlink(dst);
       } else {
         // Exists as a regular file/directory — leave it to avoid data loss
@@ -890,7 +925,7 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
     const dst = computeTarget(parsed, base, src);
     if (!dst) continue;
 
-    await makeSymlink(src, dst, dryRun);
+    await makeSymlink(src, dst, dryRun, config.organizerFilenameMode === "original");
     processed++;
   }
 
