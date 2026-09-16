@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { getDb } from "../../../src/core/db";
 import {
   clearOrganizerReviews,
   decideOrganizerReview,
@@ -55,5 +56,18 @@ describe("Organizer review queue", () => {
     expect(() => validateReviewOverride({ title: "" })).toThrow();
     expect(() => validateReviewOverride({ unexpected: true })).toThrow();
     expect(validateReviewOverride(undefined)).toBeUndefined();
+  });
+
+  test("isolates malformed persisted JSON from the review API data", () => {
+    clearOrganizerReviews();
+    const entry = recordOrganizerReview("/mount/valid.mkv", parsed);
+    getDb().prepare("INSERT INTO organizer_reviews (id, source_path, source_basename, parsed_json, decision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run("malformed", "/mount/malformed.mkv", "malformed.mkv", "{not-json", "pending", new Date().toISOString(), new Date().toISOString());
+    getDb().prepare("INSERT INTO organizer_review_audit (review_id, action, payload_json, created_at) VALUES (?, ?, ?, ?)")
+      .run(entry.id, "malformed-payload", "{not-json", new Date().toISOString());
+    expect(listOrganizerReviews()).toHaveLength(1);
+    expect(listOrganizerReviews()[0].id).toBe(entry.id);
+    expect(listOrganizerReviewAudit(entry.id).at(-1)?.payload).toBeUndefined();
+    clearOrganizerReviews();
   });
 });
