@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeMediaTitle, parseMediaFilename, scoreMediaCandidates } from "../../../src/services/mediaParser";
+import { normalizeMediaTitle, parseMediaFilename, scoreMediaCandidates, selectMediaCandidate } from "../../../src/services/mediaParser";
 
 describe("structured media parser", () => {
   test.each([
@@ -50,6 +50,27 @@ describe("structured media parser", () => {
     );
     expect(scored[0].id).toBe("right");
     expect(scored[0].score).toBeGreaterThan(scored[1].score);
+  });
+
+  test("selects an exact metadata candidate and rejects a close tie", () => {
+    const exact = selectMediaCandidate(
+      { title: "Atomic", year: 2025, kind: "episode" },
+      [
+        { id: "2", title: "Atomic", kind: "show", year: 2025 },
+        { id: "1", title: "Atomic", kind: "show", year: 2024 },
+      ],
+    );
+    expect(exact.status).toBe("matched");
+    expect(exact.candidate?.id).toBe("2");
+
+    const ambiguous = selectMediaCandidate(
+      { title: "The Office", kind: "episode" },
+      [
+        { id: "1", title: "The Office", kind: "show" },
+        { id: "2", title: "The Office", kind: "show" },
+      ],
+    );
+    expect(ambiguous.status).toBe("ambiguous");
   });
 
   test("returns unmatched when no identity can be inferred", () => {

@@ -22,7 +22,7 @@ import axios from "axios";
 import { config } from "../core/config";
 import { classifyTorrent } from "../core/mediaClassifier";
 import { getWebdavOrganiserRoots } from "./mount";
-import { parseMediaFilename, scoreMediaCandidates } from "./mediaParser";
+import { parseMediaFilename, selectMediaCandidate } from "./mediaParser";
 
 // ===========================================================================
 // Types & Constants
@@ -475,11 +475,12 @@ async function tmdbSearch(title: string, prefer: "tv" | "movie", year?: number):
       kind: prefer === "movie" ? "movie" as const : "show" as const,
       year: Number(String(prefer === "movie" ? item.release_date : item.first_air_date || "").slice(0, 4)) || undefined,
     }));
-    const ranked = scoreMediaCandidates(
+    const selection = selectMediaCandidate(
       { title, year, kind: prefer === "movie" ? "movie" : "episode" },
       candidates,
     );
-    const best = results.find((item: any) => String(item.id) === String(ranked[0]?.id));
+    if (selection.status !== "matched" || !selection.candidate) return {};
+    const best = results.find((item: any) => String(item.id) === String(selection.candidate?.id));
     if (!best) return {};
     if (prefer === "movie") {
       return {
@@ -516,7 +517,17 @@ async function tvmazeSearch(title: string, year?: number): Promise<{
     const url = "https://api.tvmaze.com/search/shows";
     const { data } = await axios.get(url, { params: { q: title }, timeout: 10000 });
     const arr = Array.isArray(data) ? data : [];
-    const best = arr[0]?.show;
+    const selection = selectMediaCandidate(
+      { title, year, kind: "episode" },
+      arr.map((item: any) => ({
+        id: String(item?.show?.id ?? ""),
+        title: item?.show?.name || "",
+        kind: "show" as const,
+        year: Number(String(item?.show?.premiered || "").slice(0, 4)) || undefined,
+      })),
+    );
+    if (selection.status !== "matched" || !selection.candidate) return {};
+    const best = arr.find((item: any) => String(item?.show?.id ?? "") === String(selection.candidate?.id))?.show;
     if (!best) return {};
     const name = best.name || title;
     const premiered = best.premiered ? Number(String(best.premiered).slice(0, 4)) : year;
@@ -543,7 +554,17 @@ async function itunesMovieSearch(title: string, year?: number): Promise<{
     const url = "https://itunes.apple.com/search";
     const { data } = await axios.get(url, { params: { term: title, media: "movie", limit: 5 }, timeout: 10000 });
     const results = Array.isArray(data?.results) ? data.results : [];
-    const best = results[0];
+    const selection = selectMediaCandidate(
+      { title, year, kind: "movie" },
+      results.map((item: any, index: number) => ({
+        id: String(item?.trackId ?? index),
+        title: item?.trackName || "",
+        kind: "movie" as const,
+        year: item?.releaseDate ? new Date(item.releaseDate).getFullYear() : undefined,
+      })),
+    );
+    if (selection.status !== "matched" || !selection.candidate) return {};
+    const best = results.find((item: any, index: number) => String(item?.trackId ?? index) === String(selection.candidate?.id));
     if (!best) return {};
     const name = best.trackName || title;
     const y = best.releaseDate ? new Date(best.releaseDate).getFullYear() : year;

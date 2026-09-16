@@ -36,6 +36,13 @@ export interface ScoredMediaCandidate extends MediaCandidate {
   score: number;
 }
 
+export interface MediaCandidateSelection {
+  status: MediaParseStatus;
+  candidate?: ScoredMediaCandidate;
+  confidence: number;
+  reason: string;
+}
+
 const RELEASE_TOKENS = /\b(?:480p|576p|720p|1080p|1440p|2160p|4k|8k|web[- .]?dl|web[- .]?rip|bluray|bdrip|bdremux|remux|hdtv|dvdrip|x264|x265|h264|h265|hevc|av1|hdr10?\+?|dv|dolby(?:\s+vision)?|uhd|proper|repack|extended|remastered|multi|dual|ita|eng|italian|english|aac|ac3|eac3|ddp|dts|truehd|atmos|subs?)\b.*$/i;
 
 function cleanTitle(value: string): string {
@@ -236,4 +243,23 @@ export function scoreMediaCandidates(
       return { ...candidate, score: Math.max(0, Math.min(1, score)) };
     })
     .sort((a, b) => b.score - a.score || String(a.id).localeCompare(String(b.id)));
+}
+
+/** Select a candidate only when its score and lead over the runner-up are reliable. */
+export function selectMediaCandidate(
+  parsed: Pick<ParsedMediaIdentity, "title" | "year" | "kind">,
+  candidates: MediaCandidate[],
+  minimumScore = 0.65,
+  minimumLead = 0.05,
+): MediaCandidateSelection {
+  const ranked = scoreMediaCandidates(parsed, candidates);
+  const best = ranked[0];
+  if (!best || best.score < minimumScore) {
+    return { status: "unmatched", confidence: best?.score || 0, reason: "no candidate reached score threshold" };
+  }
+  const runnerUp = ranked[1];
+  if (runnerUp && best.score - runnerUp.score < minimumLead) {
+    return { status: "ambiguous", confidence: best.score, reason: "top candidates are too close" };
+  }
+  return { status: "matched", candidate: best, confidence: best.score, reason: "highest deterministic candidate score" };
 }
