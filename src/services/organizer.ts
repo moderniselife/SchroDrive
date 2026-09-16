@@ -22,7 +22,7 @@ import axios from "axios";
 import { config } from "../core/config";
 import { classifyTorrent } from "../core/mediaClassifier";
 import { getWebdavOrganiserRoots } from "./mount";
-import { parseMediaFilename } from "./mediaParser";
+import { parseMediaFilename, scoreMediaCandidates } from "./mediaParser";
 
 // ===========================================================================
 // Types & Constants
@@ -469,7 +469,17 @@ async function tmdbSearch(title: string, prefer: "tv" | "movie", year?: number):
     const url = prefer === "movie" ? "https://api.themoviedb.org/3/search/movie" : "https://api.themoviedb.org/3/search/tv";
     const { data } = await axios.get(url, { params, timeout: 10000 });
     const results = Array.isArray(data?.results) ? data.results : [];
-    const best = results[0];
+    const candidates = results.map((item: any) => ({
+      id: String(item.id),
+      title: prefer === "movie" ? (item.title || item.original_title || "") : (item.name || item.original_name || ""),
+      kind: prefer === "movie" ? "movie" as const : "show" as const,
+      year: Number(String(prefer === "movie" ? item.release_date : item.first_air_date || "").slice(0, 4)) || undefined,
+    }));
+    const ranked = scoreMediaCandidates(
+      { title, year, kind: prefer === "movie" ? "movie" : "episode" },
+      candidates,
+    );
+    const best = results.find((item: any) => String(item.id) === String(ranked[0]?.id));
     if (!best) return {};
     if (prefer === "movie") {
       return {
