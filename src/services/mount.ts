@@ -40,16 +40,35 @@ const activeRcloneRcPorts = new Map<string, number>();
 export async function refreshRcloneMount(provider: string, relativePath: string): Promise<boolean> {
   const port = activeRcloneRcPorts.get(provider.replace(":", ""));
   if (!port) return false;
-  const response = await fetch(`http://127.0.0.1:${port}/vfs/refresh`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    // rclone's RC parser expects scalar parameters as strings, including
-    // recursive=true, when they are sent as JSON.
-    body: JSON.stringify({ dir: relativePath, recursive: "true" }),
-    signal: AbortSignal.timeout(5_000),
-  });
-  if (!response.ok) throw new Error(`rclone VFS refresh returned HTTP ${response.status}`);
-  return true;
+
+  const refreshPath = async (dir: string): Promise<boolean> => {
+    const response = await fetch(`http://127.0.0.1:${port}/vfs/refresh`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // rclone's RC parser expects scalar parameters as strings, including
+      // recursive=true, when they are sent as JSON.
+      body: JSON.stringify({ dir, recursive: "true" }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) return false;
+
+    try {
+      const body = await response.json() as { result?: Record<string, unknown> };
+      const results = Object.values(body.result || {});
+      return results.length === 0 || results.every((value) => value === "OK");
+    } catch {
+      // Older rclone versions may return an empty successful response.
+      return true;
+    }
+  };
+
+  // A newly-created provider directory may not exist in rclone's parent
+  // listing yet. In that case refresh the parent exactly once so the normal
+  // mount scanner can discover it without reducing the global cache TTL.
+  if (await refreshPath(relativePath)) return true;
+  const parentPath = relativePath.split("/").slice(0, -1).join("/");
+  if (!parentPath || parentPath === relativePath) return false;
+  return refreshPath(parentPath);
 }
 
 // ===========================================================================
