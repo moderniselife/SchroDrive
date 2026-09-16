@@ -280,7 +280,7 @@ async function pollDebridStatus(): Promise<void> {
   }
 
   for (const torrent of pending) {
-    const before = `${torrent.state}|${torrent.progress}|${torrent.size}|${torrent.pollAttempts}`;
+    const before = `${torrent.state}|${torrent.progress}|${torrent.size}|${torrent.pollAttempts}|${torrent.mountRefreshRequested}|${torrent.mountScanned}`;
     torrent.pollAttempts++;
 
     const match = correlateProviderTorrent(torrent, allTorrents);
@@ -326,7 +326,7 @@ async function pollDebridStatus(): Promise<void> {
       console.warn(`${LOG_PREFIX} Torrent "${torrent.name}" not found on any provider after ${torrent.pollAttempts} polls — marking as error`);
       torrent.state = 'error';
     }
-    const after = `${torrent.state}|${torrent.progress}|${torrent.size}|${torrent.pollAttempts}`;
+    const after = `${torrent.state}|${torrent.progress}|${torrent.size}|${torrent.pollAttempts}|${torrent.mountRefreshRequested}|${torrent.mountScanned}`;
     if (before !== after) persistTrackedTorrent(torrent);
   }
 }
