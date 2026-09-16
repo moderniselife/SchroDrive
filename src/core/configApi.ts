@@ -84,6 +84,7 @@ export const CONFIG_SCHEMA = {
   TMDB_API_KEY: { type: "password", default: "", category: "organizer", label: "TMDB API Key" },
   ORGANIZED_BASE: { type: "string", default: "", category: "organizer", label: "Organized Base Path" },
   ORGANIZER_MODE: { type: "select", default: "symlink", options: ["symlink", "copy", "move"], category: "organizer", label: "Organizer Mode" },
+  ORGANIZER_FILENAME_MODE: { type: "select", default: "canonical", options: ["canonical", "original"], category: "organizer", label: "Organizer Filename Mode" },
   ORG_SCAN_INTERVAL_S: { type: "number", default: "300", category: "organizer", label: "Organizer Scan Interval (seconds)" },
 
   // Auto-Update
