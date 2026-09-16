@@ -112,4 +112,15 @@ describe('*arr bridge qBittorrent-compatible API', () => {
     expect(res.status).toBe(400);
     expect(await res.text()).toBe('No URLs provided');
   });
+
+  test('updates local save path through qBittorrent setLocation', async () => {
+    const res = await fetch(`${BASE_URL}/api/v2/torrents/setLocation`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ hashes: '1111111111111111111111111111111111111111', location: '/test-staging/radarr' }),
+    });
+    expect(res.status).toBe(200);
+    const torrents = await (await fetch(`${BASE_URL}/api/v2/torrents/info?hashes=1111111111111111111111111111111111111111`)).json();
+    expect(torrents[0]).toMatchObject({ save_path: '/test-staging/radarr', content_path: '/test-staging/radarr' });
+  });
 });

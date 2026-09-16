@@ -280,7 +280,7 @@ async function pollDebridStatus(): Promise<void> {
   }
 
   for (const torrent of pending) {
-    const before = `${torrent.state}|${torrent.progress}|${torrent.size}|${torrent.pollAttempts}|${torrent.mountRefreshRequested}|${torrent.mountScanned}`;
+    const before = `${torrent.state}|${torrent.progress}|${torrent.size}|${torrent.mountRefreshRequested}|${torrent.mountScanned}`;
     torrent.pollAttempts++;
 
     const match = correlateProviderTorrent(torrent, allTorrents);
@@ -326,8 +326,10 @@ async function pollDebridStatus(): Promise<void> {
       console.warn(`${LOG_PREFIX} Torrent "${torrent.name}" not found on any provider after ${torrent.pollAttempts} polls — marking as error`);
       torrent.state = 'error';
     }
-    const after = `${torrent.state}|${torrent.progress}|${torrent.size}|${torrent.pollAttempts}|${torrent.mountRefreshRequested}|${torrent.mountScanned}`;
-    if (before !== after) persistTrackedTorrent(torrent);
+    const after = `${torrent.state}|${torrent.progress}|${torrent.size}|${torrent.mountRefreshRequested}|${torrent.mountScanned}`;
+    // Persist meaningful transitions immediately; checkpoint the retry counter
+    // every fifth poll to avoid unnecessary WAL writes on the microSD.
+    if (before !== after || torrent.pollAttempts % 5 === 0) persistTrackedTorrent(torrent);
   }
 }
 
@@ -886,6 +888,24 @@ function handleSetCategory(req: Request, res: Response): void {
   res.send('Ok.');
 }
 
+/** POST /api/v2/torrents/setLocation — updates local staging metadata only. */
+function handleSetLocation(req: Request, res: Response): void {
+  const hashes = (req.body?.hashes as string || '').toUpperCase();
+  const location = String(req.body?.location || '');
+  if (!location) {
+    res.status(400).send('Missing location');
+    return;
+  }
+  for (const hash of hashes.split('|').filter(Boolean)) {
+    const torrent = tracked.get(hash);
+    if (!torrent) continue;
+    torrent.savePath = location;
+    if (!torrent.mountScanned) torrent.contentPath = location;
+    persistTrackedTorrent(torrent);
+  }
+  res.send('Ok.');
+}
+
 /** GET /api/v2/torrents/categories — Return known categories. */
 function handleCategories(_req: Request, res: Response): void {
   const cats: Record<string, { name: string; savePath: string }> = {};
@@ -1011,6 +1031,7 @@ export async function startArrBridge(): Promise<void> {
   app.post('/api/v2/torrents/pause', handlePause);
   app.post('/api/v2/torrents/resume', handleResume);
   app.post('/api/v2/torrents/setCategory', handleSetCategory);
+  app.post('/api/v2/torrents/setLocation', handleSetLocation);
   app.get('/api/v2/torrents/categories', handleCategories);
   app.post('/api/v2/torrents/createCategory', handleCreateCategory);
   app.post('/api/v2/torrents/editCategory', handleEditCategory);
