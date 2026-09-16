@@ -3,7 +3,7 @@
  *
  * Implements the {@link DebridProvider} interface for the AllDebrid
  * debrid service. Wraps the AllDebrid v4/v4.1 API (magnet listing, upload,
- * file selection, link unlocking) and adds WebDAV bridge support methods
+ * file-tree retrieval, link unlocking) and adds WebDAV bridge support methods
  * (directory fetching, URL resolution).
  *
  * All requests are rate-limited via the shared {@link rateLimiter} singleton,
@@ -160,6 +160,56 @@ function unwrapResponse(res: any, operation: string): any {
   return body?.data ?? body;
 }
 
+interface AllDebridFileNode {
+  n?: string;
+  s?: number;
+  l?: string;
+  e?: AllDebridFileNode[];
+}
+
+interface FlattenedAllDebridFile {
+  path: string;
+  size: number;
+  link?: string;
+}
+
+/**
+ * Flattens AllDebrid's recursive `n`/`e` file tree while retaining the
+ * provider-relative path. File names are sanitised per path component so the
+ * separator remains meaningful to the WebDAV bridge.
+ */
+function flattenAllDebridFiles(nodes: unknown, parentPath = ''): FlattenedAllDebridFile[] {
+  if (!Array.isArray(nodes)) return [];
+
+  const flattened: FlattenedAllDebridFile[] = [];
+  for (const rawNode of nodes) {
+    if (!rawNode || typeof rawNode !== 'object') continue;
+    const node = rawNode as AllDebridFileNode;
+    const rawName = typeof node.n === 'string' ? node.n : '';
+    if (!rawName) continue;
+
+    const safeName = sanitiseName(rawName);
+    const relativePath = parentPath ? `${parentPath}/${safeName}` : safeName;
+    if (Array.isArray(node.e)) {
+      flattened.push(...flattenAllDebridFiles(node.e, relativePath));
+      continue;
+    }
+
+    flattened.push({
+      path: relativePath,
+      size: typeof node.s === 'number' ? node.s : 0,
+      link: typeof node.l === 'string' ? node.l : undefined,
+    });
+  }
+  return flattened;
+}
+
+function getMagnetEntries(data: any): any[] {
+  if (Array.isArray(data?.magnets)) return data.magnets;
+  if (data?.magnets && typeof data.magnets === 'object') return [data.magnets];
+  return [];
+}
+
 // ===========================================================================
 // AllDebridProvider
 // ===========================================================================
@@ -171,9 +221,8 @@ function unwrapResponse(res: any, operation: string): any {
  * {@link DebridProvider} interface, including torrent management,
  * WebDAV bridge support, and mount configuration.
  *
- * AllDebrid embeds file details directly in the magnet status response
- * (similar to TorBox), so no additional `fetchTorrentFiles()` call is
- * needed — files are populated inline during `fetchDirectories()`.
+ * AllDebrid exposes magnet state through `/magnet/status` and completed file
+ * trees through `/magnet/files`.
  */
 export class AllDebridProvider implements DebridProvider {
   readonly id = 'alldebrid' as const;
@@ -220,7 +269,7 @@ export class AllDebridProvider implements DebridProvider {
    * Returns cached data when rate-limited or on error.
    *
    * AllDebrid returns all magnets in a single request via
-   * `GET /v4/magnet/status` (no pagination needed).
+   * `POST /v4.1/magnet/status` (no pagination needed).
    *
    * @returns An array of normalised torrent info objects.
    */
@@ -247,7 +296,7 @@ export class AllDebridProvider implements DebridProvider {
       rateLimiter.recordSuccess(PROVIDER_NAME);
 
       const data = unwrapResponse(res, 'list magnets');
-      const magnets = Array.isArray(data?.magnets) ? data.magnets : [];
+      const magnets = getMagnetEntries(data);
 
       rateLimiter.setCache(TORRENT_LIST_CACHE_KEY, magnets);
       console.log(`[${new Date().toISOString()}][ad] fetched ${magnets.length} magnets`);
@@ -265,11 +314,11 @@ export class AllDebridProvider implements DebridProvider {
   }
 
   /**
-   * Adds a magnet link to AllDebrid for downloading, then automatically
-   * selects all files within the created magnet.
+   * Adds a magnet link to AllDebrid for downloading.
    *
-   * Uses `POST /v4/magnet/upload` with `magnets[]=MAGNET`, followed by
-   * `POST /v4/magnet/selectFiles` with `id=ID&files[]=all`.
+   * Uses `POST /v4/magnet/upload` with `magnets[]=MAGNET`. AllDebrid selects
+   * and exposes the completed file tree through its current magnet lifecycle;
+   * no obsolete file-selection request is required.
    *
    * Throws if rate-limited or if the API request fails.
    *
@@ -308,9 +357,6 @@ export class AllDebridProvider implements DebridProvider {
         throw new Error('AllDebrid upload returned no magnet ID');
       }
 
-      // Step 2: Select all files
-      await this.selectAllFiles(id);
-
       return { id };
     } catch (err: any) {
       this.handleError(err, 'add magnet');
@@ -322,8 +368,8 @@ export class AllDebridProvider implements DebridProvider {
    * Uploads a .torrent file buffer to AllDebrid.
    *
    * Uses `POST /v4/magnet/upload/file` with multipart form data.
-   * The file is sent as a `files[]` field in the form.
-   * Automatically selects all files after upload (same as addMagnet).
+   * The file is sent as a `files[]` field in the form. The returned ID is
+   * subsequently handled through the same status/files lifecycle as magnets.
    *
    * @param fileBuffer - The raw .torrent file contents.
    * @param name - Optional human-readable name for logging.
@@ -361,50 +407,10 @@ export class AllDebridProvider implements DebridProvider {
         throw new Error('AllDebrid upload/file returned no magnet ID');
       }
 
-      // Select all files
-      await this.selectAllFiles(magnetId);
-
       return { id: magnetId };
     } catch (err: any) {
       this.handleError(err, 'add torrent file');
       throw err;
-    }
-  }
-
-  /**
-   * Selects all files within an AllDebrid magnet for download.
-   *
-   * Called internally after adding a magnet to ensure all files in the
-   * torrent are queued for retrieval by the debrid service.
-   *
-   * Uses `POST /v4/magnet/selectFiles` with `id=ID&files[]=all`.
-   *
-   * @param id - The AllDebrid magnet ID to select files for.
-   */
-  private async selectAllFiles(id: string): Promise<void> {
-    if (!id) return;
-
-    if (rateLimiter.isRateLimited(PROVIDER_NAME)) {
-      const waitTime = rateLimiter.getWaitTimeSeconds(PROVIDER_NAME);
-      console.warn(`[${new Date().toISOString()}][ad] rate limited, skipping select files (wait ${waitTime}s)`);
-      return;
-    }
-
-    await rateLimiter.throttle(PROVIDER_NAME);
-
-    try {
-      const url = buildUrl('/v4/magnet/selectFiles');
-      const selectParams = new URLSearchParams();
-      selectParams.set('id', id);
-      selectParams.set('files[]', 'all');
-
-      await axiosIPv4.post(url, selectParams, {
-        headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 20000,
-      });
-      rateLimiter.recordSuccess(PROVIDER_NAME);
-    } catch (err: any) {
-      this.handleError(err, `select all files for magnet ${id}`);
     }
   }
 
@@ -566,13 +572,59 @@ export class AllDebridProvider implements DebridProvider {
   // -------------------------------------------------------------------------
 
   /**
+   * Fetches and flattens current AllDebrid file trees for one or more magnets.
+   * The endpoint accepts repeated `id[]` form fields and returns one entry per
+   * magnet. It is intentionally called only after status has identified ready
+   * magnets, except when resolving a specific already-listed virtual file.
+   */
+  private async fetchFileTrees(
+    magnetIds: string[],
+    overrideApiKey?: string,
+  ): Promise<Map<string, FlattenedAllDebridFile[]>> {
+    const result = new Map<string, FlattenedAllDebridFile[]>();
+    const ids = [...new Set(magnetIds.map(String).filter(Boolean))];
+    if (ids.length === 0) return result;
+
+    if (rateLimiter.isRateLimited(PROVIDER_NAME) && !overrideApiKey) {
+      console.warn(`[${new Date().toISOString()}][ad] rate limited, skipping file-tree fetch`);
+      return result;
+    }
+
+    await rateLimiter.throttle(PROVIDER_NAME);
+    try {
+      const url = buildUrl('/v4/magnet/files');
+      const params = new URLSearchParams();
+      for (const id of ids) params.append('id[]', id);
+
+      const res = await axiosIPv4.post(url, params, {
+        headers: {
+          ...authHeaders(overrideApiKey),
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        timeout: 30000,
+      });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+
+      const data = unwrapResponse(res, 'fetch magnet files');
+      for (const magnet of getMagnetEntries(data)) {
+        const id = String(magnet?.id || '');
+        if (!id) continue;
+        result.set(id, flattenAllDebridFiles(magnet.files));
+      }
+    } catch (err: any) {
+      this.handleError(err, 'fetch magnet files', overrideApiKey);
+    }
+
+    return result;
+  }
+
+  /**
    * Fetches the complete magnet list from AllDebrid and converts it into
    * virtual directories. Only includes fully downloaded magnets
    * (statusCode === 4 / "finished").
    *
-   * AllDebrid embeds file details directly in the magnet status response
-   * (similar to TorBox), so files are populated inline — no separate
-   * `fetchTorrentFiles()` call is needed.
+   * AllDebrid status provides lifecycle data; completed file details are
+   * loaded from the dedicated `/v4/magnet/files` endpoint.
    *
    * @returns Array of virtual directories representing completed AllDebrid magnets.
    */
@@ -592,7 +644,7 @@ export class AllDebridProvider implements DebridProvider {
       rateLimiter.recordSuccess(PROVIDER_NAME);
 
       const data = unwrapResponse(res, 'fetch directories');
-      const magnets: any[] = Array.isArray(data?.magnets) ? data.magnets : [];
+      const magnets: any[] = getMagnetEntries(data);
 
       // Only include fully downloaded magnets (statusCode 4 = finished)
       const completed = magnets.filter((m) => {
@@ -602,19 +654,19 @@ export class AllDebridProvider implements DebridProvider {
 
       console.log(`[${new Date().toISOString()}][ad] fetched ${completed.length} completed magnets out of ${magnets.length} total`);
 
+      const fileTrees = await this.fetchFileTrees(completed.map((m) => String(m.id)));
       return completed.map((m) => {
-        // AllDebrid files use: n (name), s (size), l (link)
-        const rawLinks: any[] = Array.isArray(m.links) ? m.links : [];
-        const files: VirtualFile[] = rawLinks.map((link: any, idx: number) => ({
-          id: String(idx),
-          name: sanitiseName(link.filename || link.n || `file_${idx}`),
-          size: typeof link.size === 'number' ? link.size : (typeof link.s === 'number' ? link.s : 0),
+        const id = String(m.id);
+        const files: VirtualFile[] = (fileTrees.get(id) || []).map((file) => ({
+          id: file.path,
+          name: file.path,
+          size: file.size,
         }));
 
         return {
-          id: String(m.id),
-          name: sanitiseName(m.filename || m.name || String(m.id)),
-          originalName: m.filename || m.name || String(m.id),
+          id,
+          name: sanitiseName(m.filename || m.name || id),
+          originalName: m.filename || m.name || id,
           files,
         };
       });
@@ -625,16 +677,13 @@ export class AllDebridProvider implements DebridProvider {
   }
 
   /**
-   * Resolves a direct download URL for an AllDebrid file by unlocking the
-   * corresponding link via `POST /v4/link/unlock`.
-   *
-   * AllDebrid embeds download links in the magnet status response. We fetch
-   * the magnet info, extract the link at the given file index, then unlock it
-   * to obtain the final direct download URL.
+   * Resolves a direct download URL for an AllDebrid file by reading the
+   * current file tree from `/v4/magnet/files` and unlocking its `l` link via
+   * `POST /v4/link/unlock`.
    *
    * @param torrentId - The AllDebrid magnet ID.
-   * @param fileId - The file index within the magnet's links array.
-   * @param _linkIndex - Unused for AllDebrid (we use fileId as the index).
+   * @param fileId - The provider-relative path used by the virtual listing.
+   * @param _linkIndex - Unused for AllDebrid.
    * @returns The direct download URL, or `null` on failure.
    */
   async resolveDownloadUrl(torrentId: string, fileId: string, _linkIndex?: number): Promise<string | null> {
@@ -649,26 +698,11 @@ export class AllDebridProvider implements DebridProvider {
     await rateLimiter.throttle(PROVIDER_NAME);
 
     try {
-      // Fetch the magnet info to retrieve the file link
-      const infoUrl = buildUrl('/v4.1/magnet/status', { id: torrentId });
-      const infoRes = await axiosIPv4.post(infoUrl, null, { headers: authHeaders(downloadToken), timeout: 30000 });
-      rateLimiter.recordSuccess(PROVIDER_NAME);
-
-      const infoData = unwrapResponse(infoRes, 'magnet info');
-      // When querying a single magnet, AllDebrid returns { magnets: { ... } } (object, not array)
-      const magnet = Array.isArray(infoData?.magnets) ? infoData.magnets[0] : infoData?.magnets;
-      const rawLinks: any[] = Array.isArray(magnet?.links) ? magnet.links : [];
-
-      const fileIndex = parseInt(fileId, 10);
-      if (isNaN(fileIndex) || fileIndex < 0 || fileIndex >= rawLinks.length) {
-        // Per-file issue (stale mapping) — don't kill the entire torrent
-        console.warn(`[${new Date().toISOString()}][ad] File index ${fileId} out of range (${rawLinks.length} links) for magnet ${torrentId} — skipping file`);
-        return null;
-      }
-
-      const fileLink = rawLinks[fileIndex]?.link || rawLinks[fileIndex]?.l;
+      const fileTrees = await this.fetchFileTrees([torrentId], downloadToken);
+      const file = fileTrees.get(String(torrentId))?.find((entry) => entry.path === fileId);
+      const fileLink = file?.link;
       if (!fileLink) {
-        console.error(`[${new Date().toISOString()}][ad] no link found at index ${fileId} for magnet ${torrentId}`);
+        console.error(`[${new Date().toISOString()}][ad] no link found for file ${fileId} in magnet ${torrentId}`);
         return null;
       }
 
