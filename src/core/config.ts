@@ -127,7 +127,9 @@ export const config = {
   // Mount settings
   mountBase: defaultMountBase,
   rclonePath: process.env.RCLONE_PATH || "rclone",
-  mountOptions: process.env.MOUNT_OPTIONS || "--vfs-cache-mode=full --dir-cache-time=12h --poll-interval=0 --buffer-size=64M",
+  // An explicit MOUNT_OPTIONS value overrides the individual mount settings.
+  // Keep it empty by default so MOUNT_* cache variables are actually honored.
+  mountOptions: process.env.MOUNT_OPTIONS || "",
   mountRcloneRcPort: Number(process.env.MOUNT_RCLONE_RC_PORT || 0),
   // Mount permissions/ownership
   mountAllowOther: String(process.env.MOUNT_ALLOW_OTHER ?? "true").toLowerCase() === "true",

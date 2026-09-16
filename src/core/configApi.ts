@@ -59,7 +59,9 @@ export const CONFIG_SCHEMA = {
   // Mount Settings
   MOUNT_BASE: { type: "string", default: "/mnt/schrodrive", category: "mounts", label: "Mount Base Path" },
   RCLONE_PATH: { type: "string", default: "rclone", category: "mounts", label: "Rclone Path" },
-  MOUNT_OPTIONS: { type: "string", default: "--vfs-cache-mode=full --dir-cache-time=12h --poll-interval=0 --buffer-size=64M", category: "mounts", label: "Mount Options" },
+  // Empty means the individual MOUNT_* settings below are used. A non-empty
+  // value is an explicit full override for advanced rclone configurations.
+  MOUNT_OPTIONS: { type: "string", default: "", category: "mounts", label: "Mount Options" },
   MOUNT_ALLOW_OTHER: { type: "boolean", default: "true", category: "mounts", label: "Allow Other Users" },
   MOUNT_UID: { type: "number", default: "", category: "mounts", label: "Mount UID" },
   PUID: { type: "number", default: "", category: "mounts", label: "PUID (alias for UID)" },
