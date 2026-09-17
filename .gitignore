@@ -7,3 +7,11 @@ package-lock.json
 !.env.example
 .DS_Store
 personal-stack.yml
+
+# Local-only parser benchmark artifacts; may contain media names, paths, or IDs.
+/docs/cinecircle-parser-phase1-manifest-*.tsv
+/docs/cinecircle-parser-phase1-results-*.jsonl
+/docs/cinecircle-parser-phase1-summary-*.json
+/docs/cinecircle-parser-phase2-*-results-*.jsonl
+/docs/cinecircle-parser-phase2-comparison-*.jsonl
+/docs/cinecircle-parser-phase2-summary-*.json
