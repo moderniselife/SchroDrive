@@ -35,6 +35,14 @@ describe("structured media parser", () => {
     expect(parsed.year).toBe(1917);
   });
 
+  test("parses a numeric movie title followed by its release year", () => {
+    const parsed = parseMediaFilename("1917.2019.PROPER.1080p.BluRay.x265-RARBG.mp4");
+    expect(parsed.status).toBe("matched");
+    expect(parsed.kind).toBe("movie");
+    expect(parsed.title).toBe("1917");
+    expect(parsed.year).toBe(2019);
+  });
+
   test("reports an ambiguous path-only identity", () => {
     const parsed = parseMediaFilename("Episode.mkv", "/mount/shows/Example Show/Season 01/Episode.mkv");
     expect(parsed.status).toBe("ambiguous");

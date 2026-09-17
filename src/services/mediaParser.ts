@@ -182,6 +182,22 @@ export function parseMediaFilename(filename: string, relativePath = filename): P
     }
   }
 
+  // Some movie titles are numeric (for example, "1917.2019.1080p...").
+  // The generic year heuristic would otherwise treat the title as the year
+  // and the actual year as part of the title. Handle this unambiguous
+  // title-year shape before the generic year search.
+  const numericTitleYear = normalized.match(/^(\d{4})\s+((?:19|20|21)\d{2})(?:\s|$)/);
+  if (numericTitleYear && numericTitleYear[1] !== numericTitleYear[2]) {
+    return result(sourceBasename, extension, {
+      status: "matched",
+      kind: "movie",
+      title: numericTitleYear[1],
+      year: Number(numericTitleYear[2]),
+      confidence: 0.96,
+      reason: "numeric movie title followed by year",
+    });
+  }
+
   const yearMatch = normalized.match(/(?:^|\s)((?:19|20|21)\d{2})(?:\s|$)/);
   const year = parseYear(yearMatch?.[1]);
   const titlePart = yearMatch ? normalized.slice(0, yearMatch.index).trim() : normalized;
