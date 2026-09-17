@@ -8,7 +8,7 @@ records, secrets, or raw benchmark output.
 |---|---|---|---|
 | A. Historical library import | Planned / shadow validated | [three-input architecture](cinecircle-pipeline-architecture-2026-09-17.md); [E2E plan](cinecircle-three-input-e2e-plan.md); [parser summary](cinecircle-parser-comparison-2026-09-17.md) | Dedicated fixture import audit and idempotency E2E still required |
 | B. Seerr → Radarr/Sonarr request flow | Partial | [E2E plan](cinecircle-three-input-e2e-plan.md); `tests/e2e/arr-bridge/` | Full isolated Seerr → Arr → import → library E2E still required |
-| C. In-process AllDebrid reconciliation → SchröDrive → Arr | Fork worker implemented and fixture-tested; DavDebrid removed from final design | [DavDebrid assessment](cinecircle-davdebrid-integration-assessment-2026-09-17.md); [architecture](cinecircle-pipeline-architecture-2026-09-17.md); [E2E plan](cinecircle-three-input-e2e-plan.md); [validation report](cinecircle-three-inputs-validation-2026-09-17.md); `src/services/cinecircleAlldebridIntake.ts` | Runtime/compose wiring, no-DavDebrid assertion, and full Review persistence remain |
+| C. In-process AllDebrid reconciliation → SchröDrive → Arr | Conditional upstream worker candidate; CineCircle Arr/Review/SQLite/routing bindings remain fork-only | [DavDebrid assessment](cinecircle-davdebrid-integration-assessment-2026-09-17.md); [architecture](cinecircle-pipeline-architecture-2026-09-17.md); [E2E plan](cinecircle-three-input-e2e-plan.md); [validation report](cinecircle-three-inputs-validation-2026-09-17.md); `src/services/cinecircleAlldebridIntake.ts`; [provider audit](provider-capability-audit-2026-09-17.md) | Extract provider-neutral core/capability contract, add per-provider fixtures, and complete fork Review/runtime wiring |
 | DavDebrid removal | Gated | [architecture](cinecircle-pipeline-architecture-2026-09-17.md); [cutover plan](cinecircle-cutover-plan.md) | A/B/C acceptance, backup verification, and explicit Portainer authorization |
 | Movies/Shows classification | Validated for benchmark | [parser summary](cinecircle-parser-comparison-2026-09-17.md); `src/core/mediaClassifier.ts`; `tests/unit/services/mediaParser.test.ts` | Direct-provider adapter must use the same classification contract |
 | Arr owns metadata matching and import | Design accepted; fork command boundary tested | `src/services/arrBridge.ts`; `src/services/cinecircleAlldebridIntake.ts`; [single-file contract](cinecircle-arr-single-file-contract-2026-09-17.md); [E2E plan](cinecircle-three-input-e2e-plan.md) | Full compose chain must prove Arr accepts, processes, and rejects duplicates correctly |
@@ -31,8 +31,9 @@ records, secrets, or raw benchmark output.
 
 ## Fork boundary
 
-The direct-provider adapter is explicitly AllDebrid-specific CineCircle fork
-scope, not an upstream PR. It reconciles AllDebrid’s read-only status listing
+The direct-provider adapter and CineCircle bindings are AllDebrid-specific
+CineCircle fork scope. The snapshot-reconciliation core is a conditional
+upstream candidate, not an automatic PR. It reconciles AllDebrid’s read-only status listing
 and completed file trees, emits added/changed/deleted direct-file events,
 persists a cursor/item/event state, deduplicates stable keys, retries transient
 failures, recovers after restart, classifies DavDebrid replacements as

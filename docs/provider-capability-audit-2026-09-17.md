@@ -51,11 +51,14 @@ the audited source. A provider becomes `disabled` when a future declaration
 cannot establish both status/list and file-tree reads; no provider is enabled
 on inference alone.
 
-AllDebrid remains the first and only concrete CineCircle implementation. Its
-fork worker uses the existing status/file-tree client, recent/full polling,
-snapshot diff, persistent state, subtitle retention, Arr routing, and Review
-handoff. Other providers remain disabled for this worker until they have
-provider-specific declarations and fixtures.
+AllDebrid remains the first concrete adapter. Its current fork worker uses the
+existing status/file-tree client, recent/full polling, snapshot diff,
+persistent state, subtitle retention, Arr routing, and Review handoff. The
+snapshot-reconciliation core is conditionally generalizable upstream, but the
+Arr routing, Review handoff, and SQLite persistence bindings remain CineCircle
+fork scope. Other providers are polling-full-only candidates, not enabled
+opt-ins, until provider-specific declarations and fixtures establish the
+common contract.
 
 No audited provider file contains an outbound provider webhook, push
 subscription, or native added/changed/deleted feed. “Derived” change

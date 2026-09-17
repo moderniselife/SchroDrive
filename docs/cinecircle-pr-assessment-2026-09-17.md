@@ -14,7 +14,7 @@ or production configuration are included.
 | `1775698`; `tests/e2e/cinecircle-three-inputs.test.ts` | C | CineCircle-specific three-input fixture harness; synthetic Seerr/Arr boundary | None | Keep as fork acceptance coverage; no upstream PR |
 | `1775698`; updates to `docs/cinecircle-three-input-e2e-plan.md`, `docs/cinecircle-three-inputs-validation-2026-09-17.md` | C | Local architecture and validation reports | None | Documentation review only |
 | `06baaec`, `4aa1283`; DavDebrid assessment, pipeline architecture, requirements matrix, cutover plan, E2E plan | C | Local migration/cutover documentation and the explicit DavDebrid-removal decision | Owner review and Portainer authorization only for any future deployment | Documentation consistency and sanitized diff checks |
-| `f05d2b8`; worker extension, AllDebrid capability, direct-intake tests, matrix/plan/report updates | B | Adds the fork-only reconciliation behavior, persistent event state, Arr correlation, and subtitle retention | Wire only through explicit fork configuration; no default production startup | Full isolated suite plus compose-level fake provider/Arr/Review tests |
+| `f05d2b8`; worker extension, AllDebrid capability, direct-intake tests, matrix/plan/report updates | A conditional / B bindings | The reconciliation core can become generic; current two-Arr routing, local Review handoff, CineCircle SQLite schema, and CineCircle event wiring remain fork-specific | Extract provider-neutral core and common capability contract; keep AllDebrid adapter separate; confirm every other provider before opt-in | Full isolated suite, provider fixtures for each opt-in, snapshot failure/deletion tests, plus fork Arr/Review/SQLite tests |
 | `c5e0473`; SQLite restart test and report update | B | Verifies the fork state store across process/DB reopen; not a generic feature by itself | Stable fork schema and migration policy | SQLite reopen, cursor, event dedupe, pending command recovery |
 | `7f18b4e`; Seerr-vs-AllDebrid boundary docs | C | Clarifies local runtime semantics and avoids confusing two unrelated webhook concepts | None | Route probe plus isolated fixture suite |
 | Current capability layer and [provider audit](provider-capability-audit-2026-09-17.md) | A candidate with provider-specific follow-up required | Pure assessment is provider-neutral and does not assume identical APIs; source audit shows only AllDebrid has recent/bounded support and no audited provider has push code | Upstream review of per-provider declarations, stable identity/tree guarantees, deletion semantics, fallback semantics, and compatibility policy | Capability matrix plus one source/fixture contract per provider before opt-in |
@@ -22,12 +22,17 @@ or production configuration are included.
 
 ## Worker generalization decision
 
-The worker remains Group B, fork-only. It is coupled to the CineCircle direct
-intake contract (`AllDebrid → SchröDrive → Movies/Shows → Radarr/Sonarr`), two
-Arr routes, local Review semantics, and CineCircle persistence tables. Renaming
-the class would not remove those architectural dependencies. The worker also
-intentionally preserves subtitle and attachment siblings in the event tree;
-that behavior is part of the CineCircle import association contract.
+The worker is a **conditional Group A candidate**, not permanently fork-only.
+Its provider-neutral core can own snapshot reconciliation when a provider
+declares the common capability contract: status/list plus file tree, local
+snapshot diff for added/changed/deleted, and optional recent polling. The
+AllDebrid implementation is the first concrete adapter.
+
+The current CineCircle bindings remain Group B: two Arr routes, local Review
+handoff, the CineCircle SQLite schema, CineCircle routing/configuration, and
+the direct AllDebrid event contract. The worker also intentionally preserves
+subtitle and attachment siblings in the event tree; the generic core should
+retain that tree while Arr-specific association stays in the fork.
 
 The credible Group A seam now includes the pure capability assessment in
 `src/services/providerReconciliationCapabilities.ts` and the narrow provider
@@ -36,9 +41,10 @@ does not assume identical provider APIs: it selects polling-hybrid for recent
 plus full snapshots, polling-full-only for a full snapshot only, push-only only
 when push is the sole declared option, and disabled when neither contract
 exists. Native push is not required and no hybrid push mode is imposed. A
-future upstream worker could consume these declarations without moving the
-CineCircle state schema, Arr routing, or Review policy. No existing worker
-behavior is changed by this assessment.
+An upstream PR must first extract the core, define the common capability
+contract, keep the AllDebrid adapter separate, and add a source/fixture
+contract for every provider opt-in. No existing worker behavior is changed by
+this assessment.
 
 The complete provider audit is in
 `docs/provider-capability-audit-2026-09-17.md`. It confirms that the common
