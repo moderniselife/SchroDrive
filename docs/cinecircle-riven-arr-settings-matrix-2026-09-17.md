@@ -15,11 +15,35 @@ local fork at `/home/samtruman/docker/cinecircle/mediabridge-riven`.
 | --- | --- | --- | --- |
 | Torrentio in Riven | Riven `scraping.torrentio.enabled=true`; configured HTTPS base URL; filter requests Italian language and rejects 720p/480p/scr/cam/unknown; timeout 30s | Recreate Torrentio as a Prowlarr indexer using the same base URL, filter semantics, timeout, Italian-first priority, and low-quality exclusions | Riven evidence confirmed; Prowlarr editor mapping requires approval |
 | KnightCrawler/vendor | Riven `scraping.knightcrawler.enabled=false`; configured as a disabled fallback vendor | Keep disabled unless explicitly approved; do not silently activate it | Evidence confirmed |
-| Prowlarr | Riven `scraping.prowlarr.enabled=true`; configured internal endpoint and redacted API key; timeout 180s and limiter 60s | Preserve Prowlarr as the active indexer/search path; add the approved Torrentio indexer there and keep credentials/URLs in Portainer secrets/config, never in Git | Evidence confirmed; values remain secret/owner-controlled |
+| Prowlarr | Riven `scraping.prowlarr.enabled=true`; configured internal endpoint and redacted API key; timeout 180s and limiter 60s | Keep the existing Prowlarr container, volume/config, and all existing indexers unchanged; add Torrentio in that existing configuration only | Evidence confirmed; persistence check is required; values remain secret/owner-controlled |
 | Other vendors | Jackett, Orionoid, MediaFusion, Zilean, and Comet are disabled in the recovered settings | Do not activate during catalog preparation | Evidence confirmed |
 | Search/crawler implementation | Historical fork files `src/event_processor.py`, `src/riven_watcher.py`, `src/riven_source_reconcile.py`, `src/media_parser.py`, and `src/plex_parser_v2.py`; TMDb suggestion/search routes are in `event_processor.py` and `review_console.py` | Keep search/crawler responsibility separate from Arr metadata matching; use Review for unresolved normalization | Code paths identified; complete runtime parity remains a gate |
 | Ranking/language | Italian token required (`ita`/`italian`/`italiano`); `it` required; 2160p and 1080p enabled; lower resolutions disabled; unknown languages removed; English fallback disabled | Candidate selection must prioritize Italian, retain both 1080p and 2160p, and not discard subtitle siblings | Evidence confirmed; owner approval of exact ranking is required |
 | Indexer schedule | `indexer.update_interval=3600` | Retain a one-hour refresh unless the owner approves a different schedule | Evidence confirmed |
+
+### Existing Prowlarr indexer inventory
+
+This is an inventory, not a migration list. The Prowlarr container and its
+configuration volume remain unchanged; every existing entry must survive the
+cutover. Names observed in Riven runtime logs or the recovered CineCircle
+assessment are recorded below without copying credentials or live settings.
+
+| Existing indexer | Recovered state/evidence | Cutover treatment |
+| --- | --- | --- |
+| Mircrew | CineCircle-specific indexer, confirmed by the recovered project requirements; detailed live Prowlarr record was not copied into this sanitized report | Preserve exactly; verify persistence in the existing Prowlarr volume |
+| LimeTorrents | Active in Riven runtime search logs | Preserve exactly; do not recreate |
+| MIRCrew | Active/authenticated scraper in Riven runtime search logs | Preserve exactly; do not recreate; keep credentials out of Git |
+| 0Magnet | Present in Riven Prowlarr inventory logs as disabled | Preserve disabled state |
+| 1337x (via Byparr) | Present in Riven Prowlarr inventory logs as disabled | Preserve disabled state |
+| The Pirate Bay | Present in Riven Prowlarr inventory logs as disabled | Preserve disabled state |
+| Uindex | Present in Riven Prowlarr inventory logs as disabled | Preserve disabled state |
+| YTS | Present in Riven Prowlarr inventory logs as disabled | Preserve disabled state |
+| Torrentio | Enabled as Riven-native scraper; not yet present as the proposed Prowlarr entry | Add once, using the mapping below and the same recovered parameters |
+
+The runtime log inventory is the available evidence for the listed Prowlarr
+entries; it does not authorize enabling, disabling, deleting, or reordering any
+existing indexer. Any additional entry visible in the persistent Prowlarr
+configuration must also be retained unchanged.
 
 The historical pipeline remains: Prowlarr/Torrentio indexer search → result ranking and
 filename parsing → Movies/Shows classification → TMDb/TVDb suggestion or
@@ -32,15 +56,18 @@ These are approval inputs, not deployed settings. `TBD` means the value was
 not evidenced by the read-only inventory and must be selected before catalog
 construction.
 
-## Torrentio → Prowlarr proposed configuration
+## Torrentio → existing Prowlarr proposed configuration
 
-This is an editor-ready, sanitized proposal only. It must be entered and
-approved in the existing Prowlarr configuration; no live Prowlarr or Portainer
-configuration was changed.
+This is an editor-ready, sanitized proposal only. It must be added to the
+existing Prowlarr configuration. The Prowlarr container, its existing
+configuration volume, and existing indexers are retained; no indexer is
+recreated or migrated. No live Prowlarr or Portainer configuration was
+changed.
 
 | Prowlarr field | Proposed value/mapping | Rationale and blocker |
 | --- | --- | --- |
 | Indexer implementation | Torrentio-compatible Stremio indexer adapter available in the installed Prowlarr version; exact adapter name/version `TBD` | Confirm the installed adapter supports the recovered Torrentio URL/filter contract |
+| Existing indexers | Preserve every indexer already present, including the CineCircle-specific Mircrew indexer, with its current settings and enablement | Verify configuration-volume persistence before and after the proposed Torrentio addition; do not recreate or migrate them |
 | Base URL | Recovered from Riven `scraping.torrentio.url`; value intentionally omitted from versioned docs | Copy the existing value into Portainer/Prowlarr without exposing it in Git |
 | Filter/query parameters | Preserve Riven filter semantics: quality-size sort; Italian language; exclude 720p, 480p, screener, cam, and unknown | Exact Prowlarr field names/encoding are adapter-version dependent and must be mapped before approval |
 | Timeout | 30 seconds | Directly evidenced in Riven settings |
