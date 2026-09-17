@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { closeDb } from '../../src/core/db';
 import {
   CineCircleAllDebridIntake,
   InMemoryIntakeStateStore,
+  SqliteIntakeStateStore,
   type AllDebridSnapshot,
   type ArrClient,
   type ArrCommandResult,
@@ -160,6 +162,28 @@ describe('CineCircle AllDebrid direct intake', () => {
     expect(events).toEqual([]);
     expect(secondArr.polled).toEqual(['radarr-1']);
     expect(store.getItem('m-1')?.terminalStatus).toBe('completed');
+  });
+
+  test('persists the direct event and cursor across a SQLite store restart', async () => {
+    const firstArr = new FakeArr();
+    const firstStore = new SqliteIntakeStateStore();
+    const source = new SequenceSource([[snapshot('sqlite-1', 'Movie (2026)')]]);
+    const first = new CineCircleAllDebridIntake(source, firstArr, firstStore, { routeFor });
+    const events = await first.reconcile('full');
+    expect(events).toHaveLength(1);
+    expect(firstStore.getCursor().fullAt).toBeDefined();
+    expect(firstStore.hasEvent(events[0].stableDedupeKey)).toBe(true);
+
+    closeDb();
+    const secondStore = new SqliteIntakeStateStore();
+    const secondArr = new FakeArr();
+    const second = new CineCircleAllDebridIntake(
+      new SequenceSource([[snapshot('sqlite-1', 'Movie (2026)')]]), secondArr, secondStore, { routeFor },
+    );
+    expect(await second.reconcile('full')).toEqual([]);
+    expect(secondArr.submitted).toHaveLength(0);
+    expect(secondStore.getItem('sqlite-1')?.lastAction).toBe('added');
+    closeDb();
   });
 
   test('retries transient Arr submission failures and preserves one correlation', async () => {

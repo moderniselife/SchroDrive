@@ -41,9 +41,10 @@ explicitly tested extensions are `.srt`, `.ass`, `.ssa`, `.sub`, and `.vtt`,
 plus compatible subtitle attachments `.idx`, `.sup`, `.sbv`, and `.mpsub`.
 Unsupported files are filtered out without mutating the provider tree.
 
-The direct adapter test file contains 9 passing tests covering recent/full
+The direct adapter test file contains 10 passing tests covering recent/full
 source calls, Movies/Radarr and Shows/Sonarr routing, add/change/delete,
-deduplication, dry-run, retry, restart recovery, and subtitle-tree retention.
+deduplication, SQLite persistence, dry-run, retry, restart recovery, and
+subtitle-tree retention.
 All provider and Arr interactions in these tests are mocked.
 
 ## Fixture E2E results
@@ -59,7 +60,7 @@ docker run --rm --network none --entrypoint bun \
   /app/tests/e2e/cinecircle-alldebrid-intake.test.ts
 ```
 
-Result: 12 tests passed, 0 failed across the two fork harnesses. The
+Result: 13 tests passed, 0 failed across the two fork harnesses. The
 three-input harness covers:
 
 - A: historical fixture parsing and Movies/Shows classification with no write
@@ -69,7 +70,7 @@ three-input harness covers:
 - C: direct AllDebrid fixture event routed to Sonarr and considered complete
   only after Arr command status is successful.
 
-The complete isolated suite also passes: 100 tests, 0 failures, 218
+The complete isolated suite also passes: 101 tests, 0 failures, 224
 expectations across 18 files. It ran in Docker with `--network none`, with the
 repository mounted read-only and provider/service integrations disabled; no
 real AllDebrid, Riven, Arr, Seerr, or production calls were made.
