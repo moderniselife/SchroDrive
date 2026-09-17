@@ -18,8 +18,8 @@ provider records, identifiers, secrets, manifests, or runtime databases.
 ## Validation evidence
 
 - Three-input isolated harness: 13 passing tests.
-- Full isolated repository suite: 101 passing tests, 0 failures, 224
-  assertions.
+- Full isolated repository suite: 105 passing tests, 0 failures, 234
+  assertions across 19 files.
 - Review UI/API report: `docs/review-validation-report.md`.
 - Detailed fork validation: `docs/cinecircle-three-inputs-validation-2026-09-17.md`.
 - Test compose wiring: `/home/samtruman/docker/cinecircle-test/compose.yml`,

@@ -50,6 +50,6 @@ They may support fork validation but must not enter an upstream PR.
 ## Current evidence
 
 The isolated fork harness passes 13 tests. The complete isolated repository
-suite passes 101 tests with 0 failures and 224 assertions. The runtime route
+suite passes 105 tests with 0 failures and 234 assertions. The runtime route
 probe with `RUN_WEBHOOK=true` confirms the optional Seerr inbound endpoint;
 AllDebrid remains internal polling/API and has no provider webhook dependency.
