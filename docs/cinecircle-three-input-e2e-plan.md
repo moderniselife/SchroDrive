@@ -34,7 +34,8 @@ historical-import E2E remains to be added.
    assert SchröDrive does not duplicate Arr matching or import ownership.
 4. Assert no optional SchröDrive Seerr poller is enabled for this path.
 
-Existing coverage is `tests/e2e/arr-bridge/qbittorrent-api.test.ts`,
+Existing coverage is `tests/e2e/cinecircle-three-inputs.test.ts`,
+`tests/e2e/arr-bridge/qbittorrent-api.test.ts`,
 `tests/e2e/arr-bridge/categories.test.ts`,
 `tests/e2e/arr-bridge/restart-recovery.test.ts`, and
 `tests/unit/services/arrBridge-correlation.test.ts`. A full isolated
@@ -79,6 +80,12 @@ docker run --rm --network none --entrypoint bun \
   -v "$PWD:/app:ro" oven/bun:1.4.2 \
   test --timeout 15000 /app/tests/unit /app/tests/e2e /app/tests/regressions
 ```
+
+The fixture-only three-input harness is
+`tests/e2e/cinecircle-three-inputs.test.ts`; it exercises the historical
+parser/classifier boundary, Seerr-shaped movie/TV requests into both Arr scan
+commands, and the direct AllDebrid event through Arr command completion. It
+does not contact Seerr, AllDebrid, Arr, media servers, or production.
 
 Use the repository’s parser harness references in
 `cinecircle-parser-provenance-2026-09-17.md`; both harnesses must consume one
