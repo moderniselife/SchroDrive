@@ -67,12 +67,16 @@ must be exactly `italian` and `720p,480p,scr,cam,unknown`.
   JSON endpoint shape, IMDb/movie/series paths, `streams` selector, and
   configurable language/quality-filter fields. It is reference material only,
   not an approved dependency.
-- Exact runtime behavior and compatibility with this Prowlarr version still
-  require an isolated connection test before installation.
+- The candidate was loaded in an isolated Prowlarr 2.5.2.5491 container using
+  a minimal configuration with no live credentials and no network access. The
+  API schema contained the `torrentio`/`Torrentio` definition, and the runtime
+  log contained no invalid-definition error. This verifies definition loading,
+  not live Torrentio availability or result quality.
 
 ## Acceptance checks before installation
 
-1. Validate the YAML against the installed Prowlarr custom-definition schema.
+1. Validate the YAML against the installed Prowlarr custom-definition schema
+   (completed in the isolated runtime check above).
 2. Confirm JSON with a `streams` array for one movie and one episode fixture.
 3. Confirm generated requests contain all three Riven filter clauses in order.
 4. Confirm Movies/TV and IMDb, season, and episode mappings survive into

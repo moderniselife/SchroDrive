@@ -73,6 +73,32 @@ contract, or a separately verified Torznab-compatible intermediary. Neither
 is present, so creating a custom definition or translating fields would be an
 unsupported assumption.
 
+## Isolated candidate validation
+
+The repository candidate `docs/fixtures/torrentio-riven-filter.yml` was
+mounted into a disposable Prowlarr `2.5.2.5491` container with a minimal,
+credential-free configuration and `--network none`. The local API schema
+returned a `torrentio`/`Torrentio` definition and the runtime log had no
+invalid-definition error. The disposable container and temporary config were
+removed after the check. The active `prowlarr` instance was not touched.
+
+This proves that the proposed Cardigann definition is loadable by the installed
+Prowlarr version. It does not prove that Torrentio is reachable, that its
+current JSON remains compatible, or that search results satisfy the Riven
+policy; those require an explicitly approved live/fixture connection test.
+
+## Comet assessment
+
+Comet is a viable generic Torznab bridge for Prowlarr, but it is not an exact
+replacement for the recovered Riven contract based on the inspected
+configuration. Its documented integration exposes `/torznab/api` and can be
+configured as Prowlarr Generic Torznab; its Torrentio settings are expressed
+through Comet configuration rather than the exact Riven request filter. It
+cannot be accepted as the exact-filter path without a separate readback
+proving that `sort=qualitysize`, Italian language, and the complete quality
+exclusion list are preserved. Keep Comet as an alternative, not as the current
+implementation of the Riven-preserving proposal.
+
 ## Difference and final readback
 
 - Prowlarr configuration before/after: identical; no write was issued.
