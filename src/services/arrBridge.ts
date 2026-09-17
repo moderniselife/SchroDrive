@@ -914,6 +914,17 @@ function handleSetLocation(req: Request, res: Response): void {
 function handleCategories(_req: Request, res: Response): void {
   const cats: Record<string, { name: string; savePath: string }> = {};
 
+  // qBittorrent categories survive restarts. Restore categories created by
+  // Radarr/Sonarr before adding categories inferred from tracked torrents.
+  try {
+    const rows = getDb().prepare('SELECT name, save_path FROM arr_categories').all() as Array<{ name: string; save_path: string }>;
+    for (const row of rows) {
+      if (row.name) cats[row.name] = { name: row.name, savePath: row.save_path };
+    }
+  } catch (err: any) {
+    console.warn(`${LOG_PREFIX} Could not restore qBittorrent categories: ${err?.message || String(err)}`);
+  }
+
   // Collect categories from tracked torrents
   for (const t of tracked.values()) {
     if (t.category && !cats[t.category]) {
@@ -936,13 +947,42 @@ function handleCategories(_req: Request, res: Response): void {
 }
 
 /** POST /api/v2/torrents/createCategory — Create a category. */
-function handleCreateCategory(_req: Request, res: Response): void {
-  // No-op — we auto-create categories
+function handleCreateCategory(req: Request, res: Response): void {
+  const name = String(req.body?.category || req.body?.name || '').trim();
+  if (!name) {
+    res.status(400).send('Missing category');
+    return;
+  }
+  const savePath = String(req.body?.savePath || req.body?.save_path || path.join(getDownloadsPath(), name));
+  try {
+    getDb().prepare(`INSERT INTO arr_categories (name, save_path, updated_at)
+      VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET save_path=excluded.save_path, updated_at=excluded.updated_at`)
+      .run(name, savePath, Date.now());
+  } catch (err: any) {
+    console.warn(`${LOG_PREFIX} Could not persist qBittorrent category ${name}: ${err?.message || String(err)}`);
+    res.status(500).send('Could not persist category');
+    return;
+  }
   res.send('Ok.');
 }
 
 /** POST /api/v2/torrents/editCategory — Edit a category. */
-function handleEditCategory(_req: Request, res: Response): void {
+function handleEditCategory(req: Request, res: Response): void {
+  const name = String(req.body?.category || req.body?.name || '').trim();
+  if (!name) {
+    res.status(400).send('Missing category');
+    return;
+  }
+  const savePath = String(req.body?.savePath || req.body?.save_path || path.join(getDownloadsPath(), name));
+  try {
+    getDb().prepare(`INSERT INTO arr_categories (name, save_path, updated_at)
+      VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET save_path=excluded.save_path, updated_at=excluded.updated_at`)
+      .run(name, savePath, Date.now());
+  } catch (err: any) {
+    console.warn(`${LOG_PREFIX} Could not persist qBittorrent category ${name}: ${err?.message || String(err)}`);
+    res.status(500).send('Could not persist category');
+    return;
+  }
   res.send('Ok.');
 }
 

@@ -197,6 +197,11 @@ function runMigrations(database: Database): void {
       state_json TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     )`,
+    `CREATE TABLE IF NOT EXISTS arr_categories (
+      name TEXT PRIMARY KEY,
+      save_path TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
   ];
 
   for (const sql of migrations) {
