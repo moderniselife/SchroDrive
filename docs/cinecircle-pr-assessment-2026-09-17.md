@@ -89,6 +89,18 @@ prechecks, production image/digest references, cutover/rollback material,
 runtime SQLite files, token database artifacts, and any local Review GUI report.
 They may support fork validation but must not enter an upstream PR.
 
+## Mandatory post-cutover PR gate
+
+No upstream or fork PR may be opened or sent after cutover until the candidate
+stack passes a complete Review acceptance run. The run must create both
+unmatched and ambiguous cases, verify Review GUI list/detail rendering,
+submit and persist an override, confirm ordered audit-trail entries, reopen
+the SQLite-backed state, and exercise retry/resume after a process restart. It
+must also verify that added/changed/deleted AllDebrid events preserve the video
+and subtitle siblings in the Review/event tree. A green repository suite alone
+does not satisfy this stack-level gate; the result and sanitized evidence must
+be attached to the local review material first.
+
 ## Current evidence
 
 The isolated fork harness passes 13 tests. The complete isolated repository

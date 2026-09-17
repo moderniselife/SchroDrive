@@ -21,6 +21,14 @@ logic, generic server routes, Review pages, and their tests. The fork keeps
 only the CineCircle adapter handoff, AllDebrid/Arr correlation, local intake
 tables, and environment-specific wiring.
 
+PR acceptance gate: after any authorized candidate cutover, before opening or
+sending any PR, run the full Review acceptance test on the candidate stack.
+It must cover unmatched and ambiguous creation, GUI list/detail, override,
+audit trail, SQLite persistence, retry/resume after restart, and
+added/changed/deleted event handling while retaining video plus subtitle
+siblings. This gate is mandatory even when the repository suite is green; no
+PR is authorized until its sanitized result is recorded.
+
 ## Validation evidence
 
 - Three-input isolated harness: 13 passing tests.

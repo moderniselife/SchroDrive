@@ -167,16 +167,19 @@ mount, health, Review, Arr, Plex, and Jellyfin observations.
 | AllDebrid worker | Internal polling produces stable add/change/delete events; subtitles remain in tree | Disable worker and review state; no provider mutation |
 | Radarr/Sonarr | Correct Movies/Shows route, accepted command, polled successful status, persisted correlation | Route permanent failure to Review; roll back if systemic |
 | Duplicate/retry | Already-imported/duplicate item is idempotent; transient errors retry; permanent errors are visible in Review | Pause intake and use rollback criteria |
+| Review acceptance gate | On the candidate stack, create unmatched and ambiguous items; verify GUI list/detail, override, audit, SQLite persistence, retry/resume after restart, and added/changed/deleted events with subtitles | Do not authorize PR; pause/rollback candidate validation |
 | Plex/Jellyfin | Expected library scan/visibility smoke checks pass without duplicate or missing entries | Do not unfreeze requests; roll back if not resolved |
 | DavDebrid removal | No final runtime service, webhook, or source-snapshot dependency remains | Abort cutover; restore saved version |
 
 ### Explicit success/failure criteria
 
-Success requires every checklist row to pass, no unexplained queue growth or
+Success requires every checklist row to pass, including the complete Review
+acceptance gate, with no unexplained queue growth or
 Review regression during the observation window, and owner sign-off. Failure is
 any health/data/mount regression, Arr command failure or duplicate mutation,
 missing subtitle association, unexplained media-server visibility regression,
-or remaining DavDebrid runtime dependency. Failure triggers request freeze and
+incomplete Review persistence/recovery, or remaining DavDebrid runtime
+dependency. Failure triggers request freeze and
 Portainer-version rollback; it does not authorize ad-hoc fixes or DNS changes.
 
 ### Window and authorization
