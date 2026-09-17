@@ -94,6 +94,12 @@ This proves that the definition is loadable, filter serialization is correct,
 and `infohash` is accepted as the download identity. The episode path and a
 real provider/fixture corpus remain approval-gated before installation.
 
+A second isolated search request with `type=tvsearch` generated the expected
+series path and the same exact filter. Prowlarr’s generic search endpoint did
+not supply IMDb/season/episode values to this custom fixture, so it used the
+definition’s documented fallback series identifier; this run verifies URL
+construction only, not the full Sonarr parameter propagation.
+
 ## Comet assessment
 
 Comet is a viable generic Torznab bridge for Prowlarr, but it is not an exact
