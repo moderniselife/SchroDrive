@@ -80,7 +80,7 @@ export function AppSidebar() {
               <SidebarMenu>
                 {group.items.map((item) => (
                   <SidebarMenuItem key={item.href}>
-                    <SidebarMenuButton asChild isActive={pathname === item.href}>
+                    <SidebarMenuButton asChild isActive={pathname === item.href || pathname.startsWith(`${item.href}/`)}>
                       <Link href={item.href}>
                         <item.icon className="h-4 w-4" />
                         <span>{item.name}</span>

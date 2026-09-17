@@ -15,8 +15,10 @@ import {
   Loader2,
   RefreshCw,
   Radio,
+  ClipboardCheck,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import Link from "next/link"
 
 /** Provider-specific colour classes for consistent styling across all debrid providers. */
 const PROVIDER_COLOURS: Record<string, string> = {
@@ -352,6 +354,23 @@ export default function DashboardPage() {
           </Button>
         </div>
       </div>
+
+      <Card className="border-primary/30 bg-primary/5">
+        <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <ClipboardCheck className="mt-0.5 h-5 w-5 text-primary" aria-hidden="true" />
+            <div>
+              <CardTitle className="text-base">Review / Disambiguation</CardTitle>
+              <CardDescription>
+                Resolve matched, ambiguous, and unmatched media identities.
+              </CardDescription>
+            </div>
+          </div>
+          <Button asChild size="sm">
+            <Link href="/review">Open Review</Link>
+          </Button>
+        </CardContent>
+      </Card>
 
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
