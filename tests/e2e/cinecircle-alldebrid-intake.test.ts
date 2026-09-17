@@ -1,0 +1,146 @@
+import { describe, expect, test } from 'bun:test';
+import {
+  CineCircleAllDebridIntake,
+  InMemoryIntakeStateStore,
+  type AllDebridSnapshot,
+  type ArrClient,
+  type ArrCommandResult,
+  type DirectFileEvent,
+} from '../../src/services/cinecircleAlldebridIntake';
+
+function snapshot(id: string, name: string, files = [{ path: `${name}.mkv`, size: 10 }]): AllDebridSnapshot {
+  return { providerItemId: id, name, status: 'finished', files, observedAt: '2026-09-17T00:00:00.000Z' };
+}
+
+class SequenceSource {
+  constructor(private readonly rounds: AllDebridSnapshot[][]) {}
+  async listSnapshot(): Promise<AllDebridSnapshot[]> { return this.rounds.shift() || []; }
+}
+
+class FakeArr implements ArrClient {
+  submitted: Array<{ kind: string; event: DirectFileEvent }> = [];
+  polled: string[] = [];
+  async submitScan(route: any, event: DirectFileEvent): Promise<ArrCommandResult> {
+    this.submitted.push({ kind: route.kind, event });
+    return { commandId: `${route.kind}-${this.submitted.length}`, status: 'queued' };
+  }
+  async getCommand(_route: any, commandId: string): Promise<ArrCommandResult> {
+    this.polled.push(commandId);
+    return { commandId, status: 'completed', result: 'successful' };
+  }
+}
+
+const routeFor = (category: 'Movies' | 'Shows') => ({
+  kind: category === 'Movies' ? 'radarr' as const : 'sonarr' as const,
+  baseUrl: `http://${category.toLowerCase()}.test`,
+  apiKey: 'fixture-key',
+});
+
+describe('CineCircle AllDebrid direct intake', () => {
+  test('emits add and routes Movies to Radarr and Shows to Sonarr', async () => {
+    const arr = new FakeArr();
+    const intake = new CineCircleAllDebridIntake(
+      new SequenceSource([[snapshot('m-1', 'Movie (2026)'), snapshot('s-1', 'Show S01E02')]]),
+      arr,
+      new InMemoryIntakeStateStore(),
+      { routeFor },
+    );
+
+    const events = await intake.reconcile();
+    expect(events.map((event) => event.action)).toEqual(['added', 'added']);
+    expect(events.map((event) => event.sourceCategory)).toEqual(['Movies', 'Shows']);
+    expect(arr.submitted.map((item) => item.kind)).toEqual(['radarr', 'sonarr']);
+    expect(arr.submitted[0].event.path).toBe('Movie (2026).mkv');
+  });
+
+  test('emits changed when a completed file tree changes, even after a missed round', async () => {
+    const store = new InMemoryIntakeStateStore();
+    const arr = new FakeArr();
+    const intake = new CineCircleAllDebridIntake(
+      new SequenceSource([
+        [snapshot('m-1', 'Movie (2026)', [{ path: 'Movie.mkv', size: 10 }])],
+        [snapshot('m-1', 'Movie (2026)', [{ path: 'Movie.mkv', size: 20 }])],
+      ]),
+      arr, store, { routeFor },
+    );
+    await intake.reconcile();
+    const second = await intake.reconcile();
+    expect(second).toHaveLength(1);
+    expect(second[0].action).toBe('changed');
+    expect(second[0].stableDedupeKey).not.toBe((await intake.reconcile())[0]?.stableDedupeKey);
+  });
+
+  test('suppresses duplicate delivery and emits deletion from a missing status item', async () => {
+    const store = new InMemoryIntakeStateStore();
+    const arr = new FakeArr();
+    const intake = new CineCircleAllDebridIntake(
+      new SequenceSource([[snapshot('m-1', 'Movie (2026)')], [snapshot('m-1', 'Movie (2026)')], []]),
+      arr, store, { routeFor },
+    );
+    expect((await intake.reconcile()).map((e) => e.action)).toEqual(['added']);
+    expect(await intake.reconcile()).toEqual([]);
+    expect((await intake.reconcile()).map((e) => e.action)).toEqual(['deleted']);
+    expect(arr.submitted).toHaveLength(1);
+  });
+
+  test('dry-run persists state without submitting to Arr', async () => {
+    const arr = new FakeArr();
+    const store = new InMemoryIntakeStateStore();
+    const intake = new CineCircleAllDebridIntake(
+      new SequenceSource([[snapshot('m-1', 'Movie (2026)')]]), arr, store,
+      { routeFor, dryRun: true },
+    );
+    const events = await intake.reconcile();
+    expect(events).toHaveLength(1);
+    expect(arr.submitted).toHaveLength(0);
+    expect(store.getItem('m-1')?.lastAction).toBe('added');
+  });
+
+  test('restarts from persisted state and polls the pending Arr command', async () => {
+    const store = new InMemoryIntakeStateStore();
+    const firstArr = new FakeArr();
+    await new CineCircleAllDebridIntake(
+      new SequenceSource([[snapshot('m-1', 'Movie (2026)')]]), firstArr, store, { routeFor },
+    ).reconcile();
+    const secondArr = new FakeArr();
+    const events = await new CineCircleAllDebridIntake(
+      new SequenceSource([[snapshot('m-1', 'Movie (2026)')]]), secondArr, store, { routeFor },
+    ).reconcile();
+    expect(events).toEqual([]);
+    expect(secondArr.polled).toEqual(['radarr-1']);
+    expect(store.getItem('m-1')?.terminalStatus).toBe('completed');
+  });
+
+  test('retries transient Arr submission failures and preserves one correlation', async () => {
+    let attempts = 0;
+    const arr: ArrClient = {
+      async submitScan() {
+        attempts++;
+        if (attempts < 3) throw new Error('temporary');
+        return { commandId: 'sonarr-1', status: 'queued' };
+      },
+      async getCommand(_route, commandId) { return { commandId, status: 'completed' }; },
+    };
+    const intake = new CineCircleAllDebridIntake(
+      new SequenceSource([[snapshot('s-1', 'Show S01E02')]]), arr, new InMemoryIntakeStateStore(),
+      { routeFor, maxAttempts: 3 },
+    );
+    await intake.reconcile();
+    expect(attempts).toBe(3);
+  });
+
+  test('hands permanent Arr failure to Review after bounded retries', async () => {
+    const reviewed: DirectFileEvent[] = [];
+    const arr: ArrClient = {
+      async submitScan() { throw new Error('permanent'); },
+      async getCommand(_route, commandId) { return { commandId, status: 'failed' }; },
+    };
+    const intake = new CineCircleAllDebridIntake(
+      new SequenceSource([[snapshot('m-1', 'Movie (2026)')]]), arr, new InMemoryIntakeStateStore(),
+      { routeFor, maxAttempts: 2, onReview: (event) => { reviewed.push(event); } },
+    );
+    await expect(intake.reconcile()).rejects.toThrow('permanent');
+    expect(reviewed).toHaveLength(1);
+    expect(reviewed[0].action).toBe('added');
+  });
+});

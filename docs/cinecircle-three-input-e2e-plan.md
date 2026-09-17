@@ -40,25 +40,32 @@ Existing coverage is `tests/e2e/arr-bridge/qbittorrent-api.test.ts`,
 `tests/unit/services/arrBridge-correlation.test.ts`. A full isolated
 Seerr-to-Arr chain test remains to be added.
 
-## C — direct/Prowlarr/AllDebrid intake
+## C — direct/manual AllDebrid intake (CineCircle fork only)
 
-1. Feed a fixture provider snapshot or Prowlarr result to the polling adapter;
-   do not perform a real provider operation.
-2. Assert SchröDrive detects the item once, classifies Movies versus Shows,
-   selects the appropriate Arr, and submits a file/path handoff.
-3. Assert Arr performs metadata matching and import, with retry/idempotency
-   and Review only for unresolved normalization/matching.
-4. Assert no duplicate import, provider mutation, rename, or sidecar write.
+1. Reconcile AllDebrid’s read-only `POST /v4.1/magnet/status` listing. For
+   completed items, read the recursive file tree through the existing
+   `POST /v4/magnet/files` integration. No upload, delete, unlock, or provider
+   mutation is part of this path.
+2. Emit a direct-file event containing provider item ID, `added`/`changed`/
+   `deleted` action, Arr-visible path and tree, Movies/Shows category,
+   observed timestamp, and stable dedupe key.
+3. Persist item fingerprint, event key, Arr route, command ID, attempt count,
+   and terminal result. Reconcile missing status-list IDs as deleted; do not
+   treat an in-progress status as deleted.
+4. Route Movies to Radarr and Shows to Sonarr. Submit the Arr REST command
+   (`DownloadedMoviesScan` or `DownloadedEpisodesScan`) with the Arr-visible
+   path, poll `/api/v3/command/<id>`, and require successful Arr processing
+   before marking the event complete. Permanent failures and ambiguous or
+   unmatched parses go to Review.
+5. Assert add/change/delete, missed-round reconciliation, duplicate delivery,
+   retry, restart recovery, already-imported behavior, and both Arr routes.
+   Use dry-run fixtures only; do not perform real provider operations.
 
-This path is currently a blocker: `arrBridge.ts` covers Arr-to-SchröDrive
-download lifecycle, while `organizer.ts` does not yet expose the required
-provider-poll-to-Arr file/path adapter. The CineCircle fork must add and test
-the adapter with stable deduplication/state, provider new-file polling,
-classification, Arr routing, retries, restart recovery, Arr-owned metadata
-matching/import, and Review handoff for unmatched or ambiguous items. Keep
-these adapter/configuration/docs/tests in the fork; add generic SchröDrive
-improvements upstream separately. Do not claim DavDebrid removal before this
-contract passes.
+Implementation: `src/services/cinecircleAlldebridIntake.ts` and
+`tests/e2e/cinecircle-alldebrid-intake.test.ts`. This is CineCircle-specific
+fork scope, not upstream PR material. Generic multi-provider polling is future
+fallback scope. The current adapter is intentionally not wired to production;
+full compose-level Arr import and Review UI validation remain blockers.
 
 ## Commands and acceptance gate
 

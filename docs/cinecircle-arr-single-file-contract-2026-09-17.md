@@ -124,6 +124,18 @@ to record/season selection; it is not a substitute for a file path.
   Review; an override records actor/time/reason, resumes the same state
   machine, and does not re-read or rename the source file.
 
+## Implemented fork boundary
+
+`src/services/cinecircleAlldebridIntake.ts` defines the direct event contract
+and test-only reconciler. Its `AllDebridProviderSource` uses the existing
+provider methods: the complete read-only magnet status listing and the
+completed recursive file-tree listing. It emits `added`, `changed`, and
+`deleted` events, persists item/event state in its own SQLite tables, supports
+dry-run, retries Arr submission, polls command IDs after restart, and invokes
+Review for permanent failures. The Arr stage is separate and required:
+AllDebrid visibility is not completion until Arr accepts and processes the
+scan command.
+
 ## Minimum-field conclusion
 
 | Flow | Minimum SchröDrive handoff | Not required from SchröDrive |
