@@ -52,6 +52,9 @@ Seerr-to-Arr chain test remains to be added.
    `added`/`changed`/`deleted` action, Arr-visible path and tree, Movies/Shows
    category, observed timestamp, and stable dedupe key. Use a tree fingerprint
    for `changed`; a missing item after a successful full snapshot is deleted.
+   Preserve the video and all supported subtitle/attachment siblings in the
+   tree, including `.srt`, `.ass`, `.ssa`, `.sub`, `.vtt`, `.idx`, `.sup`,
+   `.sbv`, and `.mpsub`.
 3. Persist item fingerprint, webhook event key, Arr route, command ID, attempt
    count, and terminal result. Treat a missing file in a successful snapshot
    as deleted; do not treat a transient webhook or snapshot failure as deletion.

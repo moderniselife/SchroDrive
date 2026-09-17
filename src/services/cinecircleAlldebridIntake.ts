@@ -10,6 +10,8 @@
 import { createHash } from 'node:crypto';
 import { getDb } from '../core/db';
 import type { AllDebridProvider } from '../providers/alldebrid';
+import type { TorrentInfo, VirtualDirectory } from '../providers';
+import { classifyTorrent } from '../core/mediaClassifier';
 
 export type DirectFileAction = 'added' | 'changed' | 'deleted';
 export type SourceCategory = 'Movies' | 'Shows';
@@ -57,12 +59,15 @@ export interface IntakeStateStore {
   saveItem(state: IntakeState): void;
   hasEvent(key: string): boolean;
   saveEvent(event: DirectFileEvent, arr?: ArrCommandResult): void;
+  getCursor(): { recentAt?: string; fullAt?: string };
+  saveCursor(mode: 'recent' | 'full', observedAt: string): void;
 }
 
 export interface IntakeState {
   providerItemId: string;
   fingerprint: string;
   path: string;
+  tree: Array<{ path: string; size: number }>;
   sourceCategory: SourceCategory;
   lastAction: DirectFileAction;
   commandId?: string;
@@ -73,12 +78,15 @@ export interface IntakeState {
 export class InMemoryIntakeStateStore implements IntakeStateStore {
   private readonly items = new Map<string, IntakeState>();
   private readonly events = new Map<string, DirectFileEvent>();
+  private cursor: { recentAt?: string; fullAt?: string } = {};
 
   getItem(id: string): IntakeState | undefined { return this.items.get(id); }
   listItems(): IntakeState[] { return [...this.items.values()]; }
   saveItem(state: IntakeState): void { this.items.set(state.providerItemId, state); }
   hasEvent(key: string): boolean { return this.events.has(key); }
   saveEvent(event: DirectFileEvent): void { this.events.set(event.stableDedupeKey, event); }
+  getCursor(): { recentAt?: string; fullAt?: string } { return { ...this.cursor }; }
+  saveCursor(mode: 'recent' | 'full', observedAt: string): void { this.cursor[mode === 'recent' ? 'recentAt' : 'fullAt'] = observedAt; }
 }
 
 /** Persistent fork state; creates only its own table in the configured test DB. */
@@ -94,6 +102,10 @@ export class SqliteIntakeStateStore implements IntakeStateStore {
       event_json TEXT NOT NULL,
       arr_json TEXT,
       created_at INTEGER NOT NULL
+    )`);
+    getDb().exec(`CREATE TABLE IF NOT EXISTS cinecircle_alldebrid_cursor (
+      name TEXT PRIMARY KEY,
+      observed_at TEXT NOT NULL
     )`);
   }
   getItem(id: string): IntakeState | undefined {
@@ -115,6 +127,14 @@ export class SqliteIntakeStateStore implements IntakeStateStore {
   saveEvent(event: DirectFileEvent, arr?: ArrCommandResult): void {
     getDb().prepare(`INSERT OR IGNORE INTO cinecircle_alldebrid_events(dedupe_key,event_json,arr_json,created_at)
       VALUES (?,?,?,?)`).run(event.stableDedupeKey, JSON.stringify(event), arr ? JSON.stringify(arr) : null, Date.parse(event.observedAt));
+  }
+  getCursor(): { recentAt?: string; fullAt?: string } {
+    const rows = getDb().prepare('SELECT name, observed_at FROM cinecircle_alldebrid_cursor').all() as Array<{ name: string; observed_at: string }>;
+    return Object.fromEntries(rows.map((row) => [row.name === 'recent' ? 'recentAt' : 'fullAt', row.observed_at]));
+  }
+  saveCursor(mode: 'recent' | 'full', observedAt: string): void {
+    getDb().prepare(`INSERT INTO cinecircle_alldebrid_cursor(name,observed_at) VALUES (?,?)
+      ON CONFLICT(name) DO UPDATE SET observed_at=excluded.observed_at`).run(mode, observedAt);
   }
 }
 
@@ -144,26 +164,35 @@ export class HttpArrClient implements ArrClient {
 
 export interface AllDebridReadOnlySource {
   listSnapshot(): Promise<AllDebridSnapshot[]>;
+  listRecentSnapshot?(limit: number): Promise<AllDebridSnapshot[]>;
 }
 
 /** Uses only the existing provider's status and completed-directory methods. */
 export class AllDebridProviderSource implements AllDebridReadOnlySource {
-  constructor(private readonly provider: Pick<AllDebridProvider, 'listTorrents' | 'fetchDirectories'>) {}
+  constructor(private readonly provider: Pick<AllDebridProvider, 'listTorrents' | 'fetchDirectories' | 'fetchDirectoriesForIds'>) {}
 
   async listSnapshot(): Promise<AllDebridSnapshot[]> {
     const observedAt = new Date().toISOString();
     const torrents = await this.provider.listTorrents();
     const directories = await this.provider.fetchDirectories();
     const trees = new Map(directories.map((directory) => [String(directory.id), directory]));
+    return this.toSnapshots(torrents, trees, observedAt);
+  }
+
+  async listRecentSnapshot(limit: number): Promise<AllDebridSnapshot[]> {
+    const observedAt = new Date().toISOString();
+    const torrents = (await this.provider.listTorrents())
+      .sort((a, b) => (b.addedAt?.getTime() || 0) - (a.addedAt?.getTime() || 0))
+      .slice(0, Math.max(0, limit));
+    const directories = await this.provider.fetchDirectoriesForIds(torrents);
+    return this.toSnapshots(torrents, new Map(directories.map((directory) => [String(directory.id), directory])), observedAt);
+  }
+
+  private toSnapshots(torrents: TorrentInfo[], trees: Map<string, VirtualDirectory>, observedAt: string): AllDebridSnapshot[] {
     return torrents.map((torrent) => {
       const directory = trees.get(String(torrent.id));
-      return {
-        providerItemId: String(torrent.id),
-        name: torrent.name,
-        status: torrent.status,
-        files: (directory?.files || []).map((file) => ({ path: file.name, size: file.size })),
-        observedAt,
-      };
+      return { providerItemId: String(torrent.id), name: torrent.name, status: torrent.status,
+        files: (directory?.files || []).map((file) => ({ path: file.name, size: file.size })), observedAt };
     });
   }
 }
@@ -176,9 +205,17 @@ export interface IntakeOptions {
   onReview?: (event: DirectFileEvent, error: Error) => Promise<void> | void;
 }
 
+const VIDEO_EXTENSIONS = new Set(['3g2', '3gp', 'avi', 'flv', 'mkv', 'mk3d', 'm4v', 'mov', 'mp2', 'mp4', 'mpe', 'mpeg', 'mpg', 'mpv', 'ts', 'm2ts', 'webm', 'wmv', 'ogm']);
+// Keep subtitles and sidecar subtitle attachments with the video tree.
+const SUBTITLE_EXTENSIONS = new Set(['ass', 'idx', 'mpsub', 'sbv', 'smi', 'srt', 'ssa', 'sub', 'sup', 'vtt']);
+
+export function isMediaFile(filePath: string): boolean {
+  const extension = filePath.split('.').pop()?.toLowerCase() || '';
+  return VIDEO_EXTENSIONS.has(extension) || SUBTITLE_EXTENSIONS.has(extension);
+}
+
 function categoryFor(snapshot: AllDebridSnapshot): SourceCategory {
-  const value = snapshot.name.toLowerCase();
-  return /s\d{1,2}(?:e\d{1,3})?|season|episode/.test(value) ? 'Shows' : 'Movies';
+  return classifyTorrent(snapshot.name, snapshot.files.map((file) => file.path)) === 'shows' ? 'Shows' : 'Movies';
 }
 
 function fingerprint(snapshot: Pick<AllDebridSnapshot, 'providerItemId' | 'files' | 'status'>): string {
@@ -197,14 +234,18 @@ export class CineCircleAllDebridIntake {
     private readonly options: IntakeOptions,
   ) {}
 
-  async reconcile(): Promise<DirectFileEvent[]> {
+  async reconcile(mode: 'recent' | 'full' = 'full', recentLimit = 30): Promise<DirectFileEvent[]> {
     await this.pollPendingCommands();
-    const current = await this.source.listSnapshot();
+    const current = mode === 'recent' && this.source.listRecentSnapshot
+      ? await this.source.listRecentSnapshot(recentLimit)
+      : await this.source.listSnapshot();
     const seen = new Set(current.map((item) => item.providerItemId));
     const events: DirectFileEvent[] = [];
 
     for (const item of current) {
       if (item.status !== 'finished' || item.files.length === 0) continue;
+      item.files = item.files.filter((file) => isMediaFile(file.path));
+      if (item.files.length === 0) continue;
       const prior = this.store.getItem(item.providerItemId);
       const nextFingerprint = fingerprint(item);
       const action: DirectFileAction | undefined = !prior || prior.lastAction === 'deleted'
@@ -216,7 +257,7 @@ export class CineCircleAllDebridIntake {
     }
 
     // A missing status-list item is a removal, but an item still processing is not.
-    for (const previous of this.store.listItems().filter((item) => item.lastAction !== 'deleted')) {
+    for (const previous of mode === 'full' ? this.store.listItems().filter((item) => item.lastAction !== 'deleted') : []) {
       if (seen.has(previous.providerItemId)) continue;
       const event: DirectFileEvent = {
         provider: 'alldebrid', providerItemId: previous.providerItemId, action: 'deleted',
@@ -226,10 +267,11 @@ export class CineCircleAllDebridIntake {
       if (!this.store.hasEvent(event.stableDedupeKey)) {
         await this.options.onEvent?.(event);
         this.store.saveEvent(event);
-        this.store.saveItem({ ...previous, lastAction: 'deleted', updatedAt: event.observedAt });
+        this.store.saveItem({ ...previous, tree: previous.tree || [], lastAction: 'deleted', updatedAt: event.observedAt });
         events.push(event);
       }
     }
+    this.store.saveCursor(mode, new Date().toISOString());
     return events;
   }
 
@@ -243,7 +285,7 @@ export class CineCircleAllDebridIntake {
         if (command.status === 'failed') {
           await this.options.onReview?.({
             provider: 'alldebrid', providerItemId: item.providerItemId, action: item.lastAction,
-            path: item.path, tree: [], sourceCategory: item.sourceCategory,
+            path: item.path, tree: item.tree || [], sourceCategory: item.sourceCategory,
             observedAt: new Date().toISOString(),
             stableDedupeKey: eventKey(item.providerItemId, item.lastAction, item.fingerprint),
           }, new Error(`Arr command ${item.commandId} failed`));
@@ -268,7 +310,7 @@ export class CineCircleAllDebridIntake {
     await this.options.onEvent?.(event);
     if (this.options.dryRun) {
       this.store.saveEvent(event);
-      this.store.saveItem({ providerItemId: item.providerItemId, fingerprint: fp, path: event.path, sourceCategory: event.sourceCategory, lastAction: event.action, updatedAt: event.observedAt });
+      this.store.saveItem({ providerItemId: item.providerItemId, fingerprint: fp, path: event.path, tree: event.tree, sourceCategory: event.sourceCategory, lastAction: event.action, updatedAt: event.observedAt });
       return;
     }
     const route = this.options.routeFor(event.sourceCategory);
@@ -277,7 +319,7 @@ export class CineCircleAllDebridIntake {
       try {
         const command = await this.arr.submitScan(route, event);
         this.store.saveEvent(event, command);
-        this.store.saveItem({ providerItemId: item.providerItemId, fingerprint: fp, path: event.path, sourceCategory: event.sourceCategory, lastAction: event.action, commandId: command.commandId, terminalStatus: command.status, updatedAt: event.observedAt });
+        this.store.saveItem({ providerItemId: item.providerItemId, fingerprint: fp, path: event.path, tree: event.tree, sourceCategory: event.sourceCategory, lastAction: event.action, commandId: command.commandId, terminalStatus: command.status, updatedAt: event.observedAt });
         return;
       } catch (error) {
         lastError = error;
@@ -286,5 +328,37 @@ export class CineCircleAllDebridIntake {
     const error = lastError instanceof Error ? lastError : new Error(String(lastError));
     await this.options.onReview?.(event, error);
     throw error;
+  }
+}
+
+/**
+ * Testable scheduler for the fork worker. It is intentionally not started by
+ * the application entry point; CineCircle wiring must explicitly opt in.
+ */
+export class CineCircleAllDebridReconciliationWorker {
+  private recentTimer: ReturnType<typeof setInterval> | undefined;
+  private fullTimer: ReturnType<typeof setInterval> | undefined;
+
+  constructor(
+    private readonly intake: CineCircleAllDebridIntake,
+    private readonly intervals: { recentMs: number; fullMs: number; recentLimit?: number },
+  ) {}
+
+  runRecent(): Promise<DirectFileEvent[]> { return this.intake.reconcile('recent', this.intervals.recentLimit || 30); }
+  runFull(): Promise<DirectFileEvent[]> { return this.intake.reconcile('full'); }
+
+  start(): void {
+    if (this.recentTimer || this.fullTimer) return;
+    this.runRecent().catch(() => undefined);
+    this.runFull().catch(() => undefined);
+    this.recentTimer = setInterval(() => { this.runRecent().catch(() => undefined); }, this.intervals.recentMs);
+    this.fullTimer = setInterval(() => { this.runFull().catch(() => undefined); }, this.intervals.fullMs);
+  }
+
+  stop(): void {
+    if (this.recentTimer) clearInterval(this.recentTimer);
+    if (this.fullTimer) clearInterval(this.fullTimer);
+    this.recentTimer = undefined;
+    this.fullTimer = undefined;
   }
 }

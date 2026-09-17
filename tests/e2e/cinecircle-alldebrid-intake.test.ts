@@ -6,6 +6,8 @@ import {
   type ArrClient,
   type ArrCommandResult,
   type DirectFileEvent,
+  isMediaFile,
+  AllDebridProviderSource,
 } from '../../src/services/cinecircleAlldebridIntake';
 
 function snapshot(id: string, name: string, files = [{ path: `${name}.mkv`, size: 10 }]): AllDebridSnapshot {
@@ -37,6 +39,43 @@ const routeFor = (category: 'Movies' | 'Shows') => ({
 });
 
 describe('CineCircle AllDebrid direct intake', () => {
+  test('uses the existing AllDebrid client for bounded recent and full snapshots', async () => {
+    const recentRequests: string[][] = [];
+    let fullCalls = 0;
+    const provider = {
+      async listTorrents() {
+        return [
+          { id: 'old', name: 'Old Movie', filename: 'Old Movie', status: 'finished', progress: 100, bytes: 1, files: [], addedAt: new Date('2026-09-16T00:00:00Z') },
+          { id: 'new', name: 'New Movie', filename: 'New Movie', status: 'finished', progress: 100, bytes: 1, files: [], addedAt: new Date('2026-09-17T00:00:00Z') },
+        ];
+      },
+      async fetchDirectories() {
+        fullCalls++;
+        return [{ id: 'old', name: 'Old Movie', originalName: 'Old Movie', files: [{ id: 'old.mkv', name: 'old.mkv', size: 1 }] }, { id: 'new', name: 'New Movie', originalName: 'New Movie', files: [{ id: 'new.mkv', name: 'new.mkv', size: 1 }] }];
+      },
+      async fetchDirectoriesForIds(items: Array<{ id: string }>) {
+        recentRequests.push(items.map((item) => item.id));
+        return items.map((item) => ({ id: item.id, name: item.id, originalName: item.id, files: [{ id: `${item.id}.mkv`, name: `${item.id}.mkv`, size: 1 }] }));
+      },
+    };
+    const source = new AllDebridProviderSource(provider as any);
+    const recent = await source.listRecentSnapshot!(1);
+    const full = await source.listSnapshot();
+    expect(recent.map((item) => item.providerItemId)).toEqual(['new']);
+    expect(recentRequests).toEqual([['new']]);
+    expect(full.map((item) => item.providerItemId)).toEqual(['old', 'new']);
+    expect(fullCalls).toBe(1);
+
+    const arr = new FakeArr();
+    const intake = new CineCircleAllDebridIntake(
+      new AllDebridProviderSource(provider as any), arr, new InMemoryIntakeStateStore(), { routeFor },
+    );
+    const events = await intake.reconcile('recent', 1);
+    expect(events).toHaveLength(1);
+    expect(events[0].provider).toBe('alldebrid');
+    expect(arr.submitted[0].kind).toBe('radarr');
+  });
+
   test('emits add and routes Movies to Radarr and Shows to Sonarr', async () => {
     const arr = new FakeArr();
     const intake = new CineCircleAllDebridIntake(
@@ -94,6 +133,18 @@ describe('CineCircle AllDebrid direct intake', () => {
     expect(events).toHaveLength(1);
     expect(arr.submitted).toHaveLength(0);
     expect(store.getItem('m-1')?.lastAction).toBe('added');
+  });
+
+  test('keeps all supported subtitles and attachments in the event tree', async () => {
+    const names = ['video.mkv', 'captions.srt', 'captions.ass', 'captions.ssa', 'captions.sub', 'captions.vtt', 'captions.idx', 'captions.sup', 'captions.sbv', 'captions.mpsub', 'cover.jpg'];
+    const arr = new FakeArr();
+    const intake = new CineCircleAllDebridIntake(
+      new SequenceSource([[snapshot('m-1', 'Movie (2026)', names.map((path) => ({ path, size: 1 })))]]) ,
+      arr, new InMemoryIntakeStateStore(), { routeFor },
+    );
+    const events = await intake.reconcile();
+    expect(names.filter(isMediaFile)).toHaveLength(10);
+    expect(events[0].tree.map((file) => file.path)).toEqual(names.slice(0, 10));
   });
 
   test('restarts from persisted state and polls the pending Arr command', async () => {

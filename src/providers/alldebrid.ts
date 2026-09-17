@@ -619,6 +619,30 @@ export class AllDebridProvider implements DebridProvider {
   }
 
   /**
+   * Returns completed virtual directories for an explicit magnet subset.
+   * This is read-only and lets the CineCircle reconciliation worker implement
+   * a bounded recent scan without downloading or mutating provider state.
+   */
+  async fetchDirectoriesForIds(magnets: Array<Pick<TorrentInfo, 'id' | 'name' | 'filename'>>): Promise<VirtualDirectory[]> {
+    const ids = magnets.map((magnet) => String(magnet.id)).filter(Boolean);
+    const fileTrees = await this.fetchFileTrees(ids);
+    return magnets.map((magnet) => {
+      const id = String(magnet.id);
+      const files: VirtualFile[] = (fileTrees.get(id) || []).map((file) => ({
+        id: file.path,
+        name: file.path,
+        size: file.size,
+      }));
+      return {
+        id,
+        name: sanitiseName(magnet.filename || magnet.name || id),
+        originalName: magnet.filename || magnet.name || id,
+        files,
+      };
+    });
+  }
+
+  /**
    * Fetches the complete magnet list from AllDebrid and converts it into
    * virtual directories. Only includes fully downloaded magnets
    * (statusCode === 4 / "finished").

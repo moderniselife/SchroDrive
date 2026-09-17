@@ -25,6 +25,27 @@ The fork fixture validates the non-mutating HTTP contract: `X-Api-Key`,
 `DownloadedEpisodesScan`, `path`, and `importMode`, followed by
 `GET /api/v3/command/<id>` until `completed`/successful or failure.
 
+## Fork adapter validation
+
+The CineCircle-only worker is implemented in
+`src/services/cinecircleAlldebridIntake.ts` and is not started by the normal
+application entry point. It uses the existing SchröDrive AllDebrid client:
+recent reconciliation bounds directory requests to the newest items, while a
+full reconciliation fetches all completed trees. The worker persists item,
+event, and recent/full cursor state in dedicated SQLite tables, emits stable
+added/changed/deleted events, retries Arr submission, and polls pending Arr
+commands after restart. Failed snapshots do not advance deletion state.
+
+The event tree deliberately retains the video and its association files. The
+explicitly tested extensions are `.srt`, `.ass`, `.ssa`, `.sub`, and `.vtt`,
+plus compatible subtitle attachments `.idx`, `.sup`, `.sbv`, and `.mpsub`.
+Unsupported files are filtered out without mutating the provider tree.
+
+The direct adapter test file contains 9 passing tests covering recent/full
+source calls, Movies/Radarr and Shows/Sonarr routing, add/change/delete,
+deduplication, dry-run, retry, restart recovery, and subtitle-tree retention.
+All provider and Arr interactions in these tests are mocked.
+
 ## Fixture E2E results
 
 Command:
@@ -38,7 +59,8 @@ docker run --rm --network none --entrypoint bun \
   /app/tests/e2e/cinecircle-alldebrid-intake.test.ts
 ```
 
-Result: 10 tests passed, 0 failed. The three-input harness covers:
+Result: 12 tests passed, 0 failed across the two fork harnesses. The
+three-input harness covers:
 
 - A: historical fixture parsing and Movies/Shows classification with no write
   boundary;
@@ -47,7 +69,13 @@ Result: 10 tests passed, 0 failed. The three-input harness covers:
 - C: direct AllDebrid fixture event routed to Sonarr and considered complete
   only after Arr command status is successful.
 
-The existing complete isolated suite also passes: 94 tests, 0 failures.
+The complete isolated suite also passes: 100 tests, 0 failures, 218
+expectations across 18 files. It ran in Docker with `--network none`, with the
+repository mounted read-only and provider/service integrations disabled; no
+real AllDebrid, Riven, Arr, Seerr, or production calls were made.
+
+Focused TypeScript compilation of the changed provider, worker, and fork tests
+also passes. `git diff --check` is required before commit.
 
 ## Remaining blockers
 
@@ -59,4 +87,5 @@ The existing complete isolated suite also passes: 94 tests, 0 failures.
 3. Add full Arr already-imported/duplicate response fixtures and verify Review
    UI persistence/resume across the compose stack.
 4. The direct AllDebrid adapter remains fork/test-only and is not wired to any
-   production runtime.
+   production runtime. Compose-level wiring and a real Review persistence
+   boundary remain intentionally out of scope for this validation step.
