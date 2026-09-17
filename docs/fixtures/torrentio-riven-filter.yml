@@ -1,0 +1,81 @@
+---
+id: torrentio-riven-filter
+name: Torrentio (Riven filters)
+description: "Torrentio Stremio adapter with the recovered Riven filter contract"
+language: en-US
+type: public
+encoding: UTF-8
+followredirect: false
+testlinktorrent: false
+requestDelay: 0
+links:
+  - https://torrentio.strem.fun/
+
+caps:
+  categorymappings:
+    - {id: Movies, cat: Movies, desc: Movies}
+    - {id: TV, cat: TV, desc: TV}
+  modes:
+    search: [q]
+    movie-search: [q, imdbid]
+    tv-search: [q, imdbid, season, ep]
+  allowrawsearch: false
+
+settings:
+  - name: language
+    type: text
+    label: Priority language
+    default: italian
+  - name: qualityfilter
+    type: text
+    label: Excluded qualities/resolutions
+    default: 720p,480p,scr,cam,unknown
+
+search:
+  paths:
+    - path: "sort=qualitysize|language={{ .Config.language }}|qualityfilter={{ .Config.qualityfilter }}/stream/movie/{{ if .Query.IMDBID }}{{ .Query.IMDBID }}{{ else }}tt0137523{{ end }}.json"
+      method: get
+      response:
+        type: json
+        noResultsMessage: '"streams": []'
+        categories: [Movies]
+    - path: "sort=qualitysize|language={{ .Config.language }}|qualityfilter={{ .Config.qualityfilter }}/stream/series/{{ if .Query.IMDBID }}{{ .Query.IMDBID }}:{{ .Query.Season }}:{{ .Query.Ep }}{{ else }}tt13406094:1:1{{ end }}.json"
+      method: get
+      response:
+        type: json
+        noResultsMessage: '"streams": []'
+        categories: [TV]
+
+  rows:
+    selector: streams
+    missingAttributeEqualsNoResults: true
+
+  fields:
+    title:
+      selector: title
+      filters:
+        - name: split
+          args: ["\n", 0]
+    year:
+      selector: title
+      filters:
+        - name: regexp
+          args: "\\b(19|20)\\d{2}\\b"
+    category:
+      text: "{{ if .Query.Season }}TV{{ else }}Movies{{ end }}"
+    infohash:
+      selector: infoHash
+    download:
+      selector: url
+    size:
+      selector: title
+      optional: true
+      filters:
+        - name: regexp
+          args: "\\b(\\d+(?:\\.\\d+)? [MG]B)\\b"
+    seeders:
+      selector: title
+      optional: true
+      filters:
+        - name: regexp
+          args: "(?:👤|\\xF0\\x9F\\x91\\xA4) (\\d+)"
