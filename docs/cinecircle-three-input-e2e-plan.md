@@ -43,16 +43,17 @@ Seerr-to-Arr chain test remains to be added.
 
 ## C — direct/manual AllDebrid intake (CineCircle fork only)
 
-1. Reconcile AllDebrid’s read-only `POST /v4.1/magnet/status` listing. For
-   completed items, read the recursive file tree through the existing
-   `POST /v4/magnet/files` integration. No upload, delete, unlock, or provider
-   mutation is part of this path.
-2. Emit a direct-file event containing provider item ID, `added`/`changed`/
+1. Consume DavDebrid `new_files` and `deleted_files` webhooks. Validate the
+   stable file ID, event ID, category, media type, and timestamp; do not run a
+   second active AllDebrid status/files poller.
+2. Emit a direct-file event containing the DavDebrid file ID, `added`/`changed`/
    `deleted` action, Arr-visible path and tree, Movies/Shows category,
-   observed timestamp, and stable dedupe key.
-3. Persist item fingerprint, event key, Arr route, command ID, attempt count,
-   and terminal result. Reconcile missing status-list IDs as deleted; do not
-   treat an in-progress status as deleted.
+   observed timestamp, and stable dedupe key. Use the protected DavDebrid
+   `/api/source-snapshot` endpoint for missed-event recovery and same-ID
+   fingerprint changes; this is read-only and does not emit webhooks.
+3. Persist item fingerprint, webhook event key, Arr route, command ID, attempt
+   count, and terminal result. Treat a missing file in a successful snapshot
+   as deleted; do not treat a transient webhook or snapshot failure as deletion.
 4. Route Movies to Radarr and Shows to Sonarr. Submit the Arr REST command
    (`DownloadedMoviesScan` or `DownloadedEpisodesScan`) with the Arr-visible
    path, poll `/api/v3/command/<id>`, and require successful Arr processing
@@ -62,11 +63,13 @@ Seerr-to-Arr chain test remains to be added.
    retry, restart recovery, already-imported behavior, and both Arr routes.
    Use dry-run fixtures only; do not perform real provider operations.
 
-Implementation: `src/services/cinecircleAlldebridIntake.ts` and
-`tests/e2e/cinecircle-alldebrid-intake.test.ts`. This is CineCircle-specific
-fork scope, not upstream PR material. Generic multi-provider polling is future
-fallback scope. The current adapter is intentionally not wired to production;
-full compose-level Arr import and Review UI validation remain blockers.
+Integration assessment: `docs/cinecircle-davdebrid-integration-assessment-2026-09-17.md`.
+The current direct AllDebrid adapter and its tests remain useful isolated
+fallback fixtures, but the active fork implementation should consume DavDebrid
+webhooks plus snapshot reconciliation to avoid duplicate polling. This is
+CineCircle-specific fork scope, not upstream PR material. Generic
+multi-provider polling is future fallback scope. Full compose-level Arr import
+and Review UI validation remain blockers.
 
 ## Commands and acceptance gate
 
