@@ -17,7 +17,7 @@ or production configuration are included.
 | `f05d2b8`; worker extension, AllDebrid capability, direct-intake tests, matrix/plan/report updates | B | Adds the fork-only reconciliation behavior, persistent event state, Arr correlation, and subtitle retention | Wire only through explicit fork configuration; no default production startup | Full isolated suite plus compose-level fake provider/Arr/Review tests |
 | `c5e0473`; SQLite restart test and report update | B | Verifies the fork state store across process/DB reopen; not a generic feature by itself | Stable fork schema and migration policy | SQLite reopen, cursor, event dedupe, pending command recovery |
 | `7f18b4e`; Seerr-vs-AllDebrid boundary docs | C | Clarifies local runtime semantics and avoids confusing two unrelated webhook concepts | None | Route probe plus isolated fixture suite |
-| Current `src/services/providerReconciliationCapabilities.ts`, `tests/unit/services/provider-reconciliation-capabilities.test.ts` | A candidate | Pure capability assessment is provider-neutral and does not assume identical APIs; it enables full/recent polling, push-only, polling-with-push, or disabled modes explicitly | Upstream API review, provider-specific capability declarations, fallback semantics, and compatibility policy | Matrix tests for complete polling, full-only fallback, push-only, and disabled providers |
+| Current capability layer and [provider audit](provider-capability-audit-2026-09-17.md) | A candidate with provider-specific follow-up required | Pure assessment is provider-neutral and does not assume identical APIs; source audit shows only AllDebrid has recent/bounded support and no audited provider has push code | Upstream review of per-provider declarations, stable identity/tree guarantees, deletion semantics, fallback semantics, and compatibility policy | Capability matrix plus one source/fixture contract per provider before opt-in |
 | Current `docs/cinecircle-fork-pr-material.md`, matrix/report edits | C | Review packet and sanitized local requirements evidence | None | `git diff --check` and documentation review |
 
 ## Worker generalization decision
@@ -32,12 +32,23 @@ that behavior is part of the CineCircle import association contract.
 The credible Group A seam now includes the pure capability assessment in
 `src/services/providerReconciliationCapabilities.ts` and the narrow provider
 capability already isolated in `src/providers/alldebrid.ts`. The assessment
-does not assume identical provider APIs: it enables only a complete full
-snapshot contract, treats recent polling as optional, permits push-only where
-explicitly declared, and disables the path when neither contract exists. A
+does not assume identical provider APIs: it selects polling-hybrid for recent
+plus full snapshots, polling-full-only for a full snapshot only, push-only only
+when push is the sole declared option, and disabled when neither contract
+exists. Native push is not required and no hybrid push mode is imposed. A
 future upstream worker could consume these declarations without moving the
 CineCircle state schema, Arr routing, or Review policy. No existing worker
 behavior is changed by this assessment.
+
+The complete provider audit is in
+`docs/provider-capability-audit-2026-09-17.md`. It confirms that the common
+interface does not prove identical provider APIs: AllDebrid is the only client
+with recent/bounded behavior and reconciliation fixtures, while the other
+clients expose code-level full listing/tree methods with no recent, push, or
+native change-feed evidence. They are polling-full-only candidates based on
+source evidence, not live-contract proof. The complete source audit and
+documentation/fixture gaps are recorded in
+`docs/provider-capability-audit-2026-09-17.md`.
 
 ## Not proposed upstream
 

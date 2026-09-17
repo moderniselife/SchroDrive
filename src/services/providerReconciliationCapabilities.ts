@@ -14,7 +14,7 @@ export interface ReconciliationCapabilities {
   pushEvents: boolean;
 }
 
-export type ReconciliationMode = 'disabled' | 'polling' | 'push' | 'polling-with-push';
+export type ReconciliationMode = 'disabled' | 'polling-hybrid' | 'polling-full-only' | 'push-only';
 
 export interface ReconciliationCapabilityAssessment {
   capabilities: ReconciliationCapabilities;
@@ -39,11 +39,11 @@ export function assessReconciliationCapabilities(
   if (!hasPolling && !hasPush) {
     return { capabilities: { ...capabilities, changeDetection }, mode: 'disabled', reason: 'provider exposes neither a complete snapshot contract nor push events' };
   }
-  if (hasPush && hasPolling) {
-    return { capabilities: { ...capabilities, recentSnapshot: hasRecent, changeDetection }, mode: 'polling-with-push', reason: hasRecent ? 'full/recent polling and push events are available' : 'full polling and push events are available; recent polling is unavailable' };
+  if (hasPolling) {
+    return { capabilities: { ...capabilities, recentSnapshot: hasRecent, changeDetection }, mode: hasRecent ? 'polling-hybrid' : 'polling-full-only', reason: hasRecent ? 'frequent recent polling plus periodic full polling; local snapshot diff is authoritative' : 'periodic full polling with local snapshot diff; recent polling is unavailable' };
   }
   if (hasPush) {
-    return { capabilities: { ...capabilities, changeDetection }, mode: 'push', reason: 'provider exposes push events but not a complete snapshot contract' };
+    return { capabilities: { ...capabilities, changeDetection }, mode: 'push-only', reason: 'provider exposes push events but not a complete polling snapshot contract' };
   }
   return { capabilities: { ...capabilities, recentSnapshot: hasRecent, changeDetection }, mode: 'polling', reason: hasRecent ? 'full/recent polling with worker-side snapshot diff is available' : 'full polling with worker-side snapshot diff is available; recent polling is unavailable' };
 }
