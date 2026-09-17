@@ -90,41 +90,45 @@ Running both as active detectors would create duplicate API polling and could
 submit duplicate Arr scans. The direct adapter’s `changed` event has no direct
 DavDebrid equivalent because DavDebrid diffs only file IDs.
 
-## Correct integration proposal
+## Correct final integration proposal
 
-Use DavDebrid as the AllDebrid integration owner during the CineCircle fork
-transition:
+DavDebrid must be removed from the final system. Its runtime is not the target
+control plane and no SchröDrive production component should consume its
+webhook or source-snapshot endpoint. The technically useful behavior is to be
+ported into SchröDrive’s CineCircle fork:
 
-1. Add a fork-only DavDebrid webhook consumer to SchröDrive. Accept and
-   authenticate the configured endpoint, validate `event`, `event_id`, file
-   ID, category, media type, and timestamp, then map each file to the existing
-   direct-file event contract.
-2. Use `event_id + file.id + action` as the primary dedupe key, retaining the
-   DavDebrid file ID as provider correlation. Do not re-poll AllDebrid for
-   every webhook.
-3. Route `new_files` to classification-preserving Arr scan/manual-import,
-   poll Arr command status, persist correlation, and require Arr success before
-   completion. Route `deleted_files` to state reconciliation only; never issue
-   destructive Arr or provider operations automatically.
-4. Run a low-frequency read-only reconciliation against DavDebrid’s protected
-   `/api/source-snapshot` to recover missed webhooks and detect same-ID file
-   changes. Emit `changed` only when the sanitized file fingerprint changes.
-5. Keep the current direct AllDebrid status/files source as a disabled fallback
-   test harness, not as a second production detector. Generic multi-provider
-   polling remains future scope.
+1. Reuse the concept of a persisted current snapshot, a bounded recent scan,
+   a periodic full scan, and diff-by-stable-file identity. Use SchröDrive’s
+   existing current AllDebrid API client and rate limiting rather than copying
+   DavDebrid’s older HTTP implementation.
+2. Reuse useful file-tree flattening and video/subtitle filtering. Align its
+   Movies/Shows classifier with the existing fork contract and keep
+   classification as an internal event field, not an external DavDebrid
+   dependency.
+3. Convert diffs directly into SchröDrive internal `added`, `changed`, and
+   `deleted` events. `changed` is a fork improvement based on a file/tree
+   fingerprint because DavDebrid only emits new/deleted ID differences.
+4. Route added/changed events to the correct Arr REST scan/manual-import stage,
+   poll command status, persist correlation/idempotency, retry transient
+   failures, and send permanent failures to Review. Deleted events update
+   state only and never trigger destructive provider or Arr actions.
+5. Retain the existing direct adapter as the implementation seam and test
+   fixture, then replace its current source wiring with the in-process
+   SchröDrive AllDebrid reconciler. Generic multi-provider polling remains
+   future fallback scope.
 
-This reuses DavDebrid’s existing AllDebrid polling, cache, classification, and
-retry behavior while preserving SchröDrive’s required Arr handoff and Review
-state machine. It also keeps DavDebrid removable later: once webhook/snapshot
-consumption and Arr E2E pass, the provider polling owner can be replaced by the
-fork consumer without running two detectors.
+This ports useful DavDebrid behavior without keeping its container, service,
+webhook, cache, or source-snapshot API in the final system. It avoids duplicate
+polling and preserves SchröDrive’s required Arr and Review boundaries.
 
 ## Remaining blockers
 
-- A webhook consumer endpoint and authenticated private-network contract are
-  not yet implemented in SchröDrive.
+- The in-process fork reconciler is not yet wired into SchröDrive’s runtime;
+  the current source is a test-only seam.
 - DavDebrid currently has no `changed` event; snapshot fingerprinting is
   required for that case.
 - The live local OpenAPI JSON for Arr is unavailable, so exact manual-import
   payload capture remains a separate blocker.
+- A migration test must prove that the final stack has no DavDebrid service or
+  webhook dependency before cutover.
 - No production configuration or Portainer change is authorized by this note.

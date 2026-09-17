@@ -10,7 +10,7 @@ while Radarr/Sonarr remain responsible for metadata matching and import.
 |---|---|---|---|
 | A. Historical library import | Existing Riven/MediaBridge library and records | Read-only inventory, classification, identity projection, destination audit, and Review for unresolved cases | Confirm metadata/import behavior in an isolated fixture; no rewrite of existing media during migration |
 | B. Normal request | Seerr → Radarr/Sonarr | qBittorrent-compatible provider/download lifecycle, categories, tracking, and completion visibility | Own request identity, search, metadata matching, completed-file import |
-| C. Direct/manual intake (CineCircle fork) | DavDebrid AllDebrid polling → `new_files`/`deleted_files` webhook → SchröDrive; protected source snapshot for reconciliation | Validate/dedupe events, derive changed via snapshot fingerprint, preserve Movies/Shows, persist/retry, and route to Arr REST API | Accept scan/manual-import command, match metadata, and import |
+| C. Direct/manual intake (CineCircle fork) | SchröDrive in-process AllDebrid recent/full reconciliation | Diff stable file/tree snapshots, emit added/changed/deleted events, preserve Movies/Shows, persist/retry, and route to Arr REST API | Accept scan/manual-import command, match metadata, and import |
 
 Path B must not enable SchröDrive’s optional Seerr poller when Seerr already
 hands requests to Arr; that would create duplicate ownership. Path C is a
@@ -18,16 +18,17 @@ required CineCircle fork contract, not upstream PR material: the current Arr bri
 primarily Arr → SchröDrive/qBittorrent-compatible intake, and the existing
 organizer does not yet expose a provider-poll → Arr file/path adapter.
 
-The private fork adapter must consume the existing DavDebrid AllDebrid webhook
-and protected source snapshot rather than run a second active AllDebrid poller.
-It must provide stable deduplication/state, DavDebrid-authoritative
-Movies/Shows classification, snapshot-derived changed detection, correct
-Radarr/Sonarr routing, Arr-owned metadata matching/import, retries, restart
-recovery, and Review handoff for unresolved cases. Its configuration, docs,
-and tests remain fork-only; generic provider polling remains future fallback
-scope. The required stage boundary is DavDebrid event → SchröDrive direct-file
-event → Arr REST scan or manual import → command status polling → persistent
-correlation/idempotency; a DavDebrid notification alone is never completion.
+DavDebrid is removed from the final architecture. The private fork ports only
+its useful polling, snapshot diff, file-tree filtering, and category concepts
+into SchröDrive’s in-process AllDebrid reconciler. It must provide stable
+deduplication/state, Movies/Shows classification, snapshot-derived changed
+detection, correct Radarr/Sonarr routing, Arr-owned metadata matching/import,
+retries, restart recovery, and Review handoff for unresolved cases. Its
+configuration, docs, and tests remain fork-only; generic provider polling
+remains future fallback scope. The required stage boundary is AllDebrid API →
+SchröDrive internal event → Arr REST scan or manual import → command status
+polling → persistent correlation/idempotency; provider visibility alone is
+never completion.
 
 ## Evidence and boundaries
 

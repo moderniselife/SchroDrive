@@ -43,14 +43,15 @@ Seerr-to-Arr chain test remains to be added.
 
 ## C — direct/manual AllDebrid intake (CineCircle fork only)
 
-1. Consume DavDebrid `new_files` and `deleted_files` webhooks. Validate the
-   stable file ID, event ID, category, media type, and timestamp; do not run a
-   second active AllDebrid status/files poller.
-2. Emit a direct-file event containing the DavDebrid file ID, `added`/`changed`/
-   `deleted` action, Arr-visible path and tree, Movies/Shows category,
-   observed timestamp, and stable dedupe key. Use the protected DavDebrid
-   `/api/source-snapshot` endpoint for missed-event recovery and same-ID
-   fingerprint changes; this is read-only and does not emit webhooks.
+1. Run SchröDrive’s in-process AllDebrid recent/full reconciliation using the
+   existing provider client: status listing plus completed recursive file
+   trees. Port the useful DavDebrid snapshot/diff behavior, but do not keep a
+   DavDebrid container, webhook, or source-snapshot dependency in the final
+   system.
+2. Emit a direct-file event containing the AllDebrid provider item/file ID,
+   `added`/`changed`/`deleted` action, Arr-visible path and tree, Movies/Shows
+   category, observed timestamp, and stable dedupe key. Use a tree fingerprint
+   for `changed`; a missing item after a successful full snapshot is deleted.
 3. Persist item fingerprint, webhook event key, Arr route, command ID, attempt
    count, and terminal result. Treat a missing file in a successful snapshot
    as deleted; do not treat a transient webhook or snapshot failure as deletion.
@@ -64,12 +65,13 @@ Seerr-to-Arr chain test remains to be added.
    Use dry-run fixtures only; do not perform real provider operations.
 
 Integration assessment: `docs/cinecircle-davdebrid-integration-assessment-2026-09-17.md`.
-The current direct AllDebrid adapter and its tests remain useful isolated
-fallback fixtures, but the active fork implementation should consume DavDebrid
-webhooks plus snapshot reconciliation to avoid duplicate polling. This is
-CineCircle-specific fork scope, not upstream PR material. Generic
-multi-provider polling is future fallback scope. Full compose-level Arr import
-and Review UI validation remain blockers.
+The current direct AllDebrid adapter and its tests are the fork implementation
+seam; its source must be completed as an in-process reconciler using the
+existing SchröDrive AllDebrid client. DavDebrid code is reference material
+only and is removed from the final stack. This is CineCircle-specific fork
+scope, not upstream PR material. Generic multi-provider polling is future
+fallback scope. Full compose-level Arr import, Review UI validation, and the
+no-DavDebrid service assertion remain blockers.
 
 ## Commands and acceptance gate
 
