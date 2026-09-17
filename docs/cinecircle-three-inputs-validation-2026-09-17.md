@@ -5,6 +5,12 @@ AllDebrid, Seerr, Arr, or media-server state was mutated.
 
 ## Input boundary verification
 
+The test compose wiring at `/home/samtruman/docker/cinecircle-test/compose.yml`
+now sets `RUN_WEBHOOK=true`. This enables only the inbound Seerr/Overseerr
+route; it does not configure an AllDebrid webhook. The AllDebrid worker remains
+an internal polling/reconciliation component and is exercised through its
+isolated source/Arr harness.
+
 The isolated runtime was started with `RUN_WEBHOOK=true` and all pollers,
 mounts, and Arr bridge disabled. `/health` returned HTTP 200 and a sanitized
 Seerr fixture reached `POST /webhook/overseerr`. Because no indexer or provider
@@ -85,8 +91,8 @@ three-input harness covers:
 - C: direct AllDebrid fixture event routed to Sonarr and considered complete
   only after Arr command status is successful.
 
-The complete isolated suite also passes: 101 tests, 0 failures, 224
-expectations across 18 files. It ran in Docker with `--network none`, with the
+The complete isolated suite also passes: 105 tests, 0 failures, 234
+expectations across 19 files. It ran in Docker with `--network none`, with the
 repository mounted read-only and provider/service integrations disabled; no
 real AllDebrid, Riven, Arr, Seerr, or production calls were made.
 
@@ -96,6 +102,11 @@ the HTTP client asserts `POST /api/v3/command` and
 header, retries, and terminal command status. The same harness covers
 subtitles in the event tree, add/change/delete, deduplication, persistence,
 and Review handoff.
+
+Review UI/API persistence is covered by the existing organizer review matrix:
+pending/resolved decisions, parser-state filters, pagination, detail, audit,
+retry/resume, validation errors, and SQLite persistence. No Review or provider
+operation was performed against production.
 
 Focused TypeScript compilation of the changed provider, worker, and fork tests
 also passes. `git diff --check` is required before commit.
