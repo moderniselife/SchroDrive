@@ -7,6 +7,7 @@ import {
   listOrganizerReviewAudit,
   listOrganizerReviews,
   recordOrganizerReview,
+  retryOrganizerReview,
   validateReviewOverride,
 } from "../../../src/services/organizerReview";
 
@@ -81,6 +82,27 @@ describe("Organizer review queue", () => {
     expect(listOrganizerReviews()).toHaveLength(1);
     expect(listOrganizerReviews()[0].id).toBe(entry.id);
     expect(listOrganizerReviewAudit(entry.id).at(-1)?.payload).toBeUndefined();
+    clearOrganizerReviews();
+  });
+
+  test("uses collision-resistant IDs for similarly prefixed paths", () => {
+    clearOrganizerReviews();
+    const first = recordOrganizerReview("/mount/" + "a".repeat(80) + "-one.mkv", parsed);
+    const second = recordOrganizerReview("/mount/" + "a".repeat(80) + "-two.mkv", parsed);
+    expect(first.id).not.toBe(second.id);
+    expect(listOrganizerReviews()).toHaveLength(2);
+    clearOrganizerReviews();
+  });
+
+  test("retry returns a resolved item to pending and audits the transition", () => {
+    clearOrganizerReviews();
+    const entry = recordOrganizerReview("/mount/retry.mkv", parsed);
+    decideOrganizerReview(entry.id, "accepted", { title: "Retry me" });
+    const retried = retryOrganizerReview(entry.id);
+    expect(retried?.decision).toBe("pending");
+    expect(retried?.override?.title).toBe("Retry me");
+    expect(listOrganizerReviews().map((item) => item.id)).toEqual([entry.id]);
+    expect(listOrganizerReviewAudit(entry.id).at(-1)?.action).toBe("retry");
     clearOrganizerReviews();
   });
 });

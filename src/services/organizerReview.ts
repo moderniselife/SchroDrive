@@ -2,6 +2,7 @@
 
 import type { ParsedMediaIdentity } from "./mediaParser";
 import { getDb } from "../core/db";
+import { createHash } from "node:crypto";
 
 export type ReviewDecision = "pending" | "accepted" | "dismissed";
 
@@ -52,11 +53,26 @@ export function validateReviewOverride(value: unknown): ReviewOverride | undefin
 }
 
 function keyFor(sourcePath: string): string {
-  return Buffer.from(sourcePath).toString("base64url").slice(0, 48);
+  return `review_${createHash("sha256").update(sourcePath, "utf8").digest("hex")}`;
+}
+
+/** Migrate the old truncated base64 IDs without losing existing decisions/audit. */
+function migrateLegacyIds(): void {
+  const database = getDb();
+  const rows = database.prepare("SELECT id, source_path FROM organizer_reviews").all() as Array<{ id: string; source_path: string }>;
+  for (const row of rows) {
+    const nextId = keyFor(row.source_path);
+    if (row.id === nextId) continue;
+    const existing = database.prepare("SELECT id FROM organizer_reviews WHERE id = ?").get(nextId);
+    if (existing) continue;
+    database.prepare("UPDATE organizer_reviews SET id = ? WHERE id = ?").run(nextId, row.id);
+    database.prepare("UPDATE organizer_review_audit SET review_id = ? WHERE review_id = ?").run(nextId, row.id);
+  }
 }
 
 /** Returns the persisted review decision for one source path, if present. */
 export function getOrganizerReview(sourcePath: string): OrganizerReviewEntry | undefined {
+  migrateLegacyIds();
   return listOrganizerReviews(true).find((entry) => entry.id === keyFor(sourcePath));
 }
 
@@ -88,6 +104,7 @@ export function recordOrganizerReview(sourcePath: string, parsed: ParsedMediaIde
 }
 
 export function listOrganizerReviews(includeResolved = false, status?: ReviewDecision): OrganizerReviewEntry[] {
+  migrateLegacyIds();
   const decision = status || (includeResolved ? undefined : "pending");
   const query = decision
     ? "SELECT * FROM organizer_reviews WHERE decision = ? ORDER BY updated_at DESC"
@@ -104,6 +121,12 @@ export function listOrganizerReviews(includeResolved = false, status?: ReviewDec
       ...(override ? { override } : {}),
     }];
   });
+}
+
+export type ReviewParserStatus = ParsedMediaIdentity["status"];
+
+export function filterOrganizerReviewsByParserStatus(entries: OrganizerReviewEntry[], status?: ReviewParserStatus): OrganizerReviewEntry[] {
+  return status ? entries.filter((entry) => entry.parsed.status === status) : entries;
 }
 
 export function decideOrganizerReview(
@@ -126,6 +149,21 @@ export function decideOrganizerReview(
     ...(effectiveOverride ? { override: effectiveOverride } : {}),
   };
   return updated;
+}
+
+/** Re-queues an item for another organizer pass without changing provider files. */
+export function retryOrganizerReview(id: string): OrganizerReviewEntry | undefined {
+  const database = getDb();
+  const row = database.prepare("SELECT * FROM organizer_reviews WHERE id = ?").get(id) as any;
+  if (!row) return undefined;
+  const now = new Date().toISOString();
+  database.prepare("UPDATE organizer_reviews SET decision = 'pending', updated_at = ? WHERE id = ?").run(now, id);
+  database.prepare("INSERT INTO organizer_review_audit (review_id, action, payload_json, created_at) VALUES (?, ?, ?, ?)")
+    .run(id, "retry", JSON.stringify({ previousDecision: row.decision }), now);
+  const parsed = parseStoredJson<ParsedMediaIdentity>(row.parsed_json);
+  if (!parsed) return undefined;
+  const override = parseStoredJson<ReviewOverride>(row.override_json);
+  return { id, sourcePath: row.source_path, sourceBasename: row.source_basename, parsed, decision: "pending", createdAt: row.created_at, updatedAt: now, ...(override ? { override } : {}) };
 }
 
 export function clearOrganizerReviews(): void {

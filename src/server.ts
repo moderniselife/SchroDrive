@@ -32,7 +32,7 @@ import { getBridgeStatuses, refreshBridges, getExternalWebdavStatus } from "./se
 import { getPreWarmStatus } from "./services/cloudLinks/bridge";
 import { getBlacklistEntries, getBlacklistCount, addToBlacklist, removeFromBlacklist, isBlacklisted } from "./core/blacklist";
 import { tokenRotator } from "./core/tokenRotator";
-import { decideOrganizerReview, listOrganizerReviewAudit, listOrganizerReviews, validateReviewOverride } from "./services/organizerReview";
+import { decideOrganizerReview, filterOrganizerReviewsByParserStatus, listOrganizerReviewAudit, listOrganizerReviews, retryOrganizerReview, validateReviewOverride } from "./services/organizerReview";
 
 // ===========================================================================
 // Server Initialisation
@@ -189,14 +189,28 @@ export function startServer() {
     const includeResolved = String(req.query.includeResolved || '') === 'true';
     const status = req.query.status === 'pending' || req.query.status === 'accepted' || req.query.status === 'dismissed'
       ? req.query.status : undefined;
+    const parserStatus = req.query.parserStatus === 'matched' || req.query.parserStatus === 'ambiguous' || req.query.parserStatus === 'unmatched'
+      ? req.query.parserStatus : undefined;
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
     const offset = Math.max(0, Number(req.query.offset) || 0);
-    const all = listOrganizerReviews(includeResolved, status);
+    const all = filterOrganizerReviewsByParserStatus(listOrganizerReviews(includeResolved, status), parserStatus);
     res.json({ ok: true, entries: all.slice(offset, offset + limit), total: all.length, limit, offset });
   });
 
-  /** POST /api/organizer/review/:id — Records a manual review decision. */
+  /** GET /api/organizer/review/:id — Returns one review entry. */
+  app.get('/api/organizer/review/:id', (req, res) => {
+    const entry = listOrganizerReviews(true).find((item) => item.id === String(req.params.id));
+    if (!entry) return res.status(404).json({ ok: false, error: 'Review entry not found' });
+    res.json({ ok: true, entry });
+  });
+
+  /** POST /api/organizer/review/:id — Records a manual review decision or safe retry. */
   app.post('/api/organizer/review/:id', (req, res) => {
+    if (req.body?.action === 'retry') {
+      const entry = retryOrganizerReview(String(req.params.id));
+      if (!entry) return res.status(404).json({ ok: false, error: 'Review entry not found' });
+      return res.json({ ok: true, entry });
+    }
     const decision = req.body?.decision;
     if (decision !== 'accepted' && decision !== 'dismissed') {
       return res.status(400).json({ ok: false, error: 'decision must be accepted or dismissed' });
