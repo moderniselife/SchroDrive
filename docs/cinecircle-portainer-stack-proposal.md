@@ -1,6 +1,8 @@
 # Proposed Portainer stack editor diff: SchröDrive
 
-Read-only proposal for Portainer stack `cinecircle` (stack ID `77`). This is
+Read-only proposal for Portainer stack `cinecircle` (stack ID `77`). The
+active replacement target is `/davdebrid` (`davdebrid-plexparser`); there is
+no SchröDrive production service today. This is
 not saved in Portainer and must not be deployed as written. It is an editor
 draft only; every `<BLOCKER: ...>` marker requires resolution in Portainer by
 the production owner before authorization.
@@ -12,15 +14,17 @@ Source inspected: Portainer `/data/compose/77/docker-compose.yml`, SHA-256
 
 | Existing service | Functional overlap | Proposal status | Reason/blocker |
 | --- | --- | --- | --- |
-| `davdebrid-plexparser` (`davdebrid`) | Debrid file discovery/source snapshot | Conditional replacement | SchröDrive provides provider/mount behavior, but Riven’s source-snapshot dependency must be migrated or explicitly retained. |
-| `rclone-davdebrid` | WebDAV/rclone mount into `/mnt/debrid/alldebrid` | Conditional replacement | The real SchröDrive mount source and propagation target are unknown. |
-| `rdtclient` | qBittorrent-compatible Arr client | Conditional replacement | Arr client URLs, download paths, and existing state migration must be confirmed. |
+| `davdebrid-plexparser` (`davdebrid`) | Debrid file discovery/source snapshot | Replace target | Active legacy container; reuse its existing config/data roles only if compatible. |
+| `cinecircle-parser` | Legacy MediaBridge parsing | Remove | Confirmed legacy path; SchröDrive owns classification in the target. |
+| `cinecircle-webhook` | Legacy MediaBridge outbound webhook | Remove | Confirmed legacy path; Seerr inbound is SchröDrive `/webhook/overseerr`. |
+| `rclone-davdebrid` | WebDAV/rclone mount into `/mnt/debrid/alldebrid` | Retain | No evidence authorizes removal; preserve mount and propagation. |
+| `rdtclient` | qBittorrent-compatible Arr client | Remove after bridge check | Prowlarr/Arr use SchröDrive’s qBittorrent-compatible bridge; this is an operational cutover check. |
 | `riven` / `riven-frontend` | Request/organizer/orchestration UI | Not classified as replacement | No evidence establishes feature parity or an approved migration; Riven currently consumes the legacy mount/source services. |
-| `cinecircle-parser`, `cinecircle-webhook`, `prowlarr`, `seerr`, `plex`, `jellyfin`, `watchstate` | Parser, webhook, indexer/request/media/state services | Retain | No direct replacement evidence in this proposal. |
+| `prowlarr`, `seerr`, `plex`, `jellyfin`, `watchstate`, `tautulli`, `riven`, `riven-db`, `riven-frontend`, `pelagica` | Request/indexer/media/state services | Retain | No assessment evidence authorizes removal. |
 
-The three conditional replacements are the only services shown for removal in
-the draft diff. They must not be removed until the Riven dependency decision,
-Arr configuration/state migration, and real data backup are approved.
+The confirmed legacy services and `rdtclient` are the only services shown for
+removal. Prowlarr and Arr must use SchröDrive’s bridge before `rdtclient` is
+removed. Retained service ports and mounts are unchanged.
 
 ## Existing relevant bindings
 
@@ -34,9 +38,11 @@ All listed services are on the external Docker network `cinecircle_default`.
 | `riven` | `127.0.0.1:8088:8080`, `127.0.0.1:8092:8090` | `/home/samtruman/docker/cinecircle/riven/data:/riven/data`; `/home/samtruman/docker/cinecircle/tools/plex_parser/tmdb_series_preview.json:/riven/tmdb_series_preview.json:ro`; `/mnt/riven:/mount:rshared,z`; `/mnt/debrid/alldebrid:/mnt/debrid/alldebrid:rslave` | Reads the legacy mount and `http://davdebrid:8080/api/source-snapshot`. |
 
 The current production host port `3000` is occupied by `riven-frontend`.
-Production ports `8978` and `8282` were not assigned to an existing
-production container during inspection, but Portainer ownership and the final
-GUI port still require confirmation.
+Plex `32400`, Jellyfin `8096`, Riven `127.0.0.1:8088` and `127.0.0.1:8092`,
+Prowlarr `9696`, Seerr `127.0.0.1:5055`, and every other retained published
+port must remain exactly unchanged. Test ports `8979`, `8980`, and `8981` are
+not production assignments. No new `/data`, `/config`, `/mnt/schrodrive`, or
+`AR/adjustment` path is proposed.
 
 ## Non-deployable proposed editor diff
 
@@ -45,29 +51,28 @@ until all markers are replaced with owner-confirmed values in Portainer.
 
 ```diff
  services:
-   ... existing services unchanged ...
+   ... existing retained services unchanged ...
 -  davdebrid-plexparser:
 -    image: samtruman/davdebrid-plexparser:latest
 -    container_name: davdebrid
 -    ... existing service definition retained in the saved Portainer version ...
--  rclone-davdebrid:
--    image: rclone/rclone:latest
--    container_name: rclone-davdebrid
--    ... existing service definition retained in the saved Portainer version ...
+-  cinecircle-parser:
+-    ... confirmed legacy MediaBridge service removed ...
+-  cinecircle-webhook:
+-    ... confirmed legacy MediaBridge service removed ...
 -  rdtclient:
 -    image: rogerfar/rdtclient:latest
 -    container_name: rdtclient
--    ... existing service definition retained in the saved Portainer version ...
+-    ... removed after the operational Prowlarr/Arr bridge check ...
 +  schrodrive:
 +    # Candidate identity: local image ID/digest verified in cinecircle-test.
 +    # Portainer must verify the exact pullable image reference resolves to it.
 +    image: schrodrive:cinecircle-review-blocker@sha256:033645236d0d1d8af99b8573751ad7721965743c65922bf61cfd8d5fa45783f8
-+    container_name: <BLOCKER: owner-confirmed production container name>
++    container_name: <BLOCKER: owner-confirmed replacement for davdebrid>
 +    restart: unless-stopped
-+    ports:
-+      - "8978:8978" # backend; confirm Portainer host-port availability
-+      - "<BLOCKER: GUI host port>:3000" # 3000 is occupied by riven-frontend
-+      - "8282:8282" # qBittorrent bridge; confirm host-port ownership
++    # Do not invent production host ports. Preserve the legacy 8090 binding
++    # only if the replacement exposes the required contract; retained service
++    # ports cannot be changed.
 +    environment:
 +      TZ: Europe/Rome
 +      PUID: "1000"
@@ -77,7 +82,7 @@ until all markers are replaced with owner-confirmed values in Portainer.
 +      PROVIDERS: <BLOCKER: approved production provider set>
 +      <BLOCKER: approved provider credentials and endpoint environment names>
 +      RUN_MOUNT: "true"
-+      MOUNT_BASE: /mnt/schrodrive
++      MOUNT_BASE: <BLOCKER: exact existing approved mount target>
 +      MOUNT_UID: "1000"
 +      MOUNT_GID: "1000"
 +      MOUNT_ALLOW_OTHER: "true"
@@ -89,16 +94,16 @@ until all markers are replaced with owner-confirmed values in Portainer.
 +      AUTO_UPDATE_ENABLED: "false"
 +    volumes:
 +      - type: bind
-+        source: <BLOCKER: exact real production mount source>
-+        target: /mnt/schrodrive
-+        bind:
-+          propagation: rshared
-+      - type: bind
-+        source: <BLOCKER: exact real production DATA_DIR source>
++        source: /home/samtruman/docker/cinecircle/davdebrid
++        target: /config
++      - type: volume
++        source: cinecircle_davdebrid_data
 +        target: /data
 +      - type: bind
-+        source: <BLOCKER: exact approved production config source>
-+        target: /config
++        source: <BLOCKER: exact existing provider/media mount confirmed in Portainer>
++        target: <BLOCKER: SchröDrive target>
++        bind:
++          propagation: <BLOCKER: preserve existing propagation>
 +    devices:
 +      - /dev/fuse:/dev/fuse:rwm
 +    cap_add:
@@ -123,13 +128,14 @@ performed.
 
 ## Blockers before an editor diff can become deployable
 
-1. Portainer must identify the intended production service name/container
-   name; no SchröDrive service currently exists in stack `cinecircle`.
-2. The owner must provide the exact real production mount, `/data` path, and
-   `/config` path. This proposal deliberately guesses none of them.
-3. The owner must decide whether `davdebrid-plexparser`,
-   `rclone-davdebrid`, and `rdtclient` are all retired, and how Riven’s
-   `davdebrid` source-snapshot and mount dependencies are replaced or kept.
+1. Portainer must confirm `/davdebrid` and the exact SchröDrive service name;
+   no SchröDrive service currently exists in stack `cinecircle`.
+2. The owner must confirm reuse of `/home/samtruman/docker/cinecircle/davdebrid:/config`
+   and `cinecircle_davdebrid_data:/data`, plus the exact existing provider/media
+   mount. No new path is allowed.
+3. Confirm removal of `davdebrid-plexparser`, `cinecircle-parser`,
+   `cinecircle-webhook`, and `rdtclient` after the operational Prowlarr/Arr
+   bridge check; retain all other evidenced active services.
 4. The owner must confirm provider credentials/environment names, Arr client
    URLs, download paths, and state migration.
 5. Portainer must confirm a non-conflicting GUI host port; production `3000`

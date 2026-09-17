@@ -8,15 +8,18 @@ authorized by this document.
 The current Portainer stack is `cinecircle` (stack ID `77`), managed at
 `https://127.0.0.1:9443`. Its compose source is retained inside Portainer at
 `/data/compose/77/docker-compose.yml`. The current stack source contains no
-`schrodrive` service, so the target service and production data mount must be
-resolved in Portainer before any cutover can be authorized.
+`schrodrive` service. The replacement target is the active `/davdebrid`
+container (`davdebrid-plexparser`), not an existing SchröDrive production
+container; its replacement service name and reused mounts must be selected
+and saved in Portainer before any cutover can be authorized.
 
 ## 1. Read-only prechecks
 
 In Portainer, inspect the `cinecircle` stack and record:
 
-1. The exact production service name to change. Do not infer it from a test
-   container or add a new production service during precheck.
+1. The exact production service to replace: `/davdebrid` running
+   `davdebrid-plexparser`. Do not infer it from a test container or add a
+   second production intake service during precheck.
 2. The current SchröDrive image digest, container status/health, published
    ports, redacted environment variable names, bind mounts/volumes, and the
    real data mount. Confirm the mount is not a test path.
@@ -29,10 +32,11 @@ In Portainer, inspect the `cinecircle` stack and record:
    capability/fork E2E tests, and the passing Review GUI/API matrix on test
    ports `8979`, `8980`, and `8981`. The provider evidence is recorded in
    `docs/provider-capability-audit-2026-09-17.md`.
-6. Confirm the final candidate stack contains no `davdebrid` or
-   `davdebrid-plexparser` service and no external DavDebrid webhook or
-   source-snapshot dependency. AllDebrid polling, snapshot diff,
-   classification, and internal events must be owned by SchröDrive.
+6. Confirm the final candidate stack contains no `davdebrid`,
+   `davdebrid-plexparser`, `cinecircle-parser`, or `cinecircle-webhook`
+   service. These are the confirmed legacy MediaBridge/DavDebrid path.
+   AllDebrid polling, snapshot diff, classification, and internal events must
+   be owned by SchröDrive. Retain services listed in the retain matrix.
 
 The Portainer API may be used for authenticated read-only inspection only.
 Never use a mutating API endpoint during precheck. Do not change DNS or
@@ -72,11 +76,12 @@ After the final authorization gate has been recorded:
 5. Resume production requests only after the operator confirms the full
    observation window is clean.
 
-The cutover target removes DavDebrid from the final stack. No DavDebrid
-container, webhook route, cache, or source-snapshot endpoint is retained as a
-runtime dependency. Its useful polling, snapshot diff, file-tree filtering,
-and category behavior is ported into the CineCircle SchröDrive fork and must
-pass the test gates before the authorization gate can be satisfied.
+The cutover target replaces the active `/davdebrid` container and removes the
+confirmed legacy `cinecircle-parser` and `cinecircle-webhook` services. No
+DavDebrid container, outbound webhook route, cache, or source-snapshot
+endpoint is retained as a runtime dependency. Its useful polling, snapshot
+diff, file-tree filtering, and category behavior is ported into the CineCircle
+SchröDrive fork and must pass the test gates before authorization.
 
 ### Target wiring and reused resources
 
@@ -89,8 +94,13 @@ must confirm each mapping in the editor before saving.
 
 Target wiring, in order of dependency:
 
-1. SchröDrive mounts the approved existing media/provider tree read-only where
-   appropriate and uses a separately approved persistent state directory.
+1. SchröDrive reuses the active DavDebrid container’s existing
+   `/home/samtruman/docker/cinecircle/davdebrid` config bind and
+   `cinecircle_davdebrid_data` volume by role only where compatible. It also
+   reuses the existing provider/mount wiring confirmed in Portainer. No new
+   `/data`, `/config`, or invented media path may be introduced; the exact
+   Arr-facing production mount remains a blocker until inspected and
+   owner-approved.
 2. The optional Seerr inbound route is enabled with `RUN_WEBHOOK=true` only if
    this path is intentionally owned by SchröDrive. It is `POST
    /webhook/overseerr`; it is unrelated to AllDebrid notifications.
@@ -103,10 +113,12 @@ Target wiring, in order of dependency:
 4. Movies events route to Radarr and Shows events to Sonarr. SchröDrive sends
    the Arr command, polls its command ID, persists correlation/idempotency, and
    sends permanent failures to Review. Arr performs metadata matching/import.
-5. Remove the approved DavDebrid service and its outbound webhook/source
-   dependency only in the same authorized Portainer edit. Remove its mount
-   helper only when the replacement mount is confirmed; do not remove Riven,
-   Arr, Seerr, Plex, Jellyfin, or unrelated services by inference.
+5. Remove the approved legacy services in the same authorized Portainer edit:
+   `davdebrid`, `cinecircle-parser`, and `cinecircle-webhook`. Remove
+   `rdtclient` only after Prowlarr/Arr are verified against SchröDrive’s
+   qBittorrent-compatible bridge. Retain `rclone-davdebrid`, Riven, Arr,
+   Seerr, Plex, Jellyfin, Prowlarr, Tautulli, watchstate, and other services
+   unless separate assessment evidence proves they are unused.
 
 ### Stop/start order
 
@@ -114,9 +126,11 @@ During the authorized maintenance window, use Portainer stack controls and
 the smallest approved service scope:
 
 1. Freeze new Seerr requests and record queue/Review/Arr state.
-2. Stop the legacy DavDebrid-dependent intake in Portainer, then stop only the
-   approved legacy DavDebrid and mount-helper services after their diagnostics
-   and backup checks are complete.
+2. Stop the legacy intake in Portainer, then stop only the approved legacy
+   services `davdebrid`, `cinecircle-parser`, and `cinecircle-webhook` after
+   diagnostics and backup checks are complete. Stop `rdtclient` only after
+   the SchröDrive Arr bridge has passed the Prowlarr/Arr precheck. Keep
+   retained services running.
 3. Apply the saved editor change removing DavDebrid runtime dependencies and
    adding/replacing SchröDrive with the approved digest, mounts, network,
    environment, healthcheck, and preserved ports.
@@ -169,7 +183,8 @@ mount, health, Review, Arr, Plex, and Jellyfin observations.
 | Duplicate/retry | Already-imported/duplicate item is idempotent; transient errors retry; permanent errors are visible in Review | Pause intake and use rollback criteria |
 | Review acceptance gate | On the candidate stack, create unmatched and ambiguous items; verify GUI list/detail, override, audit, SQLite persistence, retry/resume after restart, and added/changed/deleted events with subtitles | Do not authorize PR; pause/rollback candidate validation |
 | Plex/Jellyfin | Expected library scan/visibility smoke checks pass without duplicate or missing entries | Do not unfreeze requests; roll back if not resolved |
-| DavDebrid removal | No final runtime service, webhook, or source-snapshot dependency remains | Abort cutover; restore saved version |
+| Legacy removal | No final runtime `davdebrid`, `davdebrid-plexparser`, `cinecircle-parser`, or `cinecircle-webhook` service/dependency remains; retained services and ports are unchanged | Abort cutover; restore saved version |
+| rdtclient replacement | Prowlarr and Arr accept SchröDrive’s qBittorrent-compatible bridge before its `/data/db` and `/data/downloads` mounts are removed | Keep `rdtclient`; abort removal and restore saved version |
 
 ### Explicit success/failure criteria
 
