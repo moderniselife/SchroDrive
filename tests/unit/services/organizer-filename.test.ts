@@ -5,6 +5,7 @@ import path from "path";
 import { config } from "../../../src/core/config";
 import {
   computeTarget,
+  applyOrganizerReviewOverride,
   makeSymlink,
   resolveCollisionTarget,
   selectOrganizerFilename,
@@ -86,5 +87,32 @@ describe("Organizer filename mode", () => {
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
+  });
+
+  test("applies an accepted movie review override before target computation", () => {
+    const unresolved: Parsed = { type: "unknown", ext: ".mkv" };
+    const resolved = applyOrganizerReviewOverride(
+      unresolved,
+      { kind: "movie", title: "Resolved Film", year: 2024 },
+      "release.mkv",
+    );
+    expect(resolved).toEqual({ type: "movie", title: "Resolved Film", year: 2024, ext: ".mkv" });
+  });
+
+  test("applies an accepted episode review override with season and episode", () => {
+    const unresolved: Parsed = { type: "unknown", ext: ".mkv" };
+    const resolved = applyOrganizerReviewOverride(
+      unresolved,
+      { kind: "episode", title: "Resolved Show", year: 2023, season: 2, episode: 4 },
+      "release.mkv",
+    );
+    expect(resolved).toMatchObject({
+      type: "tv",
+      show: "Resolved Show",
+      year: 2023,
+      season: 2,
+      episode: 4,
+      ext: ".mkv",
+    });
   });
 });

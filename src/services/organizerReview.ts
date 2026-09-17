@@ -55,6 +55,11 @@ function keyFor(sourcePath: string): string {
   return Buffer.from(sourcePath).toString("base64url").slice(0, 48);
 }
 
+/** Returns the persisted review decision for one source path, if present. */
+export function getOrganizerReview(sourcePath: string): OrganizerReviewEntry | undefined {
+  return listOrganizerReviews(true).find((entry) => entry.id === keyFor(sourcePath));
+}
+
 function parseStoredJson<T>(value: string | null | undefined): T | undefined {
   if (!value) return undefined;
   try { return JSON.parse(value) as T; }

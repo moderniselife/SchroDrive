@@ -3,6 +3,7 @@ import { getDb } from "../../../src/core/db";
 import {
   clearOrganizerReviews,
   decideOrganizerReview,
+  getOrganizerReview,
   listOrganizerReviewAudit,
   listOrganizerReviews,
   recordOrganizerReview,
@@ -56,6 +57,18 @@ describe("Organizer review queue", () => {
     expect(() => validateReviewOverride({ title: "" })).toThrow();
     expect(() => validateReviewOverride({ unexpected: true })).toThrow();
     expect(validateReviewOverride(undefined)).toBeUndefined();
+  });
+
+  test("retrieves an accepted override by source path", () => {
+    clearOrganizerReviews();
+    const entry = recordOrganizerReview("/mount/Needs Review.mkv", parsed);
+    decideOrganizerReview(entry.id, "accepted", { title: "Resolved Film", year: 2024, kind: "movie" });
+    expect(getOrganizerReview("/mount/Needs Review.mkv")?.override).toEqual({
+      title: "Resolved Film",
+      year: 2024,
+      kind: "movie",
+    });
+    clearOrganizerReviews();
   });
 
   test("isolates malformed persisted JSON from the review API data", () => {

@@ -24,7 +24,7 @@ import { config } from "../core/config";
 import { classifyTorrent } from "../core/mediaClassifier";
 import { getWebdavOrganiserRoots } from "./mount";
 import { parseMediaFilename, selectMediaCandidate } from "./mediaParser";
-import { recordOrganizerReview } from "./organizerReview";
+import { getOrganizerReview, recordOrganizerReview, type ReviewOverride } from "./organizerReview";
 
 // ===========================================================================
 // Types & Constants
@@ -185,6 +185,34 @@ export interface Parsed {
   absolute?: number;
   /** File extension including the dot (e.g. ".mkv"). */
   ext: string;
+}
+
+/** Apply a persisted manual identity decision without changing release names. */
+export function applyOrganizerReviewOverride(parsed: Parsed, override: ReviewOverride, sourceBasename: string): Parsed {
+  const type = override.kind === "movie"
+    ? "movie"
+    : override.kind === "episode"
+      ? "tv"
+      : parsed.type;
+  const title = override.title?.trim();
+  const year = override.year ?? parsed.year;
+  const ext = parsed.ext || path.extname(sourceBasename);
+
+  if (type === "movie") {
+    return { type: "movie", title: title || parsed.title, year, ext };
+  }
+  if (type === "tv") {
+    return {
+      type: "tv",
+      show: title || parsed.show,
+      year,
+      season: override.season ?? parsed.season,
+      episode: override.episode ?? parsed.episode,
+      absolute: parsed.absolute,
+      ext,
+    };
+  }
+  return parsed;
 }
 
 /**
@@ -971,6 +999,11 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
   for (const src of files) {
     const base = path.basename(src);
     const structuredIdentity = parseMediaFilename(base, src);
+    const persistedReview = getOrganizerReview(src);
+    if (persistedReview?.decision === "dismissed") {
+      unknownCount++;
+      continue;
+    }
     let parsed = enrichWithStructuredIdentity(parseFilename(base, src), base, src);
 
     // Enrich parsed results with metadata from external APIs
@@ -1026,6 +1059,10 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
           }
         } catch {}
       }
+    }
+
+    if (persistedReview?.decision === "accepted" && persistedReview.override) {
+      parsed = applyOrganizerReviewOverride(parsed, persistedReview.override, base);
     }
 
     if (parsed.type === "movie") movieCount++; else if (parsed.type === "tv") tvCount++; else {
