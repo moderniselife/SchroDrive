@@ -74,15 +74,18 @@ must be exactly `italian` and `720p,480p,scr,cam,unknown`.
   observed the Riven filter in the generated request, but exposed an
   output-contract gap: current Torrentio rows contain `infoHash` and
   `behaviorHints`, not a top-level `url`. The candidate therefore uses the
-  supported Cardigann `infohash` field and must be revalidated with a sanitized
-  fixture before installation.
+  supported Cardigann `infohash` field. A sanitized local HTTP fixture then
+  accepted a movie request and Prowlarr parsed the row successfully.
 
 ## Acceptance checks before installation
 
 1. Validate the YAML against the installed Prowlarr custom-definition schema
    (completed in the isolated runtime check above).
-2. Confirm JSON with a `streams` array for one movie and one episode fixture.
-3. Confirm generated requests contain all three Riven filter clauses in order.
+2. Confirm JSON with a `streams` array for one movie and one episode fixture
+   (movie path completed; episode path remains a separate acceptance check).
+3. Confirm generated requests contain all three Riven filter clauses in order
+   (completed against the local fixture; separators and comma list were URL
+   encoded by Prowlarr).
 4. Confirm Movies/TV and IMDb, season, and episode mappings survive into
    Torznab results.
 5. Install only through the existing Prowlarr configuration, preserving its

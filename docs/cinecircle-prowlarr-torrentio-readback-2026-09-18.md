@@ -83,14 +83,16 @@ invalid-definition error. A subsequent read-only validation reached the
 definition request and preserved the three Riven clauses, but parsing failed
 because the response has no top-level `url`; it exposes `infoHash` and
 `behaviorHints` instead. The fixture now maps `infohash` and omits the
-incompatible `download` selector. The disposable container and temporary
-config were removed after the check. The active `prowlarr` instance was not
-touched.
+incompatible `download` selector. A second disposable Prowlarr instance used
+a sanitized local HTTP response; Prowlarr accepted the row and the mock
+recorded this request path:
+`/sort=qualitysize%7Clanguage=italian%7Cqualityfilter=720p%2C480p%2Cscr%2Ccam%2Cunknown/stream/movie/<fixture-id>.json`.
+The disposable container, mock server, and temporary config were removed
+after the check. The active `prowlarr` instance was not touched.
 
-This proves that the definition is loadable and that filter serialization is
-correct. A sanitized response fixture still must prove that Prowlarr accepts
-the `infohash` download identity and that result fields satisfy the Riven
-policy before installation.
+This proves that the definition is loadable, filter serialization is correct,
+and `infohash` is accepted as the download identity. The episode path and a
+real provider/fixture corpus remain approval-gated before installation.
 
 ## Comet assessment
 
@@ -108,9 +110,9 @@ implementation of the Riven-preserving proposal.
 
 - Prowlarr configuration before/after: identical; no write was issued.
 - Existing indexers, including MIRCrew, remain unchanged.
-- Torrentio: not present; the repository Cardigann candidate is loadable, but
-  installation remains blocked pending sanitized response-fixture validation
-  of the `infohash` download identity.
+- Torrentio: not present; the repository Cardigann candidate is loadable and
+  passes the sanitized movie fixture, but installation remains blocked pending
+  episode-path validation and explicit approval for provider/fixture testing.
 - Backup: complete and checksummed above.
 - No additional service, DNS record, Portainer stack, or container was
   touched.
