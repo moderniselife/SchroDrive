@@ -65,8 +65,6 @@ search:
       text: "{{ if .Query.Season }}TV{{ else }}Movies{{ end }}"
     infohash:
       selector: infoHash
-    download:
-      selector: url
     size:
       selector: title
       optional: true

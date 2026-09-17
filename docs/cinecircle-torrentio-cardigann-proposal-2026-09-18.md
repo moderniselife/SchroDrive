@@ -45,7 +45,7 @@ existing `1337x-byparr.yml` demonstrates that custom definitions are supported.
 | Year | Four-digit year extracted from stream title when present |
 | Info hash | Stream `infoHash` |
 | Size/seeders | Extract from stream title where Torrentio emits them |
-| Download | Preserve the emitted magnet/stream URL; no provider-side write |
+| Download | Use the emitted `infoHash` as the Cardigann download identity; current Torrentio rows do not expose a top-level `url` |
 
 The request template must always construct the filter as:
 
@@ -70,8 +70,12 @@ must be exactly `italian` and `720p,480p,scr,cam,unknown`.
 - The candidate was loaded in an isolated Prowlarr 2.5.2.5491 container using
   a minimal configuration with no live credentials and no network access. The
   API schema contained the `torrentio`/`Torrentio` definition, and the runtime
-  log contained no invalid-definition error. This verifies definition loading,
-  not live Torrentio availability or result quality.
+  log contained no invalid-definition error. A separate read-only validation
+  observed the Riven filter in the generated request, but exposed an
+  output-contract gap: current Torrentio rows contain `infoHash` and
+  `behaviorHints`, not a top-level `url`. The candidate therefore uses the
+  supported Cardigann `infohash` field and must be revalidated with a sanitized
+  fixture before installation.
 
 ## Acceptance checks before installation
 

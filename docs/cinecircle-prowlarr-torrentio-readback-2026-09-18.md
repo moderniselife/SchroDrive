@@ -79,13 +79,18 @@ The repository candidate `docs/fixtures/torrentio-riven-filter.yml` was
 mounted into a disposable Prowlarr `2.5.2.5491` container with a minimal,
 credential-free configuration and `--network none`. The local API schema
 returned a `torrentio`/`Torrentio` definition and the runtime log had no
-invalid-definition error. The disposable container and temporary config were
-removed after the check. The active `prowlarr` instance was not touched.
+invalid-definition error. A subsequent read-only validation reached the
+definition request and preserved the three Riven clauses, but parsing failed
+because the response has no top-level `url`; it exposes `infoHash` and
+`behaviorHints` instead. The fixture now maps `infohash` and omits the
+incompatible `download` selector. The disposable container and temporary
+config were removed after the check. The active `prowlarr` instance was not
+touched.
 
-This proves that the proposed Cardigann definition is loadable by the installed
-Prowlarr version. It does not prove that Torrentio is reachable, that its
-current JSON remains compatible, or that search results satisfy the Riven
-policy; those require an explicitly approved live/fixture connection test.
+This proves that the definition is loadable and that filter serialization is
+correct. A sanitized response fixture still must prove that Prowlarr accepts
+the `infohash` download identity and that result fields satisfy the Riven
+policy before installation.
 
 ## Comet assessment
 
@@ -103,7 +108,9 @@ implementation of the Riven-preserving proposal.
 
 - Prowlarr configuration before/after: identical; no write was issued.
 - Existing indexers, including MIRCrew, remain unchanged.
-- Torrentio: not present; blocker is missing native/custom compatible adapter.
+- Torrentio: not present; the repository Cardigann candidate is loadable, but
+  installation remains blocked pending sanitized response-fixture validation
+  of the `infohash` download identity.
 - Backup: complete and checksummed above.
 - No additional service, DNS record, Portainer stack, or container was
   touched.
