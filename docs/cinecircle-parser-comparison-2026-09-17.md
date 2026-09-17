@@ -23,7 +23,11 @@ by a braced or bracketed marker. The structured result retained the movie
 classification but could lose the separate year and become ambiguous. The
 recommended fix is to strip trailing marker tokens before extracting a
 parenthesized year. The 13 acceptable cases were punctuation/spacing
-normalizations with equivalent identity.
+normalizations at the parser-strategy level; all compared identity fields were
+equal.
+
+For the detailed sanitized taxonomy, see
+`cinecircle-parser-mismatch-assessment-2026-09-17.md`.
 
 ## Harness and safety
 
