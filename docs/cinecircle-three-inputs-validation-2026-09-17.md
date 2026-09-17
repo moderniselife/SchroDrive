@@ -3,6 +3,21 @@
 Read-only/fork-test validation, 2026-09-17. No production, DNS, Portainer,
 AllDebrid, Seerr, Arr, or media-server state was mutated.
 
+## Input boundary verification
+
+The isolated runtime was started with `RUN_WEBHOOK=true` and all pollers,
+mounts, and Arr bridge disabled. `/health` returned HTTP 200 and a sanitized
+Seerr fixture reached `POST /webhook/overseerr`. Because no indexer or provider
+was configured in this test container, the endpoint returned its expected
+HTTP 503 configuration response before starting asynchronous search/provider
+work. This proves the optional Seerr/Overseerr inbound route is distinct from
+the AllDebrid integration.
+
+`RUN_WEBHOOK=false` therefore disables only this SchröDrive inbound Seerr
+route. The AllDebrid worker remains an internal status/file-tree polling
+reconciler and does not consume or emit an AllDebrid provider webhook.
+DavDebrid and its outbound webhook are not part of the target system.
+
 ## Arr contract probes
 
 Using the running isolated test services with redacted `X-Api-Key` values,
@@ -74,6 +89,13 @@ The complete isolated suite also passes: 101 tests, 0 failures, 224
 expectations across 18 files. It ran in Docker with `--network none`, with the
 repository mounted read-only and provider/service integrations disabled; no
 real AllDebrid, Riven, Arr, Seerr, or production calls were made.
+
+The direct worker tests use a mock AllDebrid source and mock Arr HTTP contract;
+the HTTP client asserts `POST /api/v3/command` and
+`GET /api/v3/command/{id}` with the Movies/Shows command names, path, API-key
+header, retries, and terminal command status. The same harness covers
+subtitles in the event tree, add/change/delete, deduplication, persistence,
+and Review handoff.
 
 Focused TypeScript compilation of the changed provider, worker, and fork tests
 also passes. `git diff --check` is required before commit.

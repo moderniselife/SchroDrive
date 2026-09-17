@@ -6,6 +6,12 @@ or fixture provider responses. Review is exercised only for unresolved cases.
 The direct-provider adapter described below is CineCircle-specific fork scope,
 not upstream PR material.
 
+Input boundary note: `RUN_WEBHOOK=true` enables only SchröDrive’s inbound
+`POST /webhook/overseerr` endpoint for optional Seerr/Overseerr notifications.
+It does not enable an AllDebrid webhook. The AllDebrid path is an internal
+polling/API reconciliation worker and has no provider webhook dependency.
+DavDebrid and its outbound webhook are removed from the target architecture.
+
 ## A — historical library import
 
 1. Freeze a fixture inventory representing existing Riven library records and
@@ -94,6 +100,13 @@ The fixture-only three-input harness is
 parser/classifier boundary, Seerr-shaped movie/TV requests into both Arr scan
 commands, and the direct AllDebrid event through Arr command completion. It
 does not contact Seerr, AllDebrid, Arr, media servers, or production.
+
+The runtime route probe starts the isolated server with `RUN_WEBHOOK=true`,
+posts a sanitized Seerr fixture to `/webhook/overseerr`, and verifies the
+endpoint is present. With no indexer/provider configured it correctly returns
+503 before any search or provider operation. The positive Seerr-to-Arr
+contract is tested with the fixture/mock transport; the AllDebrid worker is
+tested separately through its internal source and mock Arr HTTP boundary.
 
 Use the repository’s parser harness references in
 `cinecircle-parser-provenance-2026-09-17.md`; both harnesses must consume one
