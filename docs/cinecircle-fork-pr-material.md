@@ -15,12 +15,20 @@ provider records, identifiers, secrets, manifests, or runtime databases.
   boundary. Arr remains responsible for metadata matching and import.
 - Keep DavDebrid and its outbound webhook out of the final architecture.
 
+The generic Review workflow is a separate conditional upstream candidate:
+`organizerReview.ts`, its persistence/audit behavior, safe override/resume
+logic, generic server routes, Review pages, and their tests. The fork keeps
+only the CineCircle adapter handoff, AllDebrid/Arr correlation, local intake
+tables, and environment-specific wiring.
+
 ## Validation evidence
 
 - Three-input isolated harness: 13 passing tests.
 - Full isolated repository suite: 105 passing tests, 0 failures, 234
   assertions across 19 files.
 - Review UI/API report: `docs/review-validation-report.md`.
+- Review upstream assessment: `docs/cinecircle-pr-assessment-2026-09-17.md`,
+  section “Review workflow upstream assessment”.
 - Detailed fork validation: `docs/cinecircle-three-inputs-validation-2026-09-17.md`.
 - Test compose wiring: `/home/samtruman/docker/cinecircle-test/compose.yml`,
   with `RUN_WEBHOOK=true` for the optional Seerr inbound route. The AllDebrid

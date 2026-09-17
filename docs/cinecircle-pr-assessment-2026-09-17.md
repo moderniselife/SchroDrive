@@ -20,6 +20,31 @@ or production configuration are included.
 | Current capability layer and [provider audit](provider-capability-audit-2026-09-17.md) | A candidate with provider-specific follow-up required | Pure assessment is provider-neutral and does not assume identical APIs; source audit shows only AllDebrid has recent/bounded support and no audited provider has push code | Upstream review of per-provider declarations, stable identity/tree guarantees, deletion semantics, fallback semantics, and compatibility policy | Capability matrix plus one source/fixture contract per provider before opt-in |
 | Current `docs/cinecircle-fork-pr-material.md`, matrix/report edits | C | Review packet and sanitized local requirements evidence | None | `git diff --check` and documentation review |
 
+## Review workflow upstream assessment
+
+| Commit / files | Group | Reusable scope or exclusion | Prerequisites / dependencies | Tests required |
+|---|---|---|---|---|
+| `864dd0d`; `src/services/organizerReview.ts`, `src/services/organizer.ts`, `src/core/db.ts`, `src/server.ts`, `web/src/app/(dashboard)/review/page.tsx`, `web/src/app/api/organizer/review/{route.ts,[id]/route.ts}`, `web/src/components/app-sidebar.tsx`, `tests/unit/services/organizer-review.test.ts` | A candidate | Generic persistent Review queue, parser decision states, API listing/detail/decision endpoints, and initial UI navigation; no CineCircle dependency in the implementation | Upstream schema migration policy, auth/error contract, UI design review, and compatible parser identity type | Queue persistence, deterministic dedupe, list/detail/decision API, and browser navigation tests |
+| `2bd656e`; `src/services/organizerReview.ts`, `src/services/organizer.ts`, `tests/unit/services/organizer-filename.test.ts`, `tests/unit/services/organizer-review.test.ts` | A candidate | Generic accepted-override lookup and resume behavior during organization | Define override precedence and idempotent resume semantics | Accepted movie/episode overrides, restart/resume, and unchanged source-path tests |
+| `b978804`; `src/services/organizerReview.ts`, `tests/unit/services/organizer-review.test.ts` | A candidate | Defensive handling of malformed persisted Review JSON without taking down the queue | Upstream malformed-data policy and safe fallback representation | Malformed parsed/override records, list/detail isolation, and audit continuity |
+| `f70a7af`; `src/server.ts`, `src/services/organizerReview.ts`, `tests/unit/services/organizer-review.test.ts` | A candidate | Generic override validation, bounded pagination, and API query filtering | Stable pagination contract, validation schema, and API compatibility review | Invalid decisions/overrides, pending/resolved and parser-state filters, pagination, detail, and 404/400 behavior |
+| `f8beb80`; `src/server.ts`, `src/services/organizerReview.ts`, `web/src/app/(dashboard)/review/{page.tsx,[id]/page.tsx}`, `web/src/app/api/organizer/review/{route.ts,[id]/route.ts,[id]/audit/route.ts}`, `tests/unit/services/organizer-review.test.ts` | A candidate | Generic audit endpoint, hardened decision transitions, Review detail page, and retry/resume UI | Upstream API/UI accessibility review, audit retention policy, and auth boundary | Audit ordering, retry/resume, malformed records, filters/pagination, API matrix, and browser detail/audit flows |
+| `f8beb80`; `docs/review-validation-report.md` | C | Local CineCircle runtime/port/test report, not product behavior | None; keep as fork evidence | Documentation/diff check only |
+| Any CineCircle `onReview` adapter wiring, local SQLite intake tables, test compose ports, Portainer files, runtime DBs, or provider-specific data | C | Local integration/data/environment, not a generic Review PR | CineCircle fork authorization only | Fork integration tests; never include in upstream PR |
+
+### Review PR conclusion
+
+The Review core is a strong conditional upstream candidate: persistence,
+dedupe, matched/ambiguous/unmatched state, override validation, audit trail,
+pagination, retry/resume, malformed-record tolerance, and the HTTP/UI routes
+are generic Organizer capabilities. The upstream PR must preserve the common
+parser identity contract, migration compatibility, authentication boundary,
+API pagination/error semantics, and browser accessibility coverage.
+
+The CineCircle fork should consume that core through an adapter and keep its
+AllDebrid/Arr event correlation, local Review handoff policy, CineCircle
+SQLite intake tables, ports, compose, and reports outside the upstream PR.
+
 ## Worker generalization decision
 
 The worker is a **conditional Group A candidate**, not permanently fork-only.
@@ -40,8 +65,8 @@ capability already isolated in `src/providers/alldebrid.ts`. The assessment
 does not assume identical provider APIs: it selects polling-hybrid for recent
 plus full snapshots, polling-full-only for a full snapshot only, push-only only
 when push is the sole declared option, and disabled when neither contract
-exists. Native push is not required and no hybrid push mode is imposed. A
-An upstream PR must first extract the core, define the common capability
+exists. Native push is not required and no hybrid push mode is imposed. An
+upstream PR must first extract the core, define the common capability
 contract, keep the AllDebrid adapter separate, and add a source/fixture
 contract for every provider opt-in. No existing worker behavior is changed by
 this assessment.
