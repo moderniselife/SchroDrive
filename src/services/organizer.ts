@@ -18,6 +18,7 @@
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
+import { createHash } from "crypto";
 import axios from "axios";
 import { config } from "../core/config";
 import { classifyTorrent } from "../core/mediaClassifier";
@@ -736,6 +737,34 @@ export async function makeSymlink(src: string, dst: string, dryRun: boolean, avo
 }
 
 /**
+ * Returns a deterministic alternative when an organised destination is
+ * already occupied by a different source.  The canonical prefix is kept so
+ * media servers that support versions can group the files, while the source
+ * fingerprint prevents one release from replacing another.
+ */
+export async function resolveCollisionTarget(src: string, dst: string): Promise<string> {
+  const dstDir = path.dirname(dst);
+  const ext = path.extname(dst);
+  const stem = path.basename(dst, ext);
+  const fingerprint = createHash("sha1").update(src).digest("hex").slice(0, 8);
+  let candidate = dst;
+
+  for (let index = 0; index < 100; index += 1) {
+    const st = await fsp.lstat(candidate).catch(() => null);
+    if (!st) return candidate;
+    if (st.isSymbolicLink()) {
+      const current = await fsp.readlink(candidate).catch(() => "");
+      if (path.resolve(path.dirname(candidate), current) === src) return candidate;
+    }
+
+    const suffix = index === 0 ? ` - ${fingerprint}` : ` - ${fingerprint}-${index}`;
+    candidate = path.join(dstDir, `${stem}${suffix}${ext}`);
+  }
+
+  throw new Error(`unable to allocate collision-safe organizer target for ${dst}`);
+}
+
+/**
  * Recursively walks a directory tree, collecting absolute paths of video files.
  * Handles symlinks by falling back to `stat` when `withFileTypes` doesn't resolve.
  *
@@ -1011,7 +1040,11 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
     const dst = computeTarget(parsed, base, src);
     if (!dst) continue;
 
-    await makeSymlink(src, dst, dryRun, config.organizerFilenameMode === "original");
+    // Never replace a different release at the same organised destination.
+    // The suffix is only used on collision, so the existing canonical/original
+    // naming remains unchanged for the common case.
+    const safeDst = dryRun ? dst : await resolveCollisionTarget(src, dst);
+    await makeSymlink(src, safeDst, dryRun, true);
     processed++;
   }
 

@@ -6,6 +6,7 @@ import { config } from "../../../src/core/config";
 import {
   computeTarget,
   makeSymlink,
+  resolveCollisionTarget,
   selectOrganizerFilename,
   type Parsed,
 } from "../../../src/services/organizer";
@@ -61,6 +62,27 @@ describe("Organizer filename mode", () => {
       await makeSymlink(first, destination, false, true);
       await makeSymlink(second, destination, false, true);
       expect(await fs.readlink(destination)).toBe(path.relative(path.dirname(destination), first));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("allocates a deterministic version target for a canonical collision", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "schro-organizer-"));
+    try {
+      const destination = path.join(root, "organized", "Example Film (2024).mkv");
+      const first = path.join(root, "release-a.mkv");
+      const second = path.join(root, "release-b.mkv");
+      await makeSymlink(first, destination, false, true);
+
+      const alternative = await resolveCollisionTarget(second, destination);
+      expect(alternative).not.toBe(destination);
+      expect(alternative).toContain("Example Film (2024) - ");
+      await makeSymlink(second, alternative, false, true);
+
+      expect(await fs.readlink(destination)).toBe(path.relative(path.dirname(destination), first));
+      expect(await fs.readlink(alternative)).toBe(path.relative(path.dirname(alternative), second));
+      expect(await resolveCollisionTarget(second, destination)).toBe(alternative);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
