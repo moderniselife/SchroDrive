@@ -25,8 +25,10 @@ In Portainer, inspect the `cinecircle` stack and record:
 4. Free space on the data and Portainer storage paths, plus the location and
    recoverability of a backup/snapshot of the real SchröDrive data.
 5. The candidate digest and test evidence: valid test compose, healthy
-   `schrodrive-test`, 88 passing tests, 13 passing existing E2E tests, and
-   passing Review GUI/API matrix on test ports `8979`, `8980`, and `8981`.
+   `schrodrive-test`, 105 passing tests with 234 assertions, 17 passing
+   capability/fork E2E tests, and the passing Review GUI/API matrix on test
+   ports `8979`, `8980`, and `8981`. The provider evidence is recorded in
+   `docs/provider-capability-audit-2026-09-17.md`.
 6. Confirm the final candidate stack contains no `davdebrid` or
    `davdebrid-plexparser` service and no external DavDebrid webhook or
    source-snapshot dependency. AllDebrid polling, snapshot diff,
@@ -93,10 +95,11 @@ Target wiring, in order of dependency:
    this path is intentionally owned by SchröDrive. It is `POST
    /webhook/overseerr`; it is unrelated to AllDebrid notifications.
 3. The AllDebrid fork worker is enabled only through explicit fork
-   configuration. It polls AllDebrid status and file trees internally,
-   persists snapshots/cursors, retains video plus subtitle siblings, and
-   emits added/changed/deleted events. It does not use DavDebrid or a provider
-   webhook.
+   configuration as the `polling-hybrid` capability: frequent recent checks
+   when available plus periodic full status/file-tree scans, with local
+   snapshot/diff authority for added/changed/deleted events. It persists
+   snapshots/cursors, retains video plus subtitle siblings, and does not use
+   DavDebrid or a provider webhook.
 4. Movies events route to Radarr and Shows events to Sonarr. SchröDrive sends
    the Arr command, polls its command ID, persists correlation/idempotency, and
    sends permanent failures to Review. Arr performs metadata matching/import.
