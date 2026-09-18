@@ -1,7 +1,7 @@
 # CineCircle library validation stack
 
-Read-only preparation record, 2026-09-18. No Portainer stack was created or
-started in this phase. The existing stack and all current services remain
+Validation record, 2026-09-18. The new stack was created and started through
+the Portainer API only. The existing stack and all current services remain
 unchanged.
 
 ## Portainer identity and blockers
@@ -15,11 +15,13 @@ unchanged.
   the local Portainer database snapshot. The old stack must not be renamed or
   stopped based on those aliases.
 - A second stack cannot safely use the existing name `cinecircle`; the
-  proposed non-conflicting Portainer name is `cinecircle-validation` pending
-  owner confirmation.
-- Portainer API authentication was not available to this session. The stack
-  was therefore not saved, deployed, restarted, or edited. Docker Compose was
-  not used as a deployment substitute.
+  non-conflicting validation stack is `cinecircle-validation`, ID `88`.
+- Portainer pre-create state was saved locally under
+  `/home/samtruman/backups/portainer-pre-cinecircle-validation-20260918/`.
+  The saved stack-77 source and Portainer stack metadata are local rollback
+  evidence; no token or secret is included in this report.
+- The new stack was created with the Portainer standalone-string API on
+  endpoint `3`; no external Compose deployment was used.
 
 ## Read-only media inventory
 
@@ -35,17 +37,28 @@ Sanitized host-side inventory, obtained without opening or changing media:
 | Shows | 44 | 437 | included in total |
 | Combined | 206 | 608 | 599 |
 
-There are 612 symlinks and 9 subtitle files with the supported extensions
-counted by the read-only inventory. No recognition, import, rename, or
-classification result is claimed because the isolated Portainer stack could
-not be created.
+There are 612 symlinks and 9 subtitle files with the supported extensions.
+The parser scan used the same read-only mounts and completed without content
+writes:
 
-## Portainer editor proposal (not saved)
+| Result | Count |
+|---|---:|
+| Video files scanned | 599 |
+| Matched films | 142 |
+| Matched series episodes | 428 |
+| Recognized series | 40 |
+| Recognized seasons | 63 |
+| Recognized episodes (unique identity) | 396 |
+| Ambiguous | 29 |
+| Unmatched | 0 |
 
-Create a new Portainer Docker Compose stack named
-`cinecircle-validation`, only after confirming the name and authenticating in
-Portainer. It should contain only SchröDrive, one Radarr, and one Sonarr for
-the first validation pass, with separate storage locations:
+The 29 ambiguous items all had the sanitized reason `title heuristic without
+year`. No real titles or paths were persisted in the report.
+
+## Portainer stack and readback
+
+The created stack contains only SchröDrive, one Radarr, and one Sonarr, with
+separate storage locations:
 
 | Component | Separate host config/state | Proposed host port |
 |---|---|---:|
@@ -68,22 +81,31 @@ download request. Prowlarr/Torrentio configuration should only be read back
 or connected after the stack exists; it must not alter Mircrew or the active
 indexer set.
 
+Readback PASS:
+
+- SchröDrive health: HTTP 200; container healthy.
+- Radarr and Sonarr ping: HTTP 200.
+- qBittorrent-compatible bridge: version `4.6.7`.
+- Radarr movie records: `0`; Sonarr series records: `0`.
+- Radarr download clients: `0`; Sonarr download clients: `0`.
+- All media mounts are read-only; only the separate config/data paths are
+  writable.
+- Requested host ports `8970`, `8971`, `8972`, `7877`, and `8988` were free
+  before creation and are now bound only by stack ID `88`.
+
 ## Required validation after authorization
 
-1. Confirm the Portainer stack name and save the pre-create Portainer state.
-2. Create and start the new stack through Portainer only.
-3. Verify health and that ports `8970`, `8971`, `8972`, `7877`, and `8988`
-   do not conflict with existing services.
-4. Configure Arr roots against the read-only library only for scan/readback;
+1. Preserve the saved Portainer pre-create state.
+2. Keep Arr roots limited to the read-only library for scan/readback;
    do not issue import, rename, download, or delete commands.
-5. Run the library scan and record file count, recognized films, recognized
+3. Run the library scan and record file count, recognized films, recognized
    series/seasons/episodes, unmatched items, ambiguous items, and sanitized
    reason classes.
-6. Verify the old `cinecircle` stack, Plex `32400`, Jellyfin `8096`, and all
+4. Verify the old `cinecircle` stack, Plex `32400`, Jellyfin `8096`, and all
    other existing services are unchanged.
-7. Roll back by removing only the new validation stack through Portainer if
+5. Roll back by removing only stack ID `88` through Portainer if
    validation fails; do not touch stack ID `77`.
 
-The production cutover remains blocked. A Portainer credential/session and
-owner confirmation of the distinct validation stack name are required before
-creation.
+Rollback was not exercised because it would remove the validation stack;
+the saved Portainer state and stack ID provide the rollback boundary. The
+production cutover remains blocked and was not attempted.
