@@ -55,6 +55,35 @@ writes:
 The 29 ambiguous items all had the sanitized reason `title heuristic without
 year`. No real titles or paths were persisted in the report.
 
+## Historical Riven parser comparison
+
+The same frozen 599-item manifest was fed to SchröDrive's
+`src/services/mediaParser.ts` and to the historical Riven contract in
+`/home/samtruman/docker/cinecircle/mediabridge-riven/src/media_parser.py`,
+which uses `plex_parser_v2.py` as its fallback. The optional modern sidecar
+was disabled, so this is a comparison against the historical parser rather
+than the raw CineCircle sidecar.
+
+| Comparison result | Count | Percentage |
+|---|---:|---:|
+| Exact shared identity fields | 526 | 87.81% |
+| Acceptable title normalization | 44 | 7.35% |
+| Mismatch | 29 | 4.84% |
+| Total | 599 | 100% |
+
+Both parsers agreed on classification for all items: 171 films and 428
+series episodes. They also agreed on season/episode fields for every series
+item. All 29 mismatches were Movies and differed in title/year; they map to
+the 29 SchröDrive ambiguous results with reason `title heuristic without
+year`, while Riven's Plex fallback classified them as movies using the
+library folder context. No series classification or episode-number mismatch
+was observed.
+
+The 44 acceptable cases preserve classification, year, and season/episode
+identity while differing only in title spelling/punctuation normalization.
+The raw manifest and parser JSON outputs remain local under `/tmp` and are
+not versioned or included in this report.
+
 ## Portainer stack and readback
 
 The created stack contains only SchröDrive, one Radarr, and one Sonarr, with
