@@ -71,6 +71,32 @@ contract, keep the AllDebrid adapter separate, and add a source/fixture
 contract for every provider opt-in. No existing worker behavior is changed by
 this assessment.
 
+### 2026-09-18 validation update
+
+The Cardigann Torrentio definition and Prowlarr installation are CineCircle
+integration material, not a SchröDrive upstream change. The real read-only
+Prowlarr probes passed for one film and one series episode, and the isolated
+Prowlarr-to-Radarr/Sonarr synchronization passed without changing Mircrew or
+the other existing indexers. The definition is useful as fork evidence; any
+upstream proposal would belong to the indexer-definition project and would
+need its own generic review.
+
+The worker remains a conditional upstream candidate. The upstreamable part is
+the provider-neutral reconciliation seam plus the capability contract; the
+AllDebrid client is a separate first adapter. The provider audit is the
+prerequisite for each additional opt-in and does not require native push or a
+hybrid-push mode. Two-Arr routing, local Review handoff, the CineCircle
+SQLite schema, and CineCircle test-stack wiring remain fork-only.
+
+The generic Review persistence, audit, override validation, pagination, and
+resume behavior remain conditional upstream candidates as listed above. The
+local Review acceptance run is still a mandatory gate before any PR is opened.
+The current isolated suite is green at 105/105 tests; remaining blockers are
+the installed Sonarr version's lack of an active Italian language-profile
+field, the absence of a real-provider staging import in the no-provider test
+stack, and production authorization/data-mount confirmation for any future
+cutover. No PR is opened or pushed by this assessment.
+
 The complete provider audit is in
 `docs/provider-capability-audit-2026-09-17.md`. It confirms that the common
 interface does not prove identical provider APIs: AllDebrid is the only client

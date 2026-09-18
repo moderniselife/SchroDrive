@@ -61,8 +61,14 @@ search:
       filters:
         - name: regexp
           args: "\\b(19|20)\\d{2}\\b"
+    category_is_tv_show:
+      selector: title
+      optional: true
+      filters:
+        - name: regexp
+          args: "\\b([Ss]\\d+(?:[Ee]\\d+)?)\\b"
     category:
-      text: "{{ if .Query.Season }}TV{{ else }}Movies{{ end }}"
+      text: "{{ if .Result.category_is_tv_show }}TV{{ else }}Movies{{ end }}"
     infohash:
       selector: infoHash
     size:
