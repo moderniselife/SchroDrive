@@ -67,11 +67,9 @@ only `1337x-byparr.yml`; no Torrentio definition is available. No custom
 Torznab contract for the Riven Stremio URL was present in the inspected
 configuration.
 
-Result: **Torrentio was not added**. The closest supported path would require
-an installed Prowlarr indexer definition that speaks Torrentio’s Stremio
-contract, or a separately verified Torznab-compatible intermediary. Neither
-is present, so creating a custom definition or translating fields would be an
-unsupported assumption.
+Result before installation: **Torrentio was not present**. The repository
+Cardigann candidate was then installed after explicit authorization; the
+active readback is recorded below.
 
 ## Isolated candidate validation
 
@@ -114,14 +112,23 @@ implementation of the Riven-preserving proposal.
 
 ## Difference and final readback
 
-- Prowlarr configuration before/after: identical; no write was issued.
-- Existing indexers, including MIRCrew, remain unchanged.
-- Torrentio: not present; the repository Cardigann candidate is loadable and
-  passes the sanitized movie fixture, but installation remains blocked pending
-  episode-path validation and explicit approval for provider/fixture testing.
+- Fresh backup before installation:
+  `/home/samtruman/backups/cinecircle-prowlarr-install-20260918/prowlarr-config-before-torrentio.tgz`
+  SHA-256 `2a130c7e0e35bfbb8548ce06c7ebd1b21589ca5dd8b0005c35670341a221c639`.
+- The definition was copied to the existing custom-definition directory and
+  only `prowlarr` was restarted; no other container was recreated or restarted.
+- New active indexer: ID `9`, name `Torrentio (Riven filters)`, enabled,
+  implementation `Cardigann`, definition `torrentio-riven-filter`.
+- App profile: `Standard` / ID `1`; download client: `0` (unassigned).
+- Base URL: `https://torrentio.strem.fun/`.
+- Readback defaults: `language=italian`,
+  `qualityfilter=720p,480p,scr,cam,unknown`.
+- The seven pre-existing indexers, including MIRCrew, retained the same
+  name/enabled/implementation values and IDs.
+- No invalid-definition error appeared. An existing unrelated FlareSolverr
+  proxy warning remains in the Prowlarr log.
 - Backup: complete and checksummed above.
-- No additional service, DNS record, Portainer stack, or container was
-  touched.
+- No additional service, DNS record, Portainer stack, or container was touched.
 
-Catalog and cutover remain blocked on an approved, supported Torrentio
-integration path. No invented Prowlarr values were applied.
+The Torrentio integration is now installed in the existing Prowlarr instance.
+Catalog/cutover remain separate decisions; no invented values were applied.
