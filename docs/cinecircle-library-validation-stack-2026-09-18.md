@@ -55,34 +55,54 @@ writes:
 The 29 ambiguous items all had the sanitized reason `title heuristic without
 year`. No real titles or paths were persisted in the report.
 
-## Historical Riven parser comparison
+## Riven vs Radarr/Sonarr catalog comparison
 
-The same frozen 599-item manifest was fed to SchröDrive's
-`src/services/mediaParser.ts` and to the historical Riven contract in
+The earlier SchröDrive-vs-Riven parser comparison is superseded and is not
+used for this validation. The frozen 599-item manifest was compared only with
+the catalog state of the new validation-stack Arr instances. The Riven
+baseline was the historical contract at
 `/home/samtruman/docker/cinecircle/mediabridge-riven/src/media_parser.py`,
-which uses `plex_parser_v2.py` as its fallback. The optional modern sidecar
-was disabled, so this is a comparison against the historical parser rather
-than the raw CineCircle sidecar.
+using its `plex_parser_v2.py` fallback with the optional modern sidecar
+disabled.
 
-| Comparison result | Count | Percentage |
-|---|---:|---:|
-| Exact shared identity fields | 526 | 87.81% |
-| Acceptable title normalization | 44 | 7.35% |
-| Mismatch | 29 | 4.84% |
-| Total | 599 | 100% |
+The validation stack was updated through Portainer stack 88 after saving the
+pre-change compose at `/tmp/cinecircle-validation-stack-before-rw.json`.
+Only the Arr media mounts changed from read-only to read-write; SchröDrive,
+the AllDebrid mount, production stack 77, and other services were untouched.
+The Arr container paths are `/media/Movies` and `/media/Shows`, mapped from
+the host paths `/mnt/riven/Movies` and `/mnt/riven/Shows`.
 
-Both parsers agreed on classification for all items: 171 films and 428
-series episodes. They also agreed on season/episode fields for every series
-item. All 29 mismatches were Movies and differed in title/year; they map to
-the 29 SchröDrive ambiguous results with reason `title heuristic without
-year`, while Riven's Plex fallback classified them as movies using the
-library folder context. No series classification or episode-number mismatch
-was observed.
+Radarr 6.3.0.10514 and Sonarr 4.0.19.2979 then registered those roots and
+cataloged with native TMDB/TVDB lookup. All created records had
+`monitored=false`, `searchForMovie=false` or the Sonarr v4 equivalent search
+flags false, and both download-client lists remained empty. No download,
+rename, move, or delete was requested. Rescan commands were submitted and
+Radarr completed its queue. Sonarr progressed but stalled with a sanitized
+operational state of 14 queued and 3 started commands; the local polling job
+was stopped after the required no-progress timeout, without changing the Arr
+containers.
 
-The 44 acceptable cases preserve classification, year, and season/episode
-identity while differing only in title spelling/punctuation normalization.
-The raw manifest and parser JSON outputs remain local under `/tmp` and are
-not versioned or included in this report.
+| Comparison path | Riven inputs | Arr recognized | Missing from Arr catalog | Ambiguous reported by Arr | TMDB/IMDb association |
+|---|---:|---:|---:|---:|---|
+| Movies → Radarr | 171 (28.55%) | 138 (80.70%) | 33 (19.30%) | 0 Arr ambiguity; 10 lookup groups unresolved | Arr IDs present for 138; Riven emits none |
+| Series/episodes → Sonarr | 428 (71.45%) | 179 (41.82%) | 249 (58.18%) | 0 Arr ambiguity; 5 lookup groups unresolved | Arr IDs present for 179; Riven emits none |
+| Total | 599 (100%) | 317 (52.92%) | 282 (47.08%) | 0 Arr ambiguity | Riven emits no IDs |
+
+Riven's actual parse output classified 171 movies and 428 episodes, covering
+40 unique series, 63 series/seasons, and 396 unique series/season/episode
+identities. Its emitted fields were `type`, `title`, `show`, `year`,
+`season`, `episode`, `file`, `parser`, and `regex`; it emitted no TMDB, IMDb,
+or TVDB identity field. Among path-recognized files, the only measured shared
+field difference was title normalization for 29 Radarr files; no year or
+season/episode difference was emitted by the comparison. Arr identities are
+available on the recognized Radarr/Sonarr records, but cannot be matched to a
+Riven identity because Riven did not emit one. Arr reported no ambiguous
+catalog record; unresolved lookup groups are tracked separately as missing
+catalog candidates.
+
+The sanitized aggregate is versioned here. The 599 per-file read-only rows
+are local only at `/tmp/cinecircle-validation-riven-vs-arr-final.jsonl`; raw
+manifest, titles, paths, IDs, and runtime data are not versioned.
 
 ## Portainer stack and readback
 
