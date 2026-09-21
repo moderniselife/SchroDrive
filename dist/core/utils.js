@@ -95,7 +95,10 @@ function sleep(ms) {
  */
 function base32ToHex(b32) {
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-    const upper = b32.toUpperCase().replace(/=+$/, '');
+    let upper = b32.toUpperCase();
+    // Strip RFC4648 padding without using a regex on uncontrolled data (avoids js/polynomial-redos).
+    while (upper.endsWith('='))
+        upper = upper.slice(0, -1);
     let bits = 0;
     let value = 0;
     const bytes = [];
