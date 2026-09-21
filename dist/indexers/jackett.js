@@ -10,6 +10,8 @@ exports.getMagnet = getMagnet;
 exports.getMagnetOrResolve = getMagnetOrResolve;
 const axios_1 = __importDefault(require("axios"));
 const config_1 = require("../core/config");
+const httpClient_1 = require("../core/httpClient");
+const shared_1 = require("./shared");
 // Normalize Jackett result to match Prowlarr-like structure
 function normalizeResult(r) {
     return {
@@ -29,15 +31,16 @@ function normalizeResult(r) {
 }
 async function testJackettConnection() {
     try {
-        const base = config_1.config.jackettUrl?.replace(/\/$/, "");
+        const base = (0, shared_1.normaliseBaseUrl)(config_1.config.jackettUrl ?? "");
         if (!base || !config_1.config.jackettApiKey)
             return false;
         const started = Date.now();
-        console.log(`[${new Date().toISOString()}][jackett] testing connection to ${base}`, { timeoutMs: Math.max(5000, Math.min(config_1.config.jackettTimeoutMs || 10000, 60000)) });
+        const timeoutMs = (0, httpClient_1.requestTimeoutMs)(config_1.config.jackettTimeoutMs, 60000, 10000);
+        console.log(`[${new Date().toISOString()}][jackett] testing connection to ${base}`, { timeoutMs });
         // Jackett uses /api/v2.0/indexers/all/results for search, but we can test with /api/v2.0/server/config
         const res = await axios_1.default.get(`${base}/api/v2.0/server/config`, {
             params: { apikey: config_1.config.jackettApiKey },
-            timeout: Math.max(5000, Math.min(config_1.config.jackettTimeoutMs || 10000, 60000)),
+            timeout: timeoutMs,
         });
         console.log(`[${new Date().toISOString()}][jackett] connection test successful`, {
             ms: Date.now() - started,
@@ -59,13 +62,14 @@ async function searchJackett(query, opts) {
     if (!config_1.config.jackettUrl || !config_1.config.jackettApiKey) {
         throw new Error("Jackett not configured. Set JACKETT_URL and JACKETT_API_KEY.");
     }
-    const base = config_1.config.jackettUrl.replace(/\/$/, "");
+    const base = (0, shared_1.normaliseBaseUrl)(config_1.config.jackettUrl);
     // Jackett Torznab API endpoint - use "all" to search all indexers, or specific indexer ID
     const indexerPath = opts?.indexerIds?.length ? opts.indexerIds[0] : "all";
     const url = new URL(`/api/v2.0/indexers/${indexerPath}/results`, base);
-    const originalQuery = String(query || "");
-    const stripTmdb = (q) => q.replace(/\s*TMDB\d+\b/gi, "").replace(/\s{2,}/g, " ").trim();
-    const withoutTmdb = stripTmdb(originalQuery);
+    // Cap length before regex processing — an unbounded run of whitespace here would make
+    // \s*TMDB\d+\b (combined with the global flag) do quadratic backtracking work.
+    const originalQuery = String(query || "").slice(0, 200);
+    const withoutTmdb = (0, shared_1.stripTmdbQuery)(originalQuery);
     const usedQuery = withoutTmdb || originalQuery;
     const params = {
         apikey: config_1.config.jackettApiKey,
@@ -85,9 +89,10 @@ async function searchJackett(query, opts) {
         apikey: maskedKey,
         timeoutMs: config_1.config.jackettTimeoutMs,
     });
+    const timeoutMs = (0, httpClient_1.requestTimeoutMs)(config_1.config.jackettTimeoutMs, 120000, 15000);
     const res = await axios_1.default.get(url.toString(), {
         params,
-        timeout: Math.max(5000, Math.min(config_1.config.jackettTimeoutMs || 15000, 120000)),
+        timeout: timeoutMs,
     }).catch((err) => {
         console.error(`[${new Date().toISOString()}][jackett] request failed`, {
             query,
@@ -96,7 +101,7 @@ async function searchJackett(query, opts) {
             status: err?.response?.status,
             statusText: err?.response?.statusText,
             url: url.toString(),
-            timeout: `${Math.max(5000, Math.min(config_1.config.jackettTimeoutMs || 15000, 120000))}ms`
+            timeout: `${timeoutMs}ms`
         });
         if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
             console.error(`[${new Date().toISOString()}][jackett] timeout diagnostics`, {
@@ -145,7 +150,7 @@ async function searchJackett(query, opts) {
             });
             const res2 = await axios_1.default.get(url.toString(), {
                 params: params2,
-                timeout: Math.max(5000, Math.min(config_1.config.jackettTimeoutMs || 15000, 120000)),
+                timeout: timeoutMs,
             }).catch((err) => {
                 console.error(`[${new Date().toISOString()}][jackett] fallback request failed`, {
                     originalQuery,
@@ -186,7 +191,7 @@ async function searchJackett(query, opts) {
         });
         const res3 = await axios_1.default.get(url.toString(), {
             params: params3,
-            timeout: Math.max(5000, Math.min(config_1.config.jackettTimeoutMs || 15000, 120000)),
+            timeout: timeoutMs,
         }).catch((err) => {
             console.error(`[${new Date().toISOString()}][jackett] fallback (no categories) failed`, {
                 originalQuery,
@@ -245,12 +250,8 @@ function getMagnet(r) {
     // Try to build a magnet from info hash if present
     const hashCand = (r.infoHash || r.InfoHash || "").toString().trim();
     if (hashCand) {
-        const hex40 = /^[a-fA-F0-9]{40}$/;
-        const b32 = /^[A-Z2-7]{32,39}$/i;
-        if (hex40.test(hashCand) || b32.test(hashCand)) {
-            const hashUpper = hashCand.toUpperCase();
-            const dn = r.title ? `&dn=${encodeURIComponent(r.title)}` : "";
-            const built = `magnet:?xt=urn:btih:${hashUpper}${dn}`;
+        const built = (0, shared_1.buildMagnetFromHash)(hashCand, r.title);
+        if (built) {
             console.log(`[${new Date().toISOString()}][jackett] getMagnet built from infoHash`, { built: true });
             return built;
         }
@@ -274,7 +275,7 @@ async function getMagnetOrResolve(r) {
     const direct = getMagnet(r);
     if (direct)
         return direct;
-    const base = config_1.config.jackettUrl.replace(/\/$/, "");
+    const base = (0, shared_1.normaliseBaseUrl)(config_1.config.jackettUrl);
     const candidate = r.Link || r.link || r.Guid || r.guid;
     let url = typeof candidate === 'string' ? absoluteUrl(candidate, base) : '';
     if (!url || !(url.startsWith('http://') || url.startsWith('https://')))
@@ -285,11 +286,11 @@ async function getMagnetOrResolve(r) {
         hops++;
         let resp;
         try {
-            resp = await axios_1.default.head(url, { maxRedirects: 0, validateStatus: () => true, timeout: Math.max(5000, Math.min(config_1.config.jackettTimeoutMs || 15000, 120000)) });
+            resp = await axios_1.default.head(url, { maxRedirects: 0, validateStatus: () => true, timeout: (0, httpClient_1.requestTimeoutMs)(config_1.config.jackettTimeoutMs, 120000, 15000) });
         }
         catch {
             try {
-                resp = await axios_1.default.get(url, { maxRedirects: 0, validateStatus: () => true, timeout: Math.max(5000, Math.min(config_1.config.jackettTimeoutMs || 15000, 120000)) });
+                resp = await axios_1.default.get(url, { maxRedirects: 0, validateStatus: () => true, timeout: (0, httpClient_1.requestTimeoutMs)(config_1.config.jackettTimeoutMs, 120000, 15000) });
             }
             catch (e) {
                 console.warn(`[${new Date().toISOString()}][jackett] resolveMagnet failed`, { url, err: e?.message });

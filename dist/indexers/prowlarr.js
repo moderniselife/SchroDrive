@@ -10,16 +10,19 @@ exports.getMagnet = getMagnet;
 exports.getMagnetOrResolve = getMagnetOrResolve;
 const axios_1 = __importDefault(require("axios"));
 const config_1 = require("../core/config");
+const httpClient_1 = require("../core/httpClient");
+const shared_1 = require("./shared");
 async function testProwlarrConnection() {
     try {
-        const base = config_1.config.prowlarrUrl?.replace(/\/$/, "");
+        const base = (0, shared_1.normaliseBaseUrl)(config_1.config.prowlarrUrl ?? "");
         if (!base || !config_1.config.prowlarrApiKey)
             return false;
         const started = Date.now();
-        console.log(`[${new Date().toISOString()}][prowlarr] testing connection to ${base}`, { timeoutMs: Math.max(5000, Math.min(config_1.config.prowlarrTimeoutMs || 10000, 60000)) });
+        const timeoutMs = (0, httpClient_1.requestTimeoutMs)(config_1.config.prowlarrTimeoutMs, 60000, 10000);
+        console.log(`[${new Date().toISOString()}][prowlarr] testing connection to ${base}`, { timeoutMs });
         const res = await axios_1.default.get(`${base}/api/v1/indexer`, {
             headers: { "X-Api-Key": config_1.config.prowlarrApiKey },
-            timeout: Math.max(5000, Math.min(config_1.config.prowlarrTimeoutMs || 10000, 60000)),
+            timeout: timeoutMs,
         });
         console.log(`[${new Date().toISOString()}][prowlarr] connection test successful`, {
             ms: Date.now() - started,
@@ -41,11 +44,12 @@ async function searchProwlarr(query, opts) {
     if (!config_1.config.prowlarrUrl || !config_1.config.prowlarrApiKey) {
         throw new Error("Prowlarr not configured. Set PROWLARR_URL and PROWLARR_API_KEY.");
     }
-    const base = config_1.config.prowlarrUrl.replace(/\/$/, "");
+    const base = (0, shared_1.normaliseBaseUrl)(config_1.config.prowlarrUrl);
     const url = new URL("/api/v1/search", base);
-    const originalQuery = String(query || "");
-    const stripTmdb = (q) => q.replace(/\s*TMDB\d+\b/gi, "").replace(/\s{2,}/g, " ").trim();
-    const withoutTmdb = stripTmdb(originalQuery);
+    // Cap length before regex processing — an unbounded run of whitespace here would make
+    // \s*TMDB\d+\b (combined with the global flag) do quadratic backtracking work.
+    const originalQuery = String(query || "").slice(0, 200);
+    const withoutTmdb = (0, shared_1.stripTmdbQuery)(originalQuery);
     const usedQuery = withoutTmdb || originalQuery;
     const params = { query: usedQuery };
     const searchType = 'search';
@@ -71,10 +75,11 @@ async function searchProwlarr(query, opts) {
         timeoutMs: config_1.config.prowlarrTimeoutMs,
         type: searchType,
     });
+    const timeoutMs = (0, httpClient_1.requestTimeoutMs)(config_1.config.prowlarrTimeoutMs, 120000, 15000);
     const res = await axios_1.default.get(url.toString(), {
         params,
         headers: { "X-Api-Key": config_1.config.prowlarrApiKey },
-        timeout: Math.max(5000, Math.min(config_1.config.prowlarrTimeoutMs || 15000, 120000)),
+        timeout: timeoutMs,
     }).catch((err) => {
         console.error(`[${new Date().toISOString()}][prowlarr] request failed`, {
             query,
@@ -83,7 +88,7 @@ async function searchProwlarr(query, opts) {
             status: err?.response?.status,
             statusText: err?.response?.statusText,
             url: url.toString(),
-            timeout: `${Math.max(5000, Math.min(config_1.config.prowlarrTimeoutMs || 15000, 120000))}ms`
+            timeout: `${timeoutMs}ms`
         });
         // Additional diagnostics for timeout errors
         if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
@@ -128,7 +133,7 @@ async function searchProwlarr(query, opts) {
             const res2 = await axios_1.default.get(url.toString(), {
                 params: params2,
                 headers: { "X-Api-Key": config_1.config.prowlarrApiKey },
-                timeout: Math.max(5000, Math.min(config_1.config.prowlarrTimeoutMs || 15000, 120000)),
+                timeout: timeoutMs,
             }).catch((err) => {
                 console.error(`[${new Date().toISOString()}][prowlarr] fallback request failed`, {
                     originalQuery,
@@ -167,7 +172,7 @@ async function searchProwlarr(query, opts) {
         const res3 = await axios_1.default.get(url.toString(), {
             params: params3,
             headers: { "X-Api-Key": config_1.config.prowlarrApiKey },
-            timeout: Math.max(5000, Math.min(config_1.config.prowlarrTimeoutMs || 15000, 120000)),
+            timeout: timeoutMs,
         }).catch((err) => {
             console.error(`[${new Date().toISOString()}][prowlarr] fallback (no categories) failed`, {
                 originalQuery,
@@ -217,19 +222,11 @@ function getMagnet(r) {
     console.log(`[${new Date().toISOString()}][prowlarr] getMagnet`, { hasCandidate: !!direct, ok });
     if (ok)
         return direct;
-    // Try to build a magnet from info hash if present
     const hashCand = (r.infoHash || r.infohash || r.hash || "").toString().trim();
-    if (hashCand) {
-        // Accept 40-hex or 32-base32 hashes
-        const hex40 = /^[a-fA-F0-9]{40}$/;
-        const b32 = /^[A-Z2-7]{32,39}$/i; // some providers use longer base32
-        if (hex40.test(hashCand) || b32.test(hashCand)) {
-            const hashUpper = hashCand.toUpperCase();
-            const dn = r.title ? `&dn=${encodeURIComponent(r.title)}` : "";
-            const built = `magnet:?xt=urn:btih:${hashUpper}${dn}`;
-            console.log(`[${new Date().toISOString()}][prowlarr] getMagnet built from infoHash`, { built: true });
-            return built;
-        }
+    const built = (0, shared_1.buildMagnetFromHash)(hashCand, r.title);
+    if (built) {
+        console.log(`[${new Date().toISOString()}][prowlarr] getMagnet built from infoHash`, { built: true });
+        return built;
     }
     return undefined;
 }
@@ -250,22 +247,25 @@ async function getMagnetOrResolve(r) {
     const direct = getMagnet(r);
     if (direct)
         return direct;
-    const base = config_1.config.prowlarrUrl.replace(/\/$/, "");
+    const base = (0, shared_1.normaliseBaseUrl)(config_1.config.prowlarrUrl ?? "");
+    if (!base)
+        return undefined;
     const candidate = r.downloadUrl || r.download || r.downloadurl || r.download_link || r.link;
     let url = typeof candidate === 'string' ? absoluteUrl(candidate, base) : '';
     if (!url || !(url.startsWith('http://') || url.startsWith('https://')))
         return undefined;
     const maxHops = Math.max(1, Math.min(Number(config_1.config.prowlarrRedirectMaxHops || 5), 10));
+    const timeoutMs = (0, httpClient_1.requestTimeoutMs)(config_1.config.prowlarrTimeoutMs, 120000, 15000);
     let hops = 0;
     while (hops < maxHops && url && (url.startsWith('http://') || url.startsWith('https://'))) {
         hops++;
         let resp;
         try {
-            resp = await axios_1.default.head(url, { headers: { 'X-Api-Key': config_1.config.prowlarrApiKey }, maxRedirects: 0, validateStatus: () => true, timeout: Math.max(5000, Math.min(config_1.config.prowlarrTimeoutMs || 15000, 120000)) });
+            resp = await axios_1.default.head(url, { headers: { 'X-Api-Key': config_1.config.prowlarrApiKey }, maxRedirects: 0, validateStatus: () => true, timeout: timeoutMs });
         }
         catch {
             try {
-                resp = await axios_1.default.get(url, { headers: { 'X-Api-Key': config_1.config.prowlarrApiKey }, maxRedirects: 0, validateStatus: () => true, timeout: Math.max(5000, Math.min(config_1.config.prowlarrTimeoutMs || 15000, 120000)) });
+                resp = await axios_1.default.get(url, { headers: { 'X-Api-Key': config_1.config.prowlarrApiKey }, maxRedirects: 0, validateStatus: () => true, timeout: timeoutMs });
             }
             catch (e) {
                 console.warn(`[${new Date().toISOString()}][prowlarr] resolveMagnet failed`, { url, err: e?.message });

@@ -7,3 +7,13 @@ package-lock.json
 !.env.example
 .DS_Store
 personal-stack.yml
+# Runtime SQLite databases (never commit - contain secrets & ephemeral state)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.db-journal
+*.db-shm
+*.db-wal
+*.db-journal
+# Also ignore any local schrodrive/tokens DBs at repo root (tests use tmpDir)
+*.db
