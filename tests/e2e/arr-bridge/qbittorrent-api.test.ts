@@ -18,8 +18,14 @@ const PORT = 18283;
 const BASE_URL = `http://localhost:${PORT}`;
 
 beforeAll(async () => {
+  // Isolate DB from other parallel test suites that share the same bun:sqlite singleton.
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'schrodrive-arrbridge-'));
   config.arrBridgePort = PORT;
-  config.mountBase = fs.mkdtempSync(path.join(os.tmpdir(), 'schrodrive-arrbridge-'));
+  config.mountBase = tmpDir;
+  config.dbPath = path.join(tmpDir, 'test.db');
+  // Ensure any previously-opened DB (from another suite's beforeAll) is closed
+  // so getDb() will re-initialise with the new path.
+  try { (await import('../../../src/core/db')).closeDb(); } catch {}
   // Keep add tests provider-free: the bridge must parse the request without
   // submitting the fixture magnet to a real debrid account.
   config.providers = [];
@@ -28,6 +34,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await stopArrBridge();
+  try { (await import('../../../src/core/db')).closeDb(); } catch {}
 });
 
 describe('*arr bridge qBittorrent-compatible API', () => {

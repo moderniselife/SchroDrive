@@ -34,12 +34,16 @@ const PORT = 18284;
 const BASE_URL = `http://localhost:${PORT}`;
 
 beforeAll(async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'schrodrive-arrbridge-regression-'));
   config.arrBridgePort = PORT;
-  config.mountBase = fs.mkdtempSync(path.join(os.tmpdir(), 'schrodrive-arrbridge-regression-'));
+  config.mountBase = tmpDir;
+  config.dbPath = path.join(tmpDir, 'test-57.db');
+  try { (await import('../../../src/core/db')).closeDb(); } catch {}
 });
 
 afterAll(async () => {
   await stopArrBridge();
+  try { (await import('../../../src/core/db')).closeDb(); } catch {}
 });
 
 describe('#57 — *arr bridge Express 5 wildcard route', () => {
