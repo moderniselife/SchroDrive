@@ -1,24 +1,25 @@
 import path from 'path';
+import { asBool, asNumber, splitCsv } from './utils';
 
 const defaultMountBase = (process.env.MOUNT_BASE || (process.platform === 'darwin' ? "/Volumes/SchroDrive" : "/mnt/schrodrive"));
 
 export const config = {
-  port: Number(process.env.PORT || 8978),
+  port: asNumber(process.env.PORT, 8978),
   prowlarrUrl: process.env.PROWLARR_URL || "",
   prowlarrApiKey: process.env.PROWLARR_API_KEY || "",
-  prowlarrCategories: (process.env.PROWLARR_CATEGORIES || "").split(",").filter(Boolean),
-  prowlarrIndexerIds: (process.env.PROWLARR_INDEXER_IDS || "").split(",").map((s) => s.trim()).filter(Boolean),
-  prowlarrSearchLimit: Number(process.env.PROWLARR_SEARCH_LIMIT || 100),
-  prowlarrTimeoutMs: Number(process.env.PROWLARR_TIMEOUT_MS || 120000),
-  prowlarrRedirectMaxHops: Number(process.env.PROWLARR_REDIRECT_MAX_HOPS || 5),
+  prowlarrCategories: splitCsv(process.env.PROWLARR_CATEGORIES),
+  prowlarrIndexerIds: splitCsv(process.env.PROWLARR_INDEXER_IDS),
+  prowlarrSearchLimit: asNumber(process.env.PROWLARR_SEARCH_LIMIT, 100),
+  prowlarrTimeoutMs: asNumber(process.env.PROWLARR_TIMEOUT_MS, 120000),
+  prowlarrRedirectMaxHops: asNumber(process.env.PROWLARR_REDIRECT_MAX_HOPS, 5),
   // Jackett configuration
   jackettUrl: process.env.JACKETT_URL || "",
   jackettApiKey: process.env.JACKETT_API_KEY || "",
-  jackettCategories: (process.env.JACKETT_CATEGORIES || "").split(",").filter(Boolean),
-  jackettIndexerIds: (process.env.JACKETT_INDEXER_IDS || "").split(",").map((s) => s.trim()).filter(Boolean),
-  jackettSearchLimit: Number(process.env.JACKETT_SEARCH_LIMIT || 100),
-  jackettTimeoutMs: Number(process.env.JACKETT_TIMEOUT_MS || 120000),
-  jackettRedirectMaxHops: Number(process.env.JACKETT_REDIRECT_MAX_HOPS || 5),
+  jackettCategories: splitCsv(process.env.JACKETT_CATEGORIES),
+  jackettIndexerIds: splitCsv(process.env.JACKETT_INDEXER_IDS),
+  jackettSearchLimit: asNumber(process.env.JACKETT_SEARCH_LIMIT, 100),
+  jackettTimeoutMs: asNumber(process.env.JACKETT_TIMEOUT_MS, 120000),
+  jackettRedirectMaxHops: asNumber(process.env.JACKETT_REDIRECT_MAX_HOPS, 5),
   // Indexer selection: "prowlarr" | "jackett" | "auto" (auto tries jackett first if configured, then prowlarr)
   indexerProvider: (process.env.INDEXER_PROVIDER || "auto") as "prowlarr" | "jackett" | "auto",
   torboxApiKey: process.env.TORBOX_API_KEY || "",
@@ -29,18 +30,18 @@ export const config = {
   // Priority: SEERR_* > OVERSEERR_* > JELLYSEERR_* (all are supported for backward compatibility)
   overseerrUrl: process.env.SEERR_URL || process.env.OVERSEERR_URL || process.env.JELLYSEERR_URL || "",
   overseerrApiKey: process.env.SEERR_API_KEY || process.env.OVERSEERR_API_KEY || process.env.JELLYSEERR_API_KEY || "",
-  pollIntervalSeconds: Number(process.env.POLL_INTERVAL_S || 30),
+  pollIntervalSeconds: asNumber(process.env.POLL_INTERVAL_S, 30),
   // Runtime toggles
-  runWebhook: String(process.env.RUN_WEBHOOK ?? "true").toLowerCase() !== "false",
-  runPoller: String(process.env.RUN_POLLER ?? "false").toLowerCase() === "true",
+  runWebhook: asBool(process.env.RUN_WEBHOOK, true),
+  runPoller: asBool(process.env.RUN_POLLER),
   // Auto-update
-  autoUpdateEnabled: String(process.env.AUTO_UPDATE_ENABLED ?? "false").toLowerCase() === "true",
-  autoUpdateIntervalSeconds: Number(process.env.AUTO_UPDATE_INTERVAL_S || 3600),
+  autoUpdateEnabled: asBool(process.env.AUTO_UPDATE_ENABLED),
+  autoUpdateIntervalSeconds: asNumber(process.env.AUTO_UPDATE_INTERVAL_S, 3600),
   autoUpdateStrategy: (process.env.AUTO_UPDATE_STRATEGY || "exit") as "exit" | "git",
   repoOwner: process.env.REPO_OWNER || "moderniselife",
   repoName: process.env.REPO_NAME || "SchroDrive",
   // Providers
-  providers: (process.env.PROVIDERS || "torbox,realdebrid").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
+  providers: splitCsv(process.env.PROVIDERS || "torbox,realdebrid", { lowerCase: true }),
   // Add strategy: 'all' (add to all providers for redundancy), 'failover' (try first, fallback on failure), 'single' (first only)
   addStrategy: (process.env.ADD_STRATEGY || "all") as "all" | "failover" | "single",
   // Real-Debrid API
@@ -70,10 +71,10 @@ export const config = {
   premiumizeWebdavUsername: process.env.PREMIUMIZE_WEBDAV_USERNAME || "",
   premiumizeWebdavPassword: process.env.PREMIUMIZE_WEBDAV_PASSWORD || '',
   // --- Download Token Rotation (Zurg-style 503 bypass) ---
-  rdDownloadTokens: (process.env.RD_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
-  torboxDownloadTokens: (process.env.TORBOX_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
-  alldebridDownloadTokens: (process.env.AD_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
-  premiumizeDownloadTokens: (process.env.PM_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  rdDownloadTokens: splitCsv(process.env.RD_DOWNLOAD_TOKENS),
+  torboxDownloadTokens: splitCsv(process.env.TORBOX_DOWNLOAD_TOKENS),
+  alldebridDownloadTokens: splitCsv(process.env.AD_DOWNLOAD_TOKENS),
+  premiumizeDownloadTokens: splitCsv(process.env.PM_DOWNLOAD_TOKENS),
   // Debrid-Link API
   debridlinkApiKey: process.env.DEBRIDLINK_API_KEY || "",
   debridlinkApiBase: process.env.DEBRIDLINK_API_BASE || "https://debrid-link.com/api/v2",
@@ -81,7 +82,7 @@ export const config = {
   debridlinkWebdavUrl: process.env.DEBRIDLINK_WEBDAV_URL || "https://webdav.debrid.link",
   debridlinkWebdavUsername: process.env.DEBRIDLINK_WEBDAV_USERNAME || "",
   debridlinkWebdavPassword: process.env.DEBRIDLINK_WEBDAV_PASSWORD || "",
-  debridlinkDownloadTokens: (process.env.DL_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  debridlinkDownloadTokens: splitCsv(process.env.DL_DOWNLOAD_TOKENS),
   // Deepbrid API
   deepbridApiKey: process.env.DEEPBRID_API_KEY || "",
   deepbridApiBase: process.env.DEEPBRID_API_BASE || "https://www.deepbrid.com/api",
@@ -89,32 +90,32 @@ export const config = {
   deepbridWebdavUrl: process.env.DEEPBRID_WEBDAV_URL || "",
   deepbridWebdavUsername: process.env.DEEPBRID_WEBDAV_USERNAME || "",
   deepbridWebdavPassword: process.env.DEEPBRID_WEBDAV_PASSWORD || "",
-  deepbridDownloadTokens: (process.env.DB_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  deepbridDownloadTokens: splitCsv(process.env.DB_DOWNLOAD_TOKENS),
   // Offcloud API
   offcloudApiKey: process.env.OFFCLOUD_API_KEY || "",
   offcloudApiBase: process.env.OFFCLOUD_API_BASE || "https://offcloud.com/api",
   offcloudWebdavUrl: process.env.OFFCLOUD_WEBDAV_URL || "",
   offcloudWebdavUsername: process.env.OFFCLOUD_WEBDAV_USERNAME || "",
   offcloudWebdavPassword: process.env.OFFCLOUD_WEBDAV_PASSWORD || "",
-  offcloudDownloadTokens: (process.env.OC_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  offcloudDownloadTokens: splitCsv(process.env.OC_DOWNLOAD_TOKENS),
   // Put.io API
   putioOauthToken: process.env.PUTIO_OAUTH_TOKEN || "",
   putioApiBase: process.env.PUTIO_API_BASE || "https://api.put.io/v2",
   putioWebdavUrl: process.env.PUTIO_WEBDAV_URL || "https://webdav.put.io",
   putioWebdavUsername: process.env.PUTIO_WEBDAV_USERNAME || "",
   putioWebdavPassword: process.env.PUTIO_WEBDAV_PASSWORD || "",
-  putioDownloadTokens: (process.env.PUTIO_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  putioDownloadTokens: splitCsv(process.env.PUTIO_DOWNLOAD_TOKENS),
   // Mega-Debrid API
   megadebridApiKey: process.env.MEGADEBRID_API_KEY || "",
   megadebridApiBase: process.env.MEGADEBRID_API_BASE || "https://www.mega-debrid.eu",
-  megadebridDownloadTokens: (process.env.MD_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  megadebridDownloadTokens: splitCsv(process.env.MD_DOWNLOAD_TOKENS),
   // Seedr API
   seedrApiKey: process.env.SEEDR_API_KEY || "",
   seedrApiBase: process.env.SEEDR_API_BASE || "https://www.seedr.cc/rest",
   seedrWebdavUrl: process.env.SEEDR_WEBDAV_URL || "https://dav.seedr.cc",
   seedrWebdavUsername: process.env.SEEDR_WEBDAV_USERNAME || "",
   seedrWebdavPassword: process.env.SEEDR_WEBDAV_PASSWORD || "",
-  seedrDownloadTokens: (process.env.SEEDR_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  seedrDownloadTokens: splitCsv(process.env.SEEDR_DOWNLOAD_TOKENS),
   // PikPak API
   pikpakUsername: process.env.PIKPAK_USERNAME || "",
   pikpakPassword: process.env.PIKPAK_PASSWORD || "",
@@ -122,14 +123,14 @@ export const config = {
   pikpakWebdavUrl: process.env.PIKPAK_WEBDAV_URL || "",
   pikpakWebdavUsername: process.env.PIKPAK_WEBDAV_USERNAME || "",
   pikpakWebdavPassword: process.env.PIKPAK_WEBDAV_PASSWORD || "",
-  pikpakDownloadTokens: (process.env.PIKPAK_DOWNLOAD_TOKENS || '').split(',').filter(Boolean),
+  pikpakDownloadTokens: splitCsv(process.env.PIKPAK_DOWNLOAD_TOKENS),
   tokenResetTimezone: process.env.TOKEN_RESET_TIMEZONE || 'Australia/Sydney',
   // Mount settings
   mountBase: defaultMountBase,
   rclonePath: process.env.RCLONE_PATH || "rclone",
   mountOptions: process.env.MOUNT_OPTIONS || "--vfs-cache-mode=full --dir-cache-time=12h --poll-interval=0 --buffer-size=64M",
   // Mount permissions/ownership
-  mountAllowOther: String(process.env.MOUNT_ALLOW_OTHER ?? "true").toLowerCase() === "true",
+  mountAllowOther: asBool(process.env.MOUNT_ALLOW_OTHER, true),
   mountUid: (() => {
     const v = process.env.MOUNT_UID || process.env.PUID || "";
     return v ? Number(v) : undefined;
@@ -150,18 +151,18 @@ export const config = {
   mountVfsCacheMaxAge: process.env.MOUNT_VFS_CACHE_MAX_AGE || "",
   mountVfsCacheMaxSize: process.env.MOUNT_VFS_CACHE_MAX_SIZE || "",
   // Dead scanner
-  deadScanIntervalSeconds: Number(process.env.DEAD_SCAN_INTERVAL_S || 600),
-  deadIdleMinutes: Number(process.env.DEAD_IDLE_MIN || 120),
+  deadScanIntervalSeconds: asNumber(process.env.DEAD_SCAN_INTERVAL_S, 600),
+  deadIdleMinutes: asNumber(process.env.DEAD_IDLE_MIN, 120),
   // Runtime toggles for additional services
-  runMount: String(process.env.RUN_MOUNT ?? "false").toLowerCase() === "true",
-  runDeadScanner: String(process.env.RUN_DEAD_SCANNER ?? "false").toLowerCase() === "true",
-  runDeadScannerWatch: String(process.env.RUN_DEAD_SCANNER_WATCH ?? "false").toLowerCase() === "true",
+  runMount: asBool(process.env.RUN_MOUNT),
+  runDeadScanner: asBool(process.env.RUN_DEAD_SCANNER),
+  runDeadScannerWatch: asBool(process.env.RUN_DEAD_SCANNER_WATCH),
   // Organiser (symlinked view)
   tmdbApiKey: process.env.TMDB_API_KEY || "",
   organizedBase: process.env.ORGANIZED_BASE || `${defaultMountBase}/organized`,
   organizerMode: (process.env.ORGANIZER_MODE || "symlink") as "symlink" | "copy" | "move",
-  runOrganizerWatch: String(process.env.RUN_ORGANIZER_WATCH ?? "false").toLowerCase() === "true",
-  orgScanIntervalSeconds: Number(process.env.ORG_SCAN_INTERVAL_S || 300),
+  runOrganizerWatch: asBool(process.env.RUN_ORGANIZER_WATCH),
+  orgScanIntervalSeconds: asNumber(process.env.ORG_SCAN_INTERVAL_S, 300),
   // --- Media Server Integration ---
   // Plex
   plexUrl: process.env.PLEX_URL || process.env.PLEX_ADDRESS || "",
@@ -176,25 +177,25 @@ export const config = {
   embyApiKey: process.env.EMBY_API_KEY || "",
   embyUserId: process.env.EMBY_USER_ID || "",
   // Watchlist poller
-  runWatchlistPoller: String(process.env.RUN_WATCHLIST_POLLER ?? "false").toLowerCase() === "true",
-  watchlistPollIntervalSeconds: Number(process.env.WATCHLIST_POLL_INTERVAL_S || 60),
+  runWatchlistPoller: asBool(process.env.RUN_WATCHLIST_POLLER),
+  watchlistPollIntervalSeconds: asNumber(process.env.WATCHLIST_POLL_INTERVAL_S, 60),
   // Refresh library after adding content
-  refreshLibraryOnAdd: String(process.env.REFRESH_LIBRARY_ON_ADD ?? "true").toLowerCase() !== "false",
+  refreshLibraryOnAdd: asBool(process.env.REFRESH_LIBRARY_ON_ADD, true),
   // --- WebDAV Bridge (API-to-filesystem translation) ---
-  webdavBridgeEnabled: String(process.env.WEBDAV_BRIDGE_ENABLED ?? "true").toLowerCase() !== "false",
-  webdavBridgePortRD: Number(process.env.WEBDAV_BRIDGE_PORT_RD || 9115),
-  webdavBridgePortTB: Number(process.env.WEBDAV_BRIDGE_PORT_TB || 9116),
-  webdavBridgePortAD: Number(process.env.WEBDAV_BRIDGE_PORT_AD || 9117),
-  webdavBridgePortPM: Number(process.env.WEBDAV_BRIDGE_PORT_PM || 9118),
-  webdavBridgePortDL: Number(process.env.WEBDAV_BRIDGE_PORT_DL || 9119),
-  webdavBridgePortDB: Number(process.env.WEBDAV_BRIDGE_PORT_DB || 9122),
-  webdavBridgePortOC: Number(process.env.WEBDAV_BRIDGE_PORT_OC || 9123),
-  webdavBridgePortPUTIO: Number(process.env.WEBDAV_BRIDGE_PORT_PUTIO || 9124),
-  webdavBridgePortMD: Number(process.env.WEBDAV_BRIDGE_PORT_MD || 9125),
-  webdavBridgePortSEEDR: Number(process.env.WEBDAV_BRIDGE_PORT_SEEDR || 9126),
-  webdavBridgePortPIKPAK: Number(process.env.WEBDAV_BRIDGE_PORT_PIKPAK || 9127),
-  webdavCacheTtlS: Number(process.env.WEBDAV_CACHE_TTL_S || 30),
-  webdavDownloadCacheTtlS: Number(process.env.WEBDAV_DOWNLOAD_CACHE_TTL_S || 14400),
+  webdavBridgeEnabled: asBool(process.env.WEBDAV_BRIDGE_ENABLED, true),
+  webdavBridgePortRD: asNumber(process.env.WEBDAV_BRIDGE_PORT_RD, 9115),
+  webdavBridgePortTB: asNumber(process.env.WEBDAV_BRIDGE_PORT_TB, 9116),
+  webdavBridgePortAD: asNumber(process.env.WEBDAV_BRIDGE_PORT_AD, 9117),
+  webdavBridgePortPM: asNumber(process.env.WEBDAV_BRIDGE_PORT_PM, 9118),
+  webdavBridgePortDL: asNumber(process.env.WEBDAV_BRIDGE_PORT_DL, 9119),
+  webdavBridgePortDB: asNumber(process.env.WEBDAV_BRIDGE_PORT_DB, 9122),
+  webdavBridgePortOC: asNumber(process.env.WEBDAV_BRIDGE_PORT_OC, 9123),
+  webdavBridgePortPUTIO: asNumber(process.env.WEBDAV_BRIDGE_PORT_PUTIO, 9124),
+  webdavBridgePortMD: asNumber(process.env.WEBDAV_BRIDGE_PORT_MD, 9125),
+  webdavBridgePortSEEDR: asNumber(process.env.WEBDAV_BRIDGE_PORT_SEEDR, 9126),
+  webdavBridgePortPIKPAK: asNumber(process.env.WEBDAV_BRIDGE_PORT_PIKPAK, 9127),
+  webdavCacheTtlS: asNumber(process.env.WEBDAV_CACHE_TTL_S, 30),
+  webdavDownloadCacheTtlS: asNumber(process.env.WEBDAV_DOWNLOAD_CACHE_TTL_S, 14400),
   // --- Trakt Integration ---
   traktClientId: process.env.TRAKT_CLIENT_ID || "",
   traktClientSecret: process.env.TRAKT_CLIENT_SECRET || "",

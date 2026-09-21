@@ -2,13 +2,20 @@ import axios from 'axios';
 import http from 'http';
 import https from 'https';
 import { config } from '../core/config';
+import { base32ToHex } from '../core/utils';
 import type { DebridProvider, AddStrategy, AddMagnetResult } from './index';
 import { isKnownMagnet, addKnownMagnet } from '../core/db';
 
-/** Extracts the infohash from a magnet URI. */
+/** Extracts the infohash from a magnet URI. Supports 40-char hex and 32-char base32. */
 function extractInfoHash(magnet: string): string | null {
-  const match = magnet.match(/urn:btih:([a-fA-F0-9]+)/i);
-  return match ? match[1].toUpperCase() : null;
+  const match = magnet.match(/urn:btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})/i);
+  if (!match) return null;
+  const raw = match[1];
+  if (raw.length === 32) {
+    const hex = base32ToHex(raw);
+    return hex ?? raw.toUpperCase();
+  }
+  return raw.toUpperCase();
 }
 
 /**
@@ -48,10 +55,15 @@ export function assertPublicHttpUrl(rawUrl: string): void {
     }
   }
 
-  // WHATWG URL keeps the brackets on hostname for IPv6 literals, e.g. "[::1]"
-  const ipv6 = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : null;
-  if (ipv6 && (ipv6 === '::1' || ipv6.startsWith('fe80:') || ipv6.startsWith('fc') || ipv6.startsWith('fd'))) {
-    throw new Error(`Refusing to fetch .torrent URL pointing at private IPv6 address ${host}`);
+  // IPv6 literals: Bun keeps brackets in hostname ("[::1]"), Node strips them ("::1") — handle both.
+  const rawHostForV6 = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+  if (rawHostForV6.includes(':')) {
+    const ipv6 = rawHostForV6.toLowerCase();
+    if (ipv6 === '::1' || ipv6 === '0:0:0:0:0:0:0:1' ||
+        ipv6.startsWith('fe80:') || ipv6.startsWith('fc') || ipv6.startsWith('fd') ||
+        ipv6.startsWith('::ffff:')) {
+      throw new Error(`Refusing to fetch .torrent URL pointing at private IPv6 address ${host}`);
+    }
   }
 }
 

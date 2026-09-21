@@ -39,7 +39,7 @@ async function searchComet(imdbId, type, season, episode) {
     }
     const url = (0, stremioScraper_1.buildStremioUrl)(config_1.config.cometUrl, config_1.config.cometConfig, type, imdbId, season, episode);
     const started = Date.now();
-    console.log(`[${new Date().toISOString()}][${SOURCE}] GET ${url}`, {
+    console.log(`[${new Date().toISOString()}][${SOURCE}] GET`, url, {
         imdbId,
         type,
         season,

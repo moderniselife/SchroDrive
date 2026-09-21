@@ -15,6 +15,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.GDriveAdapter = void 0;
+exports.escapeDriveQueryValue = escapeDriveQueryValue;
 const googleapis_1 = require("googleapis");
 // ===========================================================================
 // Helpers
@@ -39,6 +40,16 @@ function extractFolderId(url) {
         return idMatch[1];
     // Assume the whole string is a folder ID
     return url.trim();
+}
+/**
+ * Escapes a value for safe interpolation into a single-quoted Drive API
+ * query string literal. Backslashes must be escaped *before* quotes —
+ * escaping quotes first lets a value ending in an odd number of
+ * backslashes (e.g. `foo\`) smuggle an unescaped `'` past the sanitiser
+ * and break out of the string literal.
+ */
+function escapeDriveQueryValue(value) {
+    return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 // ===========================================================================
 // Adapter
@@ -173,7 +184,7 @@ class GDriveAdapter {
         let currentId = this.folderId;
         for (const seg of segments) {
             const res = await this.drive.files.list({
-                q: `'${currentId}' in parents and name='${seg.replace(/'/g, "\\'")}' and trashed=false`,
+                q: `'${currentId}' in parents and name='${escapeDriveQueryValue(seg)}' and trashed=false`,
                 fields: 'files(id, mimeType)',
                 pageSize: 1,
             });
