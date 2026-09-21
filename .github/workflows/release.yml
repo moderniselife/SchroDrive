@@ -41,6 +41,10 @@ jobs:
         run: |
           CURRENT=$(node -p "require('./package.json').version")
           echo "version=$CURRENT" >> $GITHUB_OUTPUT
+          if git rev-parse "v$CURRENT" >/dev/null 2>&1; then
+            echo "Tag v$CURRENT already exists – skipping creation (release already published)"
+            exit 0
+          fi
           git tag -a "v$CURRENT" -m "Release v$CURRENT"
           git push origin "v$CURRENT"
 
