@@ -1,15 +1,9 @@
 "use strict";
-/**
- * stremioScraper.ts — Shared utilities for all Stremio addon protocol scrapers.
- *
- * Provides common types, stream parsing, quality/size extraction, and URL
- * construction used by torrentio, comet, mediafusion, and any future
- * Stremio-compatible addon scrapers.
- */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseQualityFromName = parseQualityFromName;
 exports.buildStremioUrl = buildStremioUrl;
 exports.parseStremioStreams = parseStremioStreams;
+const shared_1 = require("./shared");
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -68,19 +62,6 @@ function buildStremioUrl(baseUrl, configStr, type, imdbId, season, episode) {
     return `${base}${cfgSegment}/stream/movie/${imdbId}.json`;
 }
 /**
- * Build a magnet URI from a 40-hex or 32-base32 info hash.
- */
-function buildMagnetFromHash(hash, title) {
-    const trimmed = hash.trim();
-    const hex40 = /^[a-fA-F0-9]{40}$/;
-    const b32 = /^[A-Z2-7]{32,39}$/i;
-    if (!hex40.test(trimmed) && !b32.test(trimmed))
-        return undefined;
-    const hashUpper = trimmed.toUpperCase();
-    const dn = title ? `&dn=${encodeURIComponent(title)}` : "";
-    return `magnet:?xt=urn:btih:${hashUpper}${dn}`;
-}
-/**
  * Convert an array of raw Stremio streams into normalised ScraperResults.
  */
 function parseStremioStreams(streams, source) {
@@ -92,7 +73,7 @@ function parseStremioStreams(streams, source) {
         let infoHash;
         if (s.infoHash) {
             infoHash = s.infoHash.toLowerCase();
-            magnetUrl = buildMagnetFromHash(s.infoHash, title);
+            magnetUrl = (0, shared_1.buildMagnetFromHash)(s.infoHash, title);
         }
         // If the addon only provides a direct URL (no hash), record it as magnetUrl
         // for downstream consumers that accept arbitrary URLs.

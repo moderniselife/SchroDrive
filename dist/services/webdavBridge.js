@@ -25,6 +25,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.WebDAVBridge = void 0;
+exports.encodeWebDavPath = encodeWebDavPath;
+exports.webDavRelativeFilePath = webDavRelativeFilePath;
 const express_1 = __importDefault(require("express"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
@@ -61,10 +63,10 @@ const LOG_PREFIX = "webdav-bridge";
 function log(provider, message, data) {
     const prefix = `[${new Date().toISOString()}][${LOG_PREFIX}][${provider}]`;
     if (data) {
-        console.log(`${prefix} ${message}`, data);
+        console.log(prefix, message, data);
     }
     else {
-        console.log(`${prefix} ${message}`);
+        console.log(prefix, message);
     }
 }
 /**
@@ -77,10 +79,10 @@ function log(provider, message, data) {
 function logWarn(provider, message, data) {
     const prefix = `[${new Date().toISOString()}][${LOG_PREFIX}][${provider}]`;
     if (data) {
-        console.warn(`${prefix} ${message}`, data);
+        console.warn(prefix, message, data);
     }
     else {
-        console.warn(`${prefix} ${message}`);
+        console.warn(prefix, message);
     }
 }
 /**
@@ -93,10 +95,10 @@ function logWarn(provider, message, data) {
 function logError(provider, message, data) {
     const prefix = `[${new Date().toISOString()}][${LOG_PREFIX}][${provider}]`;
     if (data) {
-        console.error(`${prefix} ${message}`, data);
+        console.error(prefix, message, data);
     }
     else {
-        console.error(`${prefix} ${message}`);
+        console.error(prefix, message);
     }
 }
 // ===========================================================================
@@ -153,6 +155,46 @@ function xmlEscape(str) {
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
+}
+/**
+ * Encode a WebDAV path while preserving its hierarchy. Provider file names
+ * are relative paths for multi-file torrents, so encoding the whole value
+ * with encodeURIComponent would turn each internal '/' into '%2F'.
+ */
+function encodeWebDavPath(value) {
+    return value.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+}
+/** Remove a provider file-tree root when it is repeated in a file path. */
+function webDavRelativeFilePath(torrentName, fileName) {
+    const prefix = `${torrentName}/`;
+    return fileName.startsWith(prefix) ? fileName.slice(prefix.length) : fileName;
+}
+/** Render only immediate children so WebDAV clients can walk nested trees. */
+function buildNestedFileResponses(baseHref, torrentName, files, lastModified, parentPath = "") {
+    const responses = [];
+    const childCollections = new Set();
+    const prefix = parentPath ? `${parentPath}/` : "";
+    for (const file of files) {
+        const relativePath = webDavRelativeFilePath(torrentName, file.name);
+        if (!relativePath.startsWith(prefix))
+            continue;
+        const childPath = relativePath.slice(prefix.length);
+        const parts = childPath.split("/").filter(Boolean);
+        if (parts.length === 0)
+            continue;
+        const childName = parts[0];
+        if (parts.length > 1) {
+            if (!childCollections.has(childName)) {
+                childCollections.add(childName);
+                const collectionPath = parentPath ? `${parentPath}/${childName}` : childName;
+                responses.push(buildCollectionResponse(`${baseHref}/${encodeWebDavPath(collectionPath)}/`, childName));
+            }
+            continue;
+        }
+        const filePath = parentPath ? `${parentPath}/${childName}` : childName;
+        responses.push(buildFileResponse(`${baseHref}/${encodeWebDavPath(filePath)}`, childName, file.size, lastModified));
+    }
+    return responses;
 }
 /**
  * Builds a WebDAV `<D:response>` element for a collection (directory).
@@ -688,8 +730,7 @@ async function resolveTBDownloadUrl(torrentId, fileId) {
                 rateLimiter_1.rateLimiter.recordRateLimit(providerName, errorMsg);
             }
             else {
-                const masked = downloadToken.length > 4 ? `***${downloadToken.slice(-4)}` : '****';
-                logWarn(providerName, `Rotated download token ${masked} hit 429 rate limit — bypassing global rate limit`);
+                logWarn(providerName, "Rotated download token hit 429 rate limit — bypassing global rate limit");
             }
         }
         if ((status === 503 || status === 429) && isRotated) {
@@ -1005,10 +1046,7 @@ class WebDAVBridge {
                 responses.push(buildCollectionResponse(dirHref, dir.name));
                 // If depth > 0, include files
                 if (depth !== "0") {
-                    for (const file of files) {
-                        const fileHref = `/${encodeURIComponent(view)}/${encodeURIComponent(dir.name)}/${encodeURIComponent(file.name)}`;
-                        responses.push(buildFileResponse(fileHref, file.name, file.size, lastModified));
-                    }
+                    responses.push(...buildNestedFileResponses(`/${encodeURIComponent(view)}/${encodeURIComponent(dir.name)}`, dir.name, files, lastModified));
                 }
                 res.status(207);
                 res.setHeader("Content-Type", "application/xml; charset=utf-8");
@@ -1017,12 +1055,30 @@ class WebDAVBridge {
             }
             // Single file stat within a category/torrent
             const files = await this.getFilesForTorrent(dir);
-            const file = files.find((f) => f.name === fileName);
+            const relativePath = fileName.replace(/^\/+|\/+$/g, "");
+            const file = files.find((f) => f.name === relativePath ||
+                webDavRelativeFilePath(dir.name, f.name) === relativePath);
+            // Nested directory requested by a WebDAV client after the root listing.
+            // Return only its immediate children; descendants belong to subsequent
+            // PROPFIND requests for those child collections.
+            if (!file && files.some((f) => {
+                const relative = webDavRelativeFilePath(dir.name, f.name);
+                return relative.startsWith(`${relativePath}/`);
+            })) {
+                const baseHref = `/${encodeURIComponent(view)}/${encodeURIComponent(dir.name)}`;
+                const responses = [buildCollectionResponse(`${baseHref}/${encodeWebDavPath(relativePath)}/`, relativePath.split("/").pop() || relativePath)];
+                responses.push(...buildNestedFileResponses(baseHref, dir.name, files, lastModified, relativePath));
+                res.status(207);
+                res.setHeader("Content-Type", "application/xml; charset=utf-8");
+                res.send(buildMultistatus(responses));
+                return;
+            }
             if (!file) {
                 res.status(404).end();
                 return;
             }
-            const fileHref = `/${encodeURIComponent(view)}/${encodeURIComponent(dir.name)}/${encodeURIComponent(file.name)}`;
+            const relativeFilePath = webDavRelativeFilePath(dir.name, file.name);
+            const fileHref = `/${encodeURIComponent(view)}/${encodeURIComponent(dir.name)}/${encodeWebDavPath(relativeFilePath)}`;
             const responses = [buildFileResponse(fileHref, file.name, file.size, lastModified)];
             res.status(207);
             res.setHeader("Content-Type", "application/xml; charset=utf-8");
@@ -1048,10 +1104,7 @@ class WebDAVBridge {
             responses.push(buildCollectionResponse(dirHref, dir.name));
             // If depth > 0, include files
             if (depth !== "0") {
-                for (const file of files) {
-                    const fileHref = `/${encodeURIComponent(dir.name)}/${encodeURIComponent(file.name)}`;
-                    responses.push(buildFileResponse(fileHref, file.name, file.size, lastModified));
-                }
+                responses.push(...buildNestedFileResponses(`/${encodeURIComponent(dir.name)}`, dir.name, files, lastModified));
             }
             res.status(207);
             res.setHeader("Content-Type", "application/xml; charset=utf-8");
@@ -1060,12 +1113,27 @@ class WebDAVBridge {
         }
         // Single file stat (legacy)
         const files = await this.getFilesForTorrent(dir);
-        const file = files.find((f) => f.name === fileName);
+        const relativePath = fileName.replace(/^\/+|\/+$/g, "");
+        const file = files.find((f) => f.name === relativePath ||
+            webDavRelativeFilePath(dir.name, f.name) === relativePath);
+        if (!file && files.some((f) => {
+            const relative = webDavRelativeFilePath(dir.name, f.name);
+            return relative.startsWith(`${relativePath}/`);
+        })) {
+            const baseHref = `/${encodeURIComponent(dir.name)}`;
+            const responses = [buildCollectionResponse(`${baseHref}/${encodeWebDavPath(relativePath)}/`, relativePath.split("/").pop() || relativePath)];
+            responses.push(...buildNestedFileResponses(baseHref, dir.name, files, lastModified, relativePath));
+            res.status(207);
+            res.setHeader("Content-Type", "application/xml; charset=utf-8");
+            res.send(buildMultistatus(responses));
+            return;
+        }
         if (!file) {
             res.status(404).end();
             return;
         }
-        const fileHref = `/${encodeURIComponent(dir.name)}/${encodeURIComponent(file.name)}`;
+        const relativeFilePath = webDavRelativeFilePath(dir.name, file.name);
+        const fileHref = `/${encodeURIComponent(dir.name)}/${encodeWebDavPath(relativeFilePath)}`;
         const responses = [buildFileResponse(fileHref, file.name, file.size, lastModified)];
         res.status(207);
         res.setHeader("Content-Type", "application/xml; charset=utf-8");
@@ -1122,7 +1190,8 @@ class WebDAVBridge {
             return;
         }
         const files = await this.getFilesForTorrent(dir);
-        const file = files.find((f) => f.name === fileName);
+        const file = files.find((f) => f.name === fileName ||
+            webDavRelativeFilePath(dir.name, f.name) === fileName);
         if (!file) {
             res.status(404).end();
             return;
@@ -1171,7 +1240,8 @@ class WebDAVBridge {
             return;
         }
         const files = await this.getFilesForTorrent(dir);
-        const file = files.find((f) => f.name === fileName);
+        const file = files.find((f) => f.name === fileName ||
+            webDavRelativeFilePath(dir.name, f.name) === fileName);
         if (!file) {
             res.status(404).end();
             return;

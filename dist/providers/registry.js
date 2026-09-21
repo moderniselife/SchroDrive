@@ -37,15 +37,68 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registry = void 0;
+exports.assertPublicHttpUrl = assertPublicHttpUrl;
 const axios_1 = __importDefault(require("axios"));
 const http_1 = __importDefault(require("http"));
 const https_1 = __importDefault(require("https"));
 const config_1 = require("../core/config");
+const utils_1 = require("../core/utils");
 const db_1 = require("../core/db");
-/** Extracts the infohash from a magnet URI. */
+/** Extracts the infohash from a magnet URI. Supports 40-char hex and 32-char base32. */
 function extractInfoHash(magnet) {
-    const match = magnet.match(/urn:btih:([a-fA-F0-9]+)/i);
-    return match ? match[1].toUpperCase() : null;
+    const match = magnet.match(/urn:btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})/i);
+    if (!match)
+        return null;
+    const raw = match[1];
+    if (raw.length === 32) {
+        const hex = (0, utils_1.base32ToHex)(raw);
+        return hex ?? raw.toUpperCase();
+    }
+    return raw.toUpperCase();
+}
+/**
+ * Rejects .torrent URLs that aren't http(s) or point at loopback/private/
+ * link-local IP literals — these values come from indexer search results
+ * (Prowlarr/Jackett), which is semi-trusted third-party content, so a
+ * malicious result shouldn't be able to make this server fetch internal
+ * services (e.g. cloud metadata endpoints, admin UIs on the LAN).
+ *
+ * This only catches IP literals in the URL, not hostnames that resolve to
+ * a private address (DNS rebinding) — it's a baseline guard, not a full
+ * SSRF-proof sandbox.
+ */
+function assertPublicHttpUrl(rawUrl) {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error(`Refusing to fetch .torrent URL with scheme "${parsed.protocol}"`);
+    }
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'localhost' || host.endsWith('.localhost')) {
+        throw new Error('Refusing to fetch .torrent URL pointing at localhost');
+    }
+    const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipv4) {
+        const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+        const isPrivate = a === 127 || // loopback
+            a === 10 || // 10.0.0.0/8
+            a === 0 || // 0.0.0.0/8
+            (a === 169 && b === 254) || // link-local / cloud metadata
+            (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12
+            (a === 192 && b === 168); // 192.168.0.0/16
+        if (isPrivate) {
+            throw new Error(`Refusing to fetch .torrent URL pointing at private address ${host}`);
+        }
+    }
+    // IPv6 literals: Bun keeps brackets in hostname ("[::1]"), Node strips them ("::1") — handle both.
+    const rawHostForV6 = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+    if (rawHostForV6.includes(':')) {
+        const ipv6 = rawHostForV6.toLowerCase();
+        if (ipv6 === '::1' || ipv6 === '0:0:0:0:0:0:0:1' ||
+            ipv6.startsWith('fe80:') || ipv6.startsWith('fc') || ipv6.startsWith('fd') ||
+            ipv6.startsWith('::ffff:')) {
+            throw new Error(`Refusing to fetch .torrent URL pointing at private IPv6 address ${host}`);
+        }
+    }
 }
 /**
  * Manages the lifecycle and lookup of registered debrid providers.
@@ -201,6 +254,7 @@ class ProviderRegistry {
         console.log(`[${new Date().toISOString()}][registry] Downloading .torrent file: ${torrentUrl}`);
         let fileBuffer;
         try {
+            assertPublicHttpUrl(torrentUrl);
             const resp = await axios_1.default.get(torrentUrl, {
                 responseType: 'arraybuffer',
                 timeout: 30000,

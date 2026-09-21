@@ -39,7 +39,7 @@ async function searchMediafusion(imdbId, type, season, episode) {
     }
     const url = (0, stremioScraper_1.buildStremioUrl)(config_1.config.mediafusionUrl, config_1.config.mediafusionConfig, type, imdbId, season, episode);
     const started = Date.now();
-    console.log(`[${new Date().toISOString()}][${SOURCE}] GET ${url}`, {
+    console.log(`[${new Date().toISOString()}][${SOURCE}] GET`, url, {
         imdbId,
         type,
         season,

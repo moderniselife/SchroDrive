@@ -18,9 +18,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.clearTrackedForTests = clearTrackedForTests;
 exports.startArrBridge = startArrBridge;
 exports.stopArrBridge = stopArrBridge;
 const express_1 = __importDefault(require("express"));
+const busboy_1 = __importDefault(require("busboy"));
 const promises_1 = __importDefault(require("fs/promises"));
 const path_1 = __importDefault(require("path"));
 const config_1 = require("../core/config");
@@ -41,8 +43,10 @@ const MOUNT_SCAN_INTERVAL_MS = 10000;
 // ===========================================================================
 /** All tracked torrents, keyed by uppercase info hash. */
 const tracked = new Map();
-/** Express server instance. */
+/** Express server instance (last started, for backwards compat). */
 let server = null;
+/** All active servers keyed by port — supports parallel test runs that share module state. */
+const servers = new Map();
 /** Status polling interval handle. */
 let statusPoller = null;
 /** Mount scanning interval handle. */
@@ -56,15 +60,10 @@ function extractInfoHash(magnet) {
     if (!match)
         return null;
     const raw = match[1];
-    // Convert base32 to hex if needed
+    // Convert base32 to hex if needed — magnet spec allows 32-char base32
     if (raw.length === 32) {
-        try {
-            const buf = Buffer.from(raw, 'base64');
-            return buf.toString('hex').toUpperCase();
-        }
-        catch {
-            return raw.toUpperCase();
-        }
+        const hex = (0, utils_1.base32ToHex)(raw);
+        return hex ?? raw.toUpperCase();
     }
     return raw.toUpperCase();
 }
@@ -314,6 +313,69 @@ function handleLogin(_req, res) {
     // Always accept — no real auth needed (internal network)
     res.setHeader('Set-Cookie', 'SID=schrodrive; Path=/');
     res.send('Ok.');
+}
+/**
+ * Parse qBittorrent's multipart form requests without buffering file uploads.
+ *
+ * Radarr and Sonarr switch from urlencoded data to multipart when the magnet
+ * URI is larger than their form-data threshold.  The qBittorrent endpoint is
+ * field-oriented for the URL path, so PR0 only collects fields and drains any
+ * file stream; it deliberately does not claim to support `.torrent` uploads.
+ */
+function parseMultipartForm(req, res, next) {
+    if (!req.is('multipart/form-data')) {
+        next();
+        return;
+    }
+    let parser;
+    try {
+        parser = (0, busboy_1.default)({
+            headers: req.headers,
+            limits: {
+                fields: 64,
+                fieldSize: 5 * 1024 * 1024,
+                files: 1,
+                fileSize: 10 * 1024 * 1024,
+                parts: 128,
+            },
+        });
+    }
+    catch (err) {
+        next(err);
+        return;
+    }
+    const body = {};
+    const addField = (name, value) => {
+        const previous = body[name];
+        if (previous === undefined)
+            body[name] = value;
+        else if (Array.isArray(previous))
+            previous.push(value);
+        else
+            body[name] = [previous, value];
+    };
+    let completed = false;
+    const done = (err) => {
+        if (completed)
+            return;
+        completed = true;
+        if (err)
+            return next(err);
+        req.body = body;
+        next();
+    };
+    parser.on('field', (name, value) => addField(name, value));
+    // Drain unexpected file parts so the request can complete without creating
+    // temporary files. Binary `.torrent` upload remains intentionally unsupported.
+    parser.on('file', (_name, file) => file.resume());
+    // Busboy can emit limit events instead of error for exceeded limits — ensure we still continue.
+    parser.on('fieldsLimit', () => console.warn(`${LOG_PREFIX} multipart fields limit exceeded`));
+    parser.on('filesLimit', () => console.warn(`${LOG_PREFIX} multipart files limit exceeded`));
+    parser.on('partsLimit', () => console.warn(`${LOG_PREFIX} multipart parts limit exceeded`));
+    parser.once('error', done);
+    parser.once('close', () => done());
+    parser.once('finish', () => done());
+    req.pipe(parser);
 }
 /** GET /api/v2/auth/logout */
 function handleLogout(_req, res) {
@@ -690,11 +752,20 @@ function handleSyncMaindata(req, res) {
 // ===========================================================================
 // Public API
 // ===========================================================================
+/** Clears all tracked torrents — used by tests to ensure isolation between runs. */
+function clearTrackedForTests() {
+    tracked.clear();
+}
 /**
  * Starts the *arr bridge (fake qBittorrent API) server.
  */
 async function startArrBridge() {
     const port = config_1.config.arrBridgePort || 8282;
+    // If a bridge is already listening on this port, reuse it (idempotent for shared-state parallel tests).
+    if (servers.has(port)) {
+        console.log(`${LOG_PREFIX} *arr bridge already listening on port ${port} — reusing`);
+        return;
+    }
     console.log(`${LOG_PREFIX} Starting *arr bridge (fake qBittorrent v${FAKE_QBIT_VERSION}) on port ${port}...`);
     await ensureDownloadsDir();
     const app = (0, express_1.default)();
@@ -710,7 +781,7 @@ async function startArrBridge() {
     app.get('/api/v2/app/preferences', handlePreferences);
     app.get('/api/v2/app/buildInfo', handleBuildInfo);
     // --- Torrents ---
-    app.post('/api/v2/torrents/add', handleAddTorrent);
+    app.post('/api/v2/torrents/add', parseMultipartForm, handleAddTorrent);
     app.get('/api/v2/torrents/info', handleTorrentInfo);
     app.get('/api/v2/torrents/properties', handleTorrentProperties);
     app.get('/api/v2/torrents/files', handleTorrentFiles);
@@ -736,56 +807,111 @@ async function startArrBridge() {
         });
     });
     // --- Catch-all for unimplemented endpoints ---
-    app.all('/api/v2/*', (req, res) => {
+    app.all('/api/v2/{*splat}', (req, res) => {
         console.log(`${LOG_PREFIX} Unimplemented endpoint: ${req.method} ${req.path}`);
         res.json({});
     });
-    // Start polling services
-    statusPoller = setInterval(() => {
-        pollDebridStatus().catch((err) => {
-            console.error(`${LOG_PREFIX} Status poll error: ${err?.message}`);
-        });
-    }, STATUS_POLL_INTERVAL_MS);
-    mountScanner = setInterval(() => {
-        scanMountsForCompleted().catch((err) => {
-            console.error(`${LOG_PREFIX} Mount scan error: ${err?.message}`);
-        });
-    }, MOUNT_SCAN_INTERVAL_MS);
+    // Start polling services once (shared across concurrent test bridges)
+    if (!statusPoller) {
+        statusPoller = setInterval(() => {
+            pollDebridStatus().catch((err) => {
+                console.error(`${LOG_PREFIX} Status poll error: ${err?.message}`);
+            });
+        }, STATUS_POLL_INTERVAL_MS);
+    }
+    if (!mountScanner) {
+        mountScanner = setInterval(() => {
+            scanMountsForCompleted().catch((err) => {
+                console.error(`${LOG_PREFIX} Mount scan error: ${err?.message}`);
+            });
+        }, MOUNT_SCAN_INTERVAL_MS);
+    }
     return new Promise((resolve, reject) => {
-        server = app.listen(port, () => {
+        const s = app.listen(port, () => {
             console.log(`${LOG_PREFIX} ✅ *arr bridge listening on port ${port} (add as qBittorrent in Radarr/Sonarr)`);
             console.log(`${LOG_PREFIX}    Host: schrodrive (or container IP)`);
             console.log(`${LOG_PREFIX}    Port: ${port}`);
             console.log(`${LOG_PREFIX}    No username/password required`);
             resolve();
         });
-        server.on('error', (err) => {
+        s.on('error', (err) => {
             console.error(`${LOG_PREFIX} Failed to start: ${err?.message}`);
             reject(err);
         });
+        server = s;
+        servers.set(port, s);
+        // Ensure pollers are started only once (first bridge)
+        if (servers.size === 1) {
+            // already started above; if this is first port, pollers are active
+        }
     });
 }
 /**
- * Stops the *arr bridge server gracefully.
+ * Stops the *arr bridge server(s) gracefully.
+ * When config.arrBridgePort points to a known server, closes just that one;
+ * otherwise closes all active servers. Pollers are stopped only when the last
+ * server is gone so parallel test suites don't kill each other's timers mid-run.
  */
 async function stopArrBridge() {
-    if (statusPoller) {
-        clearInterval(statusPoller);
-        statusPoller = null;
+    // Clear in-memory tracking so a subsequent test run starts empty.
+    tracked.clear();
+    const currentPort = config_1.config.arrBridgePort;
+    const targets = [];
+    if (servers.has(currentPort)) {
+        const s = servers.get(currentPort);
+        targets.push([currentPort, s]);
     }
-    if (mountScanner) {
-        clearInterval(mountScanner);
-        mountScanner = null;
+    else if (servers.size > 0 && !server) {
+        // No current port mapping but servers map has entries (legacy)
+        for (const entry of servers.entries())
+            targets.push(entry);
     }
-    return new Promise((resolve) => {
-        if (!server) {
-            resolve();
-            return;
+    else if (server) {
+        // Fallback to legacy singleton
+        // Try to find its port in the map, otherwise close it directly
+        let found = false;
+        for (const [p, s] of servers.entries()) {
+            if (s === server) {
+                targets.push([p, s]);
+                found = true;
+                break;
+            }
         }
-        server.close(() => {
-            console.log(`${LOG_PREFIX} *arr bridge stopped`);
-            server = null;
+        if (!found)
+            targets.push([currentPort || 0, server]);
+    }
+    // Remove from map and clear legacy ref
+    for (const [p] of targets)
+        servers.delete(p);
+    if (targets.some(([, s]) => s === server))
+        server = null;
+    if (servers.size === 0)
+        server = null;
+    // Only stop pollers when last server is gone
+    if (servers.size === 0) {
+        if (statusPoller) {
+            clearInterval(statusPoller);
+            statusPoller = null;
+        }
+        if (mountScanner) {
+            clearInterval(mountScanner);
+            mountScanner = null;
+        }
+    }
+    if (targets.length === 0)
+        return;
+    await Promise.all(targets.map(([port, s]) => new Promise((resolve) => {
+        s.close(() => {
+            console.log(`${LOG_PREFIX} *arr bridge stopped (port ${port})`);
             resolve();
         });
-    });
+        setTimeout(() => {
+            try {
+                s.closeAllConnections?.();
+            }
+            catch { }
+        }, 500).unref?.();
+        // Safety: resolve even if close never fires (e.g. already closed)
+        setTimeout(() => resolve(), 1500).unref?.();
+    })));
 }

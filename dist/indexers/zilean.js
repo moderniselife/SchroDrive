@@ -14,6 +14,7 @@ exports.isZileanConfigured = isZileanConfigured;
 exports.searchZilean = searchZilean;
 const axios_1 = __importDefault(require("axios"));
 const config_1 = require("../core/config");
+const shared_1 = require("./shared");
 const SOURCE = "zilean";
 const TIMEOUT_MS = 15000;
 /**
@@ -22,19 +23,6 @@ const TIMEOUT_MS = 15000;
  */
 function isZileanConfigured() {
     return config_1.config.zileanEnabled && !!config_1.config.zileanUrl;
-}
-/**
- * Build a magnet URI from a 40-hex or 32-base32 info hash.
- */
-function buildMagnetFromHash(hash, title) {
-    const trimmed = hash.trim();
-    const hex40 = /^[a-fA-F0-9]{40}$/;
-    const b32 = /^[A-Z2-7]{32,39}$/i;
-    if (!hex40.test(trimmed) && !b32.test(trimmed))
-        return undefined;
-    const hashUpper = trimmed.toUpperCase();
-    const dn = title ? `&dn=${encodeURIComponent(title)}` : "";
-    return `magnet:?xt=urn:btih:${hashUpper}${dn}`;
 }
 /**
  * Search Zilean for torrents matching the given text query.
@@ -73,7 +61,7 @@ async function searchZilean(query) {
         for (const entry of entries) {
             const title = entry.raw_title || "";
             const infoHash = (entry.info_hash || "").toLowerCase();
-            const magnetUrl = buildMagnetFromHash(entry.info_hash || "", title);
+            const magnetUrl = (0, shared_1.buildMagnetFromHash)(entry.info_hash || "", title);
             results.push({
                 title,
                 magnetUrl,
