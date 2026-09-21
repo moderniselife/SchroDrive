@@ -86,27 +86,27 @@ jobs:
             RANGE="$BASE..HEAD"
           fi
           echo "Checking range: $RANGE (base: $BASE)"
-          # Collect names from the range; if range is invalid, fall back to diff
+          # Collect added files in the range (diff-filter=A) – deletions of old DBs are expected and should not fail
           if git rev-parse --verify HEAD >/dev/null 2>&1 && git rev-parse --verify "$BASE" >/dev/null 2>&1; then
-            CHANGED=$(git log --name-only --pretty=format: "$RANGE" 2>/dev/null | sort -u || true)
+            CHANGED=$(git diff --name-only --diff-filter=A "$BASE"...HEAD 2>/dev/null | sort -u || true)
             if [ -z "$CHANGED" ]; then
-              CHANGED=$(git diff --name-only "$BASE"...HEAD 2>/dev/null || true)
+              CHANGED=$(git log --diff-filter=A --name-only --pretty=format: "$RANGE" 2>/dev/null | sort -u || true)
             fi
           else
-            CHANGED=$(git diff --name-only HEAD 2>/dev/null || true)
+            CHANGED=$(git diff --name-only --diff-filter=A HEAD 2>/dev/null || true)
           fi
           if echo "$CHANGED" | grep -Eq '\.db$|\.db-shm$|\.db-wal$'; then
-            echo "::error::This PR introduces runtime DB files! Your branch is based on pre-scrub history or adds a .db."
-            echo "Offending files in PR range:"
+            echo "::error::This PR introduces runtime DB files! Your branch adds a .db."
+            echo "Offending added files in PR range:"
             echo "$CHANGED" | grep -E '\.db($|-shm$|-wal$)'
             echo ""
-            echo "Fix: rebase onto origin/develop after the scrub:"
-            echo "  git fetch origin"
-            echo "  git rebase origin/develop   # or: git rebase --onto origin/develop <old-base> <your-branch>"
-            echo "  # If you have local tokens.db/schrodrive.db, they will become ignored – keep them, just don't commit"
+            echo "Fix: remove the .db from the PR and ensure .gitignore covers it:"
+            echo "  git rm --cached <file>"
+            echo "  # If your branch is based on pre-scrub history, rebase:"
+            echo "  git fetch origin && git rebase origin/develop"
             exit 1
           fi
-          echo "✓ PR history clean"
+          echo "✓ PR history clean (no added .db files)"
 
       - name: Scan for unexpected data/ content
         run: |
