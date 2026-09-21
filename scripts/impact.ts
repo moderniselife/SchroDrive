@@ -90,6 +90,10 @@ function main(args: string[]): void {
   const root = process.cwd();
   const requested = args.includes("--changed") ? changedFiles(root) : args.filter((arg) => arg !== "--changed").map((file) => resolve(root, file));
   if (requested.length === 0) {
+    if (args.includes("--changed")) {
+      console.log("No changed files detected (or no tracked/untracked files match git diff). Nothing to analyse.");
+      return;
+    }
     console.error("Usage: bun run impact -- <file> [file ...] or bun run impact:changed");
     process.exitCode = 1;
     return;
