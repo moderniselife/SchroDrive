@@ -79,3 +79,35 @@ export function asNumber(value: string | undefined | null, fallback: number): nu
 export function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+/**
+ * Decodes an RFC4648 base32 string to hex (upper-case).
+ * Used to normalise magnet info-hashes that are 32-char base32 (160-bit)
+ * into the canonical 40-char hex representation.
+ *
+ * Returns null if the input contains non-base32 characters or does not
+ * decode to exactly 20 bytes (32-char base32 → 160-bit).
+ *
+ * @param b32 - Base32 string (with or without padding, case-insensitive).
+ * @returns Upper-case hex string or null on invalid input.
+ */
+export function base32ToHex(b32: string): string | null {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const upper = b32.toUpperCase().replace(/=+$/, '');
+  let bits = 0;
+  let value = 0;
+  const bytes: number[] = [];
+  for (const char of upper) {
+    const idx = alphabet.indexOf(char);
+    if (idx === -1) return null;
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push((value >> bits) & 0xff);
+    }
+  }
+  // 32-char base32 must decode to exactly 20 bytes (160-bit infohash)
+  if (bytes.length !== 20) return null;
+  return Buffer.from(bytes).toString('hex').toUpperCase();
+}
