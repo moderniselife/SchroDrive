@@ -1,0 +1,101 @@
+name: Guard
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need full history to check for leaked files in past commits
+
+      - name: Check .gitignore protects runtime databases
+        run: |
+          echo "==> Checking .gitignore contains required DB ignore rules..."
+          missing=0
+          for pattern in "data/*.db" "*.db-shm" "*.db-wal" "*.db-journal" "*.db"; do
+            if ! grep -qF "$pattern" .gitignore; then
+              echo "::error::.gitignore is missing required pattern: $pattern"
+              missing=1
+            fi
+          done
+          if [ $missing -ne 0 ]; then
+            echo "Fix: add the missing patterns to .gitignore (see chore: ignore runtime SQLite databases)"
+            exit 1
+          fi
+          echo "✓ .gitignore OK"
+
+      - name: Fail if any .db files are tracked
+        run: |
+          echo "==> Checking for tracked *.db files (should be zero)..."
+          # git ls-files respects .gitignore, so any match here is a violation
+          if git ls-files | grep -Eq '\.db$|\.db-shm$|\.db-wal$|\.db-journal$'; then
+            echo "::error::Prohibited runtime DB files are tracked in git!"
+            echo "Tracked offending files:"
+            git ls-files | grep -E '\.db($|-shm$|-wal$|-journal$)'
+            echo ""
+            echo "Fix: git rm --cached <file> and ensure .gitignore covers it."
+            echo "See: CONTRIBUTING.md § Ground Rules – No secrets in commits"
+            exit 1
+          fi
+          echo "✓ No tracked .db files"
+
+      - name: Fail if .env files are tracked (except .env.example)
+        run: |
+          echo "==> Checking for tracked .env files..."
+          # Allow .env.example, forbid everything else
+          if git ls-files | grep -Eq '(^|/)\.env($|\.)' | grep -vE '\.env\.example$'; then
+            echo "::error::.env files must never be committed (use .env.example)"
+            git ls-files | grep -E '(^|/)\.env'
+            exit 1
+          fi
+          echo "✓ No tracked .env files"
+
+      - name: Fail if history still contains leaked DBs
+        run: |
+          echo "==> Checking entire git history for leaked DBs (catches contributors with stale history)..."
+          # This catches branches that were created before the scrub (data/tokens.db was removed in 46ffb12)
+          if git log --all --name-only --pretty=format: | sort -u | grep -Eq '\.db$|\.db-shm$|\.db-wal$'; then
+            echo "::error::History contains runtime DB files! Your branch is based on pre-scrub history."
+            echo "Offending files in history:"
+            git log --all --name-only --pretty=format: | sort -u | grep -E '\.db($|-shm$|-wal$)'
+            echo ""
+            echo "Fix: rebase onto origin/develop after the scrub:"
+            echo "  git fetch origin"
+            echo "  git rebase origin/develop   # or: git rebase --onto origin/develop <old-base> <your-branch>"
+            echo "  # If you have local tokens.db/schrodrive.db, they will become ignored – keep them, just don't commit"
+            exit 1
+          fi
+          echo "✓ History clean"
+
+      - name: Scan for unexpected data/ content
+        run: |
+          echo "==> Checking data/ directory content..."
+          # Only .gitkeep should be tracked in data/
+          tracked_data=$(git ls-files -- data/ || true)
+          echo "Tracked in data/:"
+          echo "$tracked_data"
+          if [ -z "$tracked_data" ]; then
+            echo "::error::data/ should contain at least data/.gitkeep"
+            exit 1
+          fi
+          allowed="^data/\.gitkeep$"
+          bad=$(echo "$tracked_data" | grep -Ev "$allowed" || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Unexpected files tracked in data/ (only .gitkeep allowed):"
+            echo "$bad"
+            exit 1
+          fi
+          echo "✓ data/ OK"
+
+      - name: Summary
+        run: echo "✅ Guard passed – no leaked DBs, .env, or history contamination"
