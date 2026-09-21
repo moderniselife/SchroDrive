@@ -89,6 +89,14 @@ git push -u origin feat/<short-name>
 * **Commit style:** Conventional Commits encouraged (`feat:`, `fix:`, `docs:`, `chore:`, `test:`, `refactor:`). Scope in parentheses is optional but helpful (`feat(providers):`).
 * **Hooks:** `.githooks/pre-commit` runs `typecheck + test` automatically after `bun install`. Bypass only with `git commit --no-verify` and justify in the PR.
 
+> **One-time history fix (2026-09-21):** `data/tokens.db` was scrubbed from history and `data/*.db` is now ignored. If your local `develop` says `divergent branches` or CI guard says `History contains runtime DB files`, run the one-liner (no data loss — ignored DBs stay on disk):
+> ```bash
+> bun run fix:history   # or: bash scripts/fix-stale-history.sh
+> # then re-push your feature branch with --force-with-lease
+> git push --force-with-lease
+> ```
+> Fresh clones are already clean and need nothing.
+
 ### 4.2 Pull requests
 
 1.  **Open against `develop`**, not `main`. `main` is release-only.

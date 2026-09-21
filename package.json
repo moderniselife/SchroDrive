@@ -21,7 +21,8 @@
     "test:regressions": "bun test tests/regressions",
     "test:integration": "bun tests/integration.test.ts",
     "impact": "bun scripts/impact.ts",
-    "impact:changed": "bun scripts/impact.ts --changed"
+    "impact:changed": "bun scripts/impact.ts --changed",
+    "fix:history": "bash scripts/fix-stale-history.sh"
   },
   "engines": {
     "bun": ">=1.2.0"
