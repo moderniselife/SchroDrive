@@ -176,6 +176,9 @@ function runMigrations(database: Database): void {
     `CREATE TABLE IF NOT EXISTS arr_tracked_torrents (
       hash TEXT PRIMARY KEY,
       state_json TEXT NOT NULL,
+    `CREATE TABLE IF NOT EXISTS arr_categories (
+      name TEXT PRIMARY KEY,
+      save_path TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     )`,
   ];
