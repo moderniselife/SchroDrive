@@ -178,6 +178,11 @@ function runMigrations(database: Database): void {
       save_path TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     )`,
+    `CREATE TABLE IF NOT EXISTS arr_tracked_torrents (
+      hash TEXT PRIMARY KEY,
+      state_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
   ];
 
   for (const sql of migrations) {
