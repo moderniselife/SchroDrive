@@ -10,6 +10,7 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { config, providersSet } from '../../../src/core/config';
+import { CONFIG_SCHEMA } from '../../../src/core/configApi';
 
 const originalProviders = [...config.providers];
 
@@ -18,6 +19,10 @@ afterEach(() => {
 });
 
 describe('providersSet', () => {
+  test('leaves MOUNT_OPTIONS empty so individual mount settings are effective', () => {
+    expect(CONFIG_SCHEMA.MOUNT_OPTIONS.default).toBe('');
+  });
+
   test('lowercases provider names', () => {
     config.providers = ['PikPak', 'RealDebrid'];
     expect(providersSet()).toEqual(new Set(['pikpak', 'realdebrid']));
