@@ -227,6 +227,7 @@ export default function DashboardPage() {
     eventSource.addEventListener("done", () => {
       setIsStreaming(false)
       setRefreshing(false)
+      setLoading(false)
       setStreamStatus("")
       eventSource.close()
     })

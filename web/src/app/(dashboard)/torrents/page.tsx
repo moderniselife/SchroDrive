@@ -133,6 +133,7 @@ export default function TorrentsPage() {
     eventSource.addEventListener("done", () => {
       setIsStreaming(false)
       setRefreshing(false)
+      setLoading(false)
       setStatus("")
       eventSource.close()
     })
