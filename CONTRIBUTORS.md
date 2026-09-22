@@ -22,7 +22,7 @@ People who have authored commits merged to `main`/`develop`:
 
 | Name | GitHub | Contributions | Highlights |
 |------|--------|---------------|------------|
-| **Sam Truman** | [@samtruman](https://github.com/samtruman) | 3 commits | `fix(webdav): preserve nested multi-file paths` — kept `__all__` hierarchy intact for multi-file torrents; `fix(alldebrid): use current magnet files API` — migrated AllDebrid to the current `magnet/files` lifecycle; `fix(arr-bridge): support multipart qBittorrent add requests` — Radarr/Sonarr send multipart when magnets exceed 1 KiB |
+| **Sam Truman** | [@samtruman](https://github.com/samtruman) | 8 commits | `fix(webdav): preserve nested multi-file paths`; `fix(alldebrid): use current magnet files API`; `fix(arr-bridge): support multipart qBittorrent add requests`; `fix(arr-bridge): persist qBittorrent categories`; `fix(arr-bridge): recover tracked torrents after restart`; `fix(arr-bridge): preserve nested staging paths`; `fix(mount): honor individual cache settings by default`; `feat(organizer): add identity review workflow` |
 
 > **How we count:** `git log --format="%an <%ae>" | sort -u`. Commit counts above are from `git log` at 2026-09-21. GitHub's *Contributors* graph may show lower numbers because it only counts commits to the default branch.
 
@@ -58,7 +58,7 @@ These are not human contributors, but they keep the repo healthy and are thanked
 
 The project is MIT-licensed (see `LICENSE`, copyright © 2025 moderniselife). All contributors retain copyright to their work and license it under MIT.
 
-*Last updated: 2026-09-21 — generated from `git log --format="%an <%ae>" | sort -u` and `gh api repos/moderniselife/SchroDrive/contributors`.*
+*Last updated: 2026-09-22 — generated from `git log --format="%an <%ae>" | sort -u` and `gh api repos/moderniselife/SchroDrive/contributors`.*
 
 ---
 

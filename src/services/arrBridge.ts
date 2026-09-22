@@ -21,6 +21,7 @@ import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
 import { config } from '../core/config';
+import { getDb } from '../core/db';
 import { registry } from '../providers';
 import type { AddMagnetResult } from '../providers';
 import { sanitiseName, base32ToHex } from '../core/utils';
@@ -100,6 +101,43 @@ interface TrackedTorrent {
 
 /** All tracked torrents, keyed by uppercase info hash. */
 const tracked = new Map<string, TrackedTorrent>();
+let trackedStateLoaded = false;
+
+function persistTrackedTorrent(torrent: TrackedTorrent): void {
+  try {
+    getDb().prepare(`INSERT INTO arr_tracked_torrents (hash, state_json, updated_at)
+      VALUES (?, ?, ?) ON CONFLICT(hash) DO UPDATE SET state_json=excluded.state_json, updated_at=excluded.updated_at`)
+      .run(torrent.hash, JSON.stringify(torrent), Date.now());
+  } catch (err: any) {
+    console.warn(`${LOG_PREFIX} Could not persist tracked torrent ${torrent.hash.slice(0, 8)}: ${err?.message || String(err)}`);
+  }
+}
+
+function removePersistedTorrent(hash: string): void {
+  try { getDb().prepare('DELETE FROM arr_tracked_torrents WHERE hash = ?').run(hash); }
+  catch (err: any) { console.warn(`${LOG_PREFIX} Could not remove persisted torrent: ${err?.message || String(err)}`); }
+}
+
+function loadTrackedTorrents(): void {
+  if (trackedStateLoaded) return;
+  trackedStateLoaded = true;
+  try {
+    const rows = getDb().prepare('SELECT state_json FROM arr_tracked_torrents').all() as Array<{ state_json: string }>;
+    for (const row of rows) {
+      try {
+        const torrent = JSON.parse(row.state_json) as TrackedTorrent;
+        if (torrent?.hash && torrent?.magnet && torrent?.name) tracked.set(torrent.hash.toUpperCase(), torrent);
+      } catch { /* Ignore one malformed record and restore the rest. */ }
+    }
+    if (rows.length) console.log(`${LOG_PREFIX} Restored ${tracked.size} tracked torrent(s) from SQLite`);
+  } catch (err: any) {
+    console.warn(`${LOG_PREFIX} Could not restore tracked torrents: ${err?.message || String(err)}`);
+  }
+}
+
+function stateFingerprint(torrent: TrackedTorrent): string {
+  return `${torrent.state}|${torrent.progress}|${torrent.size}|${torrent.completionOn}|${torrent.mountScanned}|${torrent.contentPath}`;
+}
 
 /** Express server instance (last started, for backwards compat). */
 let server: http.Server | null = null;
@@ -197,6 +235,7 @@ async function pollDebridStatus(): Promise<void> {
   }
 
   for (const torrent of pending) {
+    const before = stateFingerprint(torrent);
     torrent.pollAttempts++;
 
     // Try to find this torrent across providers
@@ -236,6 +275,7 @@ async function pollDebridStatus(): Promise<void> {
       console.warn(`${LOG_PREFIX} Torrent "${torrent.name}" not found on any provider after ${torrent.pollAttempts} polls — marking as error`);
       torrent.state = 'error';
     }
+    if (before !== stateFingerprint(torrent) || torrent.pollAttempts % 5 === 0) persistTrackedTorrent(torrent);
   }
 }
 
@@ -315,9 +355,10 @@ async function scanMountsForCompleted(): Promise<void> {
         await fsp.mkdir(torrentDir, { recursive: true });
 
         for (const file of foundFiles) {
-          const symlinkPath = path.join(torrentDir, file.name);
+            const symlinkPath = path.join(torrentDir, file.name);
           try {
             // Create relative symlink
+            await fsp.mkdir(path.dirname(symlinkPath), { recursive: true });
             const relativePath = path.relative(path.dirname(symlinkPath), file.path);
             // Remove existing symlink if it exists
             try { await fsp.unlink(symlinkPath); } catch { /* doesn't exist */ }
@@ -336,6 +377,7 @@ async function scanMountsForCompleted(): Promise<void> {
         torrent.savePath = path.join(getDownloadsPath(), torrent.category || '');
         torrent.contentPath = torrentDir;
         torrent.size = foundFiles.reduce((sum, f) => sum + f.size, 0);
+        persistTrackedTorrent(torrent);
 
         console.log(`${LOG_PREFIX} ✅ Torrent "${torrent.name}" completed — ${foundFiles.length} file(s) symlinked to ${torrentDir}`);
       }
@@ -346,17 +388,20 @@ async function scanMountsForCompleted(): Promise<void> {
 }
 
 /** Recursively scans a directory for video files. */
-async function scanDirRecursive(dir: string): Promise<Array<{ name: string; size: number; path: string }>> {
+export async function scanDirRecursive(
+  dir: string,
+  rootDir = dir,
+): Promise<Array<{ name: string; size: number; path: string }>> {
   const results: Array<{ name: string; size: number; path: string }> = [];
   try {
     const entries = await fsp.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        results.push(...await scanDirRecursive(full));
+        results.push(...await scanDirRecursive(full, rootDir));
       } else if (entry.isFile() && isMediaFile(entry.name)) {
         const stat = await fsp.stat(full);
-        results.push({ name: entry.name, size: stat.size, path: full });
+        results.push({ name: path.relative(rootDir, full), size: stat.size, path: full });
       }
     }
   } catch {
@@ -550,6 +595,7 @@ async function handleAddTorrent(req: Request, res: Response): Promise<void> {
       };
 
       tracked.set(hash, torrent);
+      persistTrackedTorrent(torrent);
 
       // Submit to debrid providers in background (don't block the response)
       const addStrategy = config.addStrategy || 'all';
@@ -568,9 +614,11 @@ async function handleAddTorrent(req: Request, res: Response): Promise<void> {
           } else {
             console.log(`${LOG_PREFIX} ✅ Submitted "${name}" to ${successCount} provider(s)`);
           }
+          persistTrackedTorrent(torrent);
         })
         .catch((err: any) => {
           torrent.state = 'error';
+          persistTrackedTorrent(torrent);
           console.error(`${LOG_PREFIX} ❌ Failed to submit "${name}": ${err?.message}`);
         });
     }
@@ -761,6 +809,7 @@ function handleDeleteTorrent(req: Request, res: Response): void {
       }
 
       tracked.delete(hash);
+      removePersistedTorrent(hash);
     }
   }
 
@@ -787,6 +836,7 @@ function handleSetCategory(req: Request, res: Response): void {
     if (torrent) {
       torrent.category = category;
       torrent.savePath = path.join(getDownloadsPath(), category);
+      persistTrackedTorrent(torrent);
     }
   }
 
@@ -796,6 +846,17 @@ function handleSetCategory(req: Request, res: Response): void {
 /** GET /api/v2/torrents/categories — Return known categories. */
 function handleCategories(_req: Request, res: Response): void {
   const cats: Record<string, { name: string; savePath: string }> = {};
+
+  // qBittorrent categories survive restarts. Restore categories created by
+  // Radarr/Sonarr before adding categories inferred from tracked torrents.
+  try {
+    const rows = getDb().prepare('SELECT name, save_path FROM arr_categories').all() as Array<{ name: string; save_path: string }>;
+    for (const row of rows) {
+      if (row.name) cats[row.name] = { name: row.name, savePath: row.save_path };
+    }
+  } catch (err: any) {
+    console.warn(`${LOG_PREFIX} Could not restore qBittorrent categories: ${err?.message || String(err)}`);
+  }
 
   // Collect categories from tracked torrents
   for (const t of tracked.values()) {
@@ -819,13 +880,42 @@ function handleCategories(_req: Request, res: Response): void {
 }
 
 /** POST /api/v2/torrents/createCategory — Create a category. */
-function handleCreateCategory(_req: Request, res: Response): void {
-  // No-op — we auto-create categories
+function handleCreateCategory(req: Request, res: Response): void {
+  const name = String(req.body?.category || req.body?.name || '').trim();
+  if (!name) {
+    res.status(400).send('Missing category');
+    return;
+  }
+  const savePath = String(req.body?.savePath || req.body?.save_path || path.join(getDownloadsPath(), name));
+  try {
+    getDb().prepare(`INSERT INTO arr_categories (name, save_path, updated_at)
+      VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET save_path=excluded.save_path, updated_at=excluded.updated_at`)
+      .run(name, savePath, Date.now());
+  } catch (err: any) {
+    console.warn(`${LOG_PREFIX} Could not persist qBittorrent category ${name}: ${err?.message || String(err)}`);
+    res.status(500).send('Could not persist category');
+    return;
+  }
   res.send('Ok.');
 }
 
 /** POST /api/v2/torrents/editCategory — Edit a category. */
-function handleEditCategory(_req: Request, res: Response): void {
+function handleEditCategory(req: Request, res: Response): void {
+  const name = String(req.body?.category || req.body?.name || '').trim();
+  if (!name) {
+    res.status(400).send('Missing category');
+    return;
+  }
+  const savePath = String(req.body?.savePath || req.body?.save_path || path.join(getDownloadsPath(), name));
+  try {
+    getDb().prepare(`INSERT INTO arr_categories (name, save_path, updated_at)
+      VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET save_path=excluded.save_path, updated_at=excluded.updated_at`)
+      .run(name, savePath, Date.now());
+  } catch (err: any) {
+    console.warn(`${LOG_PREFIX} Could not persist qBittorrent category ${name}: ${err?.message || String(err)}`);
+    res.status(500).send('Could not persist category');
+    return;
+  }
   res.send('Ok.');
 }
 
@@ -902,6 +992,7 @@ export async function startArrBridge(): Promise<void> {
   console.log(`${LOG_PREFIX} Starting *arr bridge (fake qBittorrent v${FAKE_QBIT_VERSION}) on port ${port}...`);
 
   await ensureDownloadsDir();
+  loadTrackedTorrents();
 
   const app = express();
 
@@ -1004,6 +1095,7 @@ export async function startArrBridge(): Promise<void> {
 export async function stopArrBridge(): Promise<void> {
   // Clear in-memory tracking so a subsequent test run starts empty.
   tracked.clear();
+  trackedStateLoaded = false;
 
   const currentPort = config.arrBridgePort;
   const targets: Array<[number, http.Server]> = [];
