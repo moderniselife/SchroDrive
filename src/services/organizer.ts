@@ -22,6 +22,8 @@ import axios from "axios";
 import { config } from "../core/config";
 import { classifyTorrent } from "../core/mediaClassifier";
 import { getWebdavOrganiserRoots } from "./mount";
+import { parseMediaFilename, selectMediaCandidate } from "./mediaParser";
+import { getOrganizerReview, recordOrganizerReview, type ReviewDecision, type ReviewOverride } from "./organizerReview";
 
 // ===========================================================================
 // Types & Constants
@@ -182,6 +184,45 @@ interface Parsed {
   absolute?: number;
   /** File extension including the dot (e.g. ".mkv"). */
   ext: string;
+}
+
+/** Apply a persisted manual identity decision without changing release names. */
+export function applyOrganizerReviewOverride(parsed: Parsed, override: ReviewOverride, sourceBasename: string): Parsed {
+  const type = override.kind === "movie"
+    ? "movie"
+    : override.kind === "episode"
+      ? "tv"
+      : parsed.type;
+  const title = override.title?.trim();
+  const year = override.year ?? parsed.year;
+  const ext = parsed.ext || path.extname(sourceBasename);
+
+  if (type === "movie") {
+    return { type: "movie", title: title || parsed.title, year, ext };
+  }
+  if (type === "tv") {
+    return {
+      type: "tv",
+      show: title || parsed.show,
+      year,
+      season: override.season ?? parsed.season,
+      episode: override.episode ?? parsed.episode,
+      absolute: parsed.absolute,
+      ext,
+    };
+  }
+  return parsed;
+}
+
+/**
+ * Keeps uncertain identities out of the organised library until an operator
+ * explicitly accepts an override. A dismissed item is handled by the caller.
+ */
+export function shouldDeferToReview(
+  identity: ReturnType<typeof parseMediaFilename>,
+  decision?: ReviewDecision,
+): boolean {
+  return identity.status !== "matched" && decision !== "accepted";
 }
 
 /**
@@ -392,6 +433,54 @@ function parseFilename(fileName: string, fullPath: string): Parsed {
   return { type: "unknown", ext };
 }
 
+/**
+ * Applies the pure structured parser only where it adds identity information
+ * without changing provider classification or Arr naming. The legacy parser
+ * remains the fallback for unsupported/ambiguous releases.
+ */
+function enrichWithStructuredIdentity(parsed: Parsed, fileName: string, fullPath: string): Parsed {
+  const structured = parseMediaFilename(fileName, fullPath);
+  if (structured.status !== "matched" || !structured.title || structured.confidence < 0.8) {
+    return parsed;
+  }
+
+  if (structured.kind === "episode") {
+    return {
+      type: "tv",
+      show: structured.title,
+      season: structured.season,
+      episode: structured.episode,
+      absolute: undefined,
+      year: structured.year ?? parsed.year,
+      ext: parsed.ext,
+    };
+  }
+
+  if (structured.kind === "anime-episode") {
+    return {
+      type: "tv",
+      show: structured.title,
+      absolute: structured.absoluteEpisode,
+      year: structured.year ?? parsed.year,
+      ext: parsed.ext,
+    };
+  }
+
+  // An explicit movie year is allowed to correct a false TV/absolute parse.
+  if (structured.kind === "movie" && structured.year) {
+    return {
+      type: "movie",
+      title: structured.title,
+      year: structured.year,
+      ext: parsed.ext,
+    };
+  }
+
+  return parsed.type === "unknown"
+    ? { type: "movie", title: structured.title, year: structured.year, ext: parsed.ext }
+    : parsed;
+}
+
 // ===========================================================================
 // Metadata Lookup
 // ===========================================================================
@@ -420,7 +509,18 @@ async function tmdbSearch(title: string, prefer: "tv" | "movie", year?: number):
     const url = prefer === "movie" ? "https://api.themoviedb.org/3/search/movie" : "https://api.themoviedb.org/3/search/tv";
     const { data } = await axios.get(url, { params, timeout: 10000 });
     const results = Array.isArray(data?.results) ? data.results : [];
-    const best = results[0];
+    const candidates = results.map((item: any) => ({
+      id: String(item.id),
+      title: prefer === "movie" ? (item.title || item.original_title || "") : (item.name || item.original_name || ""),
+      kind: prefer === "movie" ? "movie" as const : "show" as const,
+      year: Number(String(prefer === "movie" ? item.release_date : item.first_air_date || "").slice(0, 4)) || undefined,
+    }));
+    const selection = selectMediaCandidate(
+      { title, year, kind: prefer === "movie" ? "movie" : "episode" },
+      candidates,
+    );
+    if (selection.status !== "matched" || !selection.candidate) return {};
+    const best = results.find((item: any) => String(item.id) === String(selection.candidate?.id));
     if (!best) return {};
     if (prefer === "movie") {
       return {
@@ -457,7 +557,17 @@ async function tvmazeSearch(title: string, year?: number): Promise<{
     const url = "https://api.tvmaze.com/search/shows";
     const { data } = await axios.get(url, { params: { q: title }, timeout: 10000 });
     const arr = Array.isArray(data) ? data : [];
-    const best = arr[0]?.show;
+    const selection = selectMediaCandidate(
+      { title, year, kind: "episode" },
+      arr.map((item: any) => ({
+        id: String(item?.show?.id ?? ""),
+        title: item?.show?.name || "",
+        kind: "show" as const,
+        year: Number(String(item?.show?.premiered || "").slice(0, 4)) || undefined,
+      })),
+    );
+    if (selection.status !== "matched" || !selection.candidate) return {};
+    const best = arr.find((item: any) => String(item?.show?.id ?? "") === String(selection.candidate?.id))?.show;
     if (!best) return {};
     const name = best.name || title;
     const premiered = best.premiered ? Number(String(best.premiered).slice(0, 4)) : year;
@@ -484,7 +594,17 @@ async function itunesMovieSearch(title: string, year?: number): Promise<{
     const url = "https://itunes.apple.com/search";
     const { data } = await axios.get(url, { params: { term: title, media: "movie", limit: 5 }, timeout: 10000 });
     const results = Array.isArray(data?.results) ? data.results : [];
-    const best = results[0];
+    const selection = selectMediaCandidate(
+      { title, year, kind: "movie" },
+      results.map((item: any, index: number) => ({
+        id: String(item?.trackId ?? index),
+        title: item?.trackName || "",
+        kind: "movie" as const,
+        year: item?.releaseDate ? new Date(item.releaseDate).getFullYear() : undefined,
+      })),
+    );
+    if (selection.status !== "matched" || !selection.candidate) return {};
+    const best = results.find((item: any, index: number) => String(item?.trackId ?? index) === String(selection.candidate?.id));
     if (!best) return {};
     const name = best.trackName || title;
     const y = best.releaseDate ? new Date(best.releaseDate).getFullYear() : year;
@@ -825,7 +945,13 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
   const unknownSamples: string[] = [];
   for (const src of files) {
     const base = path.basename(src);
-    let parsed = parseFilename(base, src);
+    const structuredIdentity = parseMediaFilename(base, src);
+    const persistedReview = getOrganizerReview(src);
+    if (persistedReview?.decision === "dismissed") {
+      unknownCount++;
+      continue;
+    }
+    let parsed = enrichWithStructuredIdentity(parseFilename(base, src), base, src);
 
     // Enrich parsed results with metadata from external APIs
     if (parsed.type === "movie" && parsed.title) {
@@ -880,6 +1006,17 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
           }
         } catch {}
       }
+    }
+
+    if (persistedReview?.decision === "accepted" && persistedReview.override) {
+      parsed = applyOrganizerReviewOverride(parsed, persistedReview.override, base);
+    }
+
+    if (shouldDeferToReview(structuredIdentity, persistedReview?.decision)) {
+      recordOrganizerReview(src, structuredIdentity);
+      unknownCount++;
+      if (unknownSamples.length < 10) unknownSamples.push(src);
+      continue;
     }
 
     if (parsed.type === "movie") movieCount++; else if (parsed.type === "tv") tvCount++; else {
