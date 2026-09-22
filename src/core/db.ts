@@ -173,6 +173,25 @@ function runMigrations(database: Database): void {
       ON strm_codes (provider, torrent_id, file_id)`,
     `CREATE INDEX IF NOT EXISTS idx_strm_expires
       ON strm_codes (expires_at)`,
+    `CREATE TABLE IF NOT EXISTS organizer_reviews (
+      id TEXT PRIMARY KEY,
+      source_path TEXT NOT NULL,
+      source_basename TEXT NOT NULL,
+      parsed_json TEXT NOT NULL,
+      decision TEXT NOT NULL DEFAULT 'pending',
+      override_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS organizer_review_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      review_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      payload_json TEXT,
+      created_at TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_organizer_reviews_decision
+      ON organizer_reviews (decision, updated_at)`,
   ];
 
   for (const sql of migrations) {
