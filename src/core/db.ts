@@ -173,6 +173,11 @@ function runMigrations(database: Database): void {
       ON strm_codes (provider, torrent_id, file_id)`,
     `CREATE INDEX IF NOT EXISTS idx_strm_expires
       ON strm_codes (expires_at)`,
+    `CREATE TABLE IF NOT EXISTS arr_tracked_torrents (
+      hash TEXT PRIMARY KEY,
+      state_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
   ];
 
   for (const sql of migrations) {
