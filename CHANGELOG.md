@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.11.4] - 2026-09-22
+*Status: arr-bridge persistence, mount defaults, organizer review*
+
+### Fixed 🐛
+- **qBittorrent categories lost on restart** (`src/services/arrBridge.ts`, `src/core/db.ts`): `arr_categories` now persisted in SQLite and restored on `handleCategories` (#78)
+- **Tracked torrents lost on restart** (`src/services/arrBridge.ts`, `src/core/db.ts`): `arr_tracked_torrents` persisted as `state_json` and restored on `startArrBridge`, survives restarts and `handleSetCategory` updates (#79)
+- **Nested multi-file staging collisions** (`src/services/arrBridge.ts`): `scanDirRecursive` now returns `path.relative(rootDir, full)` and `scanMountsForCompleted` creates parent dirs for nested symlinks (#80)
+- **Mount cache defaults masked** (`src/core/config.ts`, `src/core/configApi.ts`): `MOUNT_OPTIONS` default changed from hardcoded `--vfs...` to `""` so individual `MOUNT_*` settings are effective (#81)
+
+### Added ✨
+- **Organizer identity review workflow** (`src/services/mediaParser.ts`, `organizerReview.ts`, `server.ts`, `web/`): structured `parseMediaFilename` + `organizer_reviews`/`organizer_review_audit` tables, `/api/organizer/review` endpoints and dashboard review pages (#82)
+
 ### Version [0.11.3] - 2026-09-21 🔒
 *Status: DB scrub, shared base32, CI guards*
 
