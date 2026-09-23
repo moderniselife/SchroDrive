@@ -55,10 +55,7 @@ export default function Navbar() {
         <nav className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           {/* Brand */}
           <Link href="/" className="flex items-center gap-2 group">
-            <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-purple-600 to-blue-600 text-white font-bold text-sm">
-              S
-              <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-purple-400 to-pink-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-            </div>
+            <img src="/logo.png" alt="SchröDrive" className="h-8 w-8 rounded-lg object-contain" />
             <GradientText className="text-xl font-bold tracking-tight">
               SchröDrive
             </GradientText>
