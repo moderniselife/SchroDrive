@@ -1,12 +1,31 @@
 'use client';
 
 import { motion, useInView } from 'framer-motion';
-import { useRef } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { Zap, Database, ArrowRight, ExternalLink } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
 import GradientText from '@/components/ui/GradientText';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
+
+function LiveVersionBadge({ fallback = 'v0.11.5' }: { fallback?: string }) {
+  const [version, setVersion] = useState(fallback);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('https://api.github.com/repos/moderniselife/SchroDrive/releases/latest', {
+      headers: { Accept: 'application/vnd.github.v3+json' },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.tag_name) setVersion(data.tag_name);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [fallback]);
+  return <Badge variant="outline">{version}</Badge>;
+}
 
 const products = [
   {
@@ -16,7 +35,7 @@ const products = [
     description:
       'Automates media requests, searches indexers, submits to debrid providers, mounts as virtual drives, and serves content to your media servers. The brain of the operation.',
     stats: ['11 providers', '6 watchlist sources', '4 scrapers'],
-    version: 'v0.11.2',
+    version: null as string | null,
     gradient: 'from-purple-500 to-blue-500',
     link: 'https://github.com/moderniselife/SchroDrive',
   },
@@ -81,7 +100,7 @@ export default function StackSection() {
                   >
                     <product.icon className="h-7 w-7 text-white" />
                   </div>
-                  <Badge variant="outline">{product.version}</Badge>
+                  {product.version ? <Badge variant="outline">{product.version}</Badge> : <LiveVersionBadge />}
                 </div>
 
                 {/* Title */}

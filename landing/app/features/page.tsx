@@ -64,7 +64,7 @@ const providers: DebridProvider[] = [
   { name: 'Put.io', status: 'untested', features: { torrents: true, web: false, usenet: false, webdav: true, bridge: true } },
   { name: 'MegaDebrid', status: 'untested', features: { torrents: true, web: false, usenet: false, webdav: false, bridge: true } },
   { name: 'Seedr', status: 'untested', features: { torrents: true, web: false, usenet: false, webdav: true, bridge: true } },
-  { name: 'PikPak', status: 'untested', features: { torrents: true, web: false, usenet: false, webdav: true, bridge: true } },
+  { name: 'PikPak', status: 'in-testing', features: { torrents: true, web: false, usenet: false, webdav: true, bridge: true } },
 ];
 
 const strategies = [
@@ -174,8 +174,8 @@ function StatusBadge({ status }: { status: 'supported' | 'in-testing' | 'unteste
   }
   if (status === 'in-testing') {
     return (
-      <Badge variant="outline" className="border-sky-500/40 text-sky-400">
-        🧪 In-testing
+      <Badge variant="outline" className="border-teal-500/30 bg-teal-500/10 text-teal-400 whitespace-nowrap text-xs">
+        Community Tested
       </Badge>
     );
   }
