@@ -34,6 +34,46 @@ type Product = 'core' | 'media-manager';
 
 const coreChangelog: VersionEntry[] = [
   {
+    version: 'v0.11.5',
+    date: '2026-09-23',
+    emoji: '🌐',
+    tagline: 'schrodrive.org landing + live contributors',
+    changes: [
+      { category: 'Added', text: 'Landing site for schrodrive.org on Cloudflare Workers via opennextjs/cloudflare with live contributors page at /contributors' },
+      { category: 'Fixed', text: 'Landing env vars now mirror src/core/config.ts exactly — corrected PORT, PROVIDERS, ADD_STRATEGY, MOUNT_BASE, etc., and marked Media Manager as Coming Soon' },
+      { category: 'Added', text: 'Live version badge on homepage now fetches api.github.com/repos/.../releases/latest instead of hardcoded v0.11.2' },
+      { category: 'Fixed', text: 'PikPak now shows Community Tested (teal) instead of Untested to reflect community testing' },
+      { category: 'Added', text: 'SEO: next-sitemap, robots.txt, llms.txt, JSON-LD SoftwareApplication + 12 FAQs, www → apex 308, sitemap now committed' },
+      { category: 'Fixed', text: 'Favicon now uses README logo (assets/logo.png) via app/icon.png and proper 32×32 favicon.ico' },
+    ],
+  },
+  {
+    version: 'v0.11.4',
+    date: '2026-09-22',
+    emoji: '🔒',
+    tagline: 'arr-bridge persistence, mount defaults, organizer review',
+    changes: [
+      { category: 'Fixed', text: 'qBittorrent categories lost on restart — arr_categories now persisted in SQLite and restored on handleCategories (#78)' },
+      { category: 'Fixed', text: 'Tracked torrents lost on restart — arr_tracked_torrents persisted as state_json and restored on startArrBridge (#79)' },
+      { category: 'Fixed', text: 'Nested multi-file staging collisions — scanDirRecursive now returns path.relative and creates parent dirs (#80)' },
+      { category: 'Fixed', text: 'Mount cache defaults masked — MOUNT_OPTIONS default changed to "" so individual MOUNT_* are effective (#81)' },
+      { category: 'Added', text: 'Organizer identity review workflow — structured mediaParser + organizer_reviews tables and /api/organizer/review dashboard (#82)' },
+    ],
+  },
+  {
+    version: 'v0.11.3',
+    date: '2026-09-21',
+    emoji: '🔒',
+    tagline: 'DB scrub, shared base32, CI guards',
+    changes: [
+      { category: 'Fixed', text: 'Runtime databases (data/tokens.db) were committed — scrubbed from history via filter-branch, added to .gitignore, added guard.yml to fail PRs that add *.db' },
+      { category: 'Fixed', text: 'Base32 infohash handling used Buffer.from(..., base64) — extracted single base32ToHex to core/utils' },
+      { category: 'Fixed', text: 'IPv6 SSRF bypass — assertPublicHttpUrl now handles Bun vs Node hostname brackets' },
+      { category: 'Fixed', text: '*arr bridge flakiness under bun test --parallel — added Map<port,Server> and per-suite tmpDir dbPath isolation' },
+      { category: 'Added', text: 'CONTRIBUTING.md and CONTRIBUTORS.md with live commit counts, plus scripts/fix-stale-history.sh' },
+    ],
+  },
+  {
     version: 'v0.11.2',
     date: '2026-08-15',
     emoji: '🔒',
