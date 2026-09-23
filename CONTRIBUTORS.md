@@ -58,7 +58,7 @@ These are not human contributors, but they keep the repo healthy and are thanked
 
 The project is MIT-licensed (see `LICENSE`, copyright © 2025 moderniselife). All contributors retain copyright to their work and license it under MIT.
 
-*Last updated: 2026-09-22 — generated from `git log --format="%an <%ae>" | sort -u` and `gh api repos/moderniselife/SchroDrive/contributors`.*
+*Last updated: 2026-09-23 — generated from `git log --format="%an <%ae>" | sort -u` and `gh api repos/moderniselife/SchroDrive/contributors`.*
 
 ---
 

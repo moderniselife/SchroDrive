@@ -1,0 +1,65 @@
+name: Deploy Landing to Cloudflare Workers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "landing/**"
+      - ".github/workflows/landing-deploy.yml"
+  workflow_dispatch:
+
+# Only the default branch should trigger deploys — PRs from forks never get secrets
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # Double-guard: never run on pull_request, even if triggered manually from a fork
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Least privilege — deployment needs no write to contents
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node (for wrangler)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install landing dependencies
+        working-directory: landing
+        run: bun install --frozen-lockfile
+
+      - name: Build landing for Cloudflare Workers (OpenNext)
+        working-directory: landing
+        run: bun run build:worker
+        env:
+          # No secrets needed for build — pure static generation
+          NEXT_TELEMETRY_DISABLED: "1"
+
+      - name: Deploy to Cloudflare Workers
+        working-directory: landing
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+          # wrangler.jsonc already defines name, routes for schrodrive.org
+        env:
+          # Ensure no secrets leak to logs
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Summary
+        run: |
+          echo "Deployed landing to Cloudflare Workers (schrodrive.org)"
+          echo "If this is the first deploy, add custom domains schrodrive.org / www.schrodrive.org to the worker in the Cloudflare dashboard, then set CLOUDFLARE_API_TOKEN (Zone:Edit, Worker:Edit) and CLOUDFLARE_ACCOUNT_ID as GitHub Actions secrets."

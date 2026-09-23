@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.11.5] - 2026-09-23
+*Status: landing on schrodrive.org, Cloudflare Workers, contributors live page*
+
+### Added ✨
+- **Landing site for schrodrive.org** (`landing/`): Next.js 16 + Three.js + Framer Motion marketing site, now hosted on Cloudflare Workers via `opennextjs/cloudflare` and auto-deployed on push to `main` (see `landing-deploy.yml`)
+- **Live contributors page** (`landing/app/contributors`): renders `CONTRIBUTORS.md`/`CONTRIBUTING.md` live and shows GitHub API contributor avatars, commit counts, and hourly cache — linked in navbar
+- **Cloudflare Workers deploy** (`.github/workflows/landing-deploy.yml`, `landing/wrangler.jsonc`, `open-next.config.ts`): secure `CLOUDFLARE_API_TOKEN`/`ACCOUNT_ID` secrets, `contents: read` only, `if: push to main` so forks cannot access secrets, `.open-next`/`wrangler` ignored
+
+### Fixed 🐛
+- **Landing factual correctness** (`landing/lib/constants.ts`, `components/docs/DockerGenerator.tsx`): corrected 11-provider matrix, `ENV_VARS` now mirrors `src/core/config.ts` exactly (e.g. `PORT 8978` not `3000`, `PROVIDERS torbox,realdebrid`, `ADD_STRATEGY all|failover|single`, `MOUNT_BASE` not `MOUNT_BASE_DIR`, `WEBDAV_BRIDGE_ENABLED true`, `TOKEN_RESET_TIMEZONE`, correct service-toggle defaults). Media Manager marked *Coming Soon* and no longer emits a fake `schrodrive-media` service in generated compose
+- **Landing secrets / gitignore** (`landing/.gitignore`): confirmed `.env*` ignored, added `.open-next/`, `.wrangler/`, `worker-configuration.d.ts`; verified no hardcoded API keys — only `your_*_key` placeholders
+- **Release tag idempotency** (`.github/workflows/release.yml`): `git rev-parse v$CURRENT` check prevents `fatal: tag already exists` on docs-only pushes
+
 ### Version [0.11.4] - 2026-09-22
 *Status: arr-bridge persistence, mount defaults, organizer review*
 
