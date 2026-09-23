@@ -6,7 +6,7 @@ export function SoftwareAppJsonLd() {
     operatingSystem: 'Linux, macOS, Windows, Docker',
     applicationCategory: 'MultimediaApplication',
     description:
-      'Open-source media automation orchestrator for Plex, Jellyfin & Emby with 11 debrid providers, Prowlarr/Jackett, Stremio scrapers, and a fake qBittorrent bridge for Sonarr/Radarr. One container.',
+      'Open-source media automation orchestrator for Plex, Jellyfin, Emby & Silo with 11 debrid providers, Prowlarr/Jackett, Stremio scrapers, and a fake qBittorrent bridge for Sonarr/Radarr. One container. Silo speaks Jellyfin protocol on :8096.',
     url: 'https://schrodrive.org',
     author: { '@type': 'Person', name: 'Joseph Shenton', url: 'https://github.com/moderniselife' },
     maintainer: { '@type': 'Person', name: 'Joseph Shenton' },
@@ -20,7 +20,7 @@ export function SoftwareAppJsonLd() {
       'Add strategies: all (redundant), failover (primary+backup), single',
       'Prowlarr and Jackett with auto-detect (INDEXER_PROVIDER=auto)',
       'Torrentio, Comet, Zilean, Mediafusion Stremio scrapers (SCRAPER_MODE=merge|fallback)',
-      'Plex, Jellyfin, Emby watchlists + library refresh (isAnyMediaServerStreaming pause)',
+      'Plex, Jellyfin, Emby & Silo watchlists + library refresh (isAnyMediaServerStreaming pause) — Silo via Jellyfin protocol on :8096',
       'Trakt, Mdblist, Listrr watchlists',
       'Overseerr / Jellyseerr / Seerr webhook + poller (SEERR_* > OVERSEERR_*)',
       'Fake qBittorrent Web API v2 on :8282 for Sonarr/Radarr (no Decypharr/RDT-Client)',
@@ -153,6 +153,14 @@ export function FaqJsonLd() {
         acceptedAnswer: {
           '@type': 'Answer',
           text: 'Yes, 10-page Next.js dashboard on port 3000 when RUN_WEB_GUI=true — torrents, files, search, mounts, logs, settings.',
+        },
+      },
+      {
+        '@type': 'Question',
+        name: 'Does it support Silo Server?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'Yes. Silo (siloserver.org) is a modern Go + Postgres media server that speaks the Jellyfin protocol on :8096. Point JELLYFIN_URL to http://silo:8096 and use your Silo credentials — watchlist and library refresh work like Jellyfin, with native Silo features (Go, pgvector, gRPC plugins, hardware transcode, worker nodes) unchanged.',
         },
       },
     ],
