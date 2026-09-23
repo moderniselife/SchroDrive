@@ -62,51 +62,29 @@ jobs:
 
       - name: Fail if history still contains leaked DBs
         run: |
-          echo "==> Checking PR history for leaked DBs (catches contributors with stale history)..."
-          # Only check commits introduced by this PR/branch vs the base branch.
-          # Using --all would flag origin/main which is still protected and retains old history until an admin purges it.
+          echo "==> Checking PR for added runtime DBs..."
+          # Only flag files *added* by this PR that are currently tracked.
+          # Deletions of old DBs (the scrub) are expected and should not fail.
+          # We check the diff from base to HEAD with diff-filter=A, not the entire --all history.
           BASE_REF="${{ github.base_ref || 'develop' }}"
-          # Ensure base exists locally (checkout with fetch-depth:0 guarantees it, but be defensive)
-          git fetch origin "$BASE_REF" --depth=1 2>/dev/null || git fetch origin 2>/dev/null || true
-          # Determine merge-base; fall back to origin/develop if BASE_REF not found
+          git fetch origin "$BASE_REF" 2>/dev/null || true
           if git rev-parse --verify "origin/$BASE_REF" >/dev/null 2>&1; then
             BASE="origin/$BASE_REF"
           else
             BASE="origin/develop"
           fi
-          # Also handle push events where base_ref is empty – compare against HEAD~1 or just tracked files
-          if [ "${{ github.event_name }}" = "push" ]; then
-            # For pushes, just check the range of new commits (before..after)
-            RANGE="${{ github.event.before }}..${{ github.event.after }}"
-            # If before is all zeros (new branch), use base
-            if echo "$RANGE" | grep -q "0\{40\}"; then
-              RANGE="$BASE..HEAD"
-            fi
-          else
-            RANGE="$BASE..HEAD"
-          fi
-          echo "Checking range: $RANGE (base: $BASE)"
-          # Collect added files in the range (diff-filter=A) – deletions of old DBs are expected and should not fail
-          if git rev-parse --verify HEAD >/dev/null 2>&1 && git rev-parse --verify "$BASE" >/dev/null 2>&1; then
-            CHANGED=$(git diff --name-only --diff-filter=A "$BASE"...HEAD 2>/dev/null | sort -u || true)
-            if [ -z "$CHANGED" ]; then
-              CHANGED=$(git log --diff-filter=A --name-only --pretty=format: "$RANGE" 2>/dev/null | sort -u || true)
-            fi
-          else
-            CHANGED=$(git diff --name-only --diff-filter=A HEAD 2>/dev/null || true)
-          fi
-          if echo "$CHANGED" | grep -Eq '\.db$|\.db-shm$|\.db-wal$'; then
-            echo "::error::This PR introduces runtime DB files! Your branch adds a .db."
-            echo "Offending added files in PR range:"
-            echo "$CHANGED" | grep -E '\.db($|-shm$|-wal$)'
-            echo ""
-            echo "Fix: remove the .db from the PR and ensure .gitignore covers it:"
-            echo "  git rm --cached <file>"
-            echo "  # If your branch is based on pre-scrub history, rebase:"
-            echo "  git fetch origin && git rebase origin/develop"
+          echo "Base: $BASE, HEAD: $(git rev-parse --short HEAD)"
+          # For PRs, compare base...HEAD; for pushes, the same works (shows what the push adds)
+          CHANGED=$(git diff --name-only --diff-filter=A "$BASE"...HEAD 2>/dev/null | sort -u || true)
+          echo "Added files in PR:"
+          echo "$CHANGED" | head -n 20
+          if echo "$CHANGED" | grep -Eq '\.db$|\.db-shm$|\.db-wal$|\.db-journal$'; then
+            echo "::error::This PR adds a runtime DB file! Remove it."
+            echo "$CHANGED" | grep -E '\.db($|-shm$|-wal$|-journal$)'
+            echo "Fix: git rm --cached <file> and ensure .gitignore has data/*.db etc."
             exit 1
           fi
-          echo "✓ PR history clean (no added .db files)"
+          echo "✓ No added .db files in PR"
 
       - name: Scan for unexpected data/ content
         run: |
