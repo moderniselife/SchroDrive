@@ -485,6 +485,12 @@ export const INTEGRATIONS: Integration[] = [
     category: 'media-server',
   },
   {
+    name: 'Silo',
+    description: 'Modern media server — Go + Postgres, speaks Jellyfin protocol on :8096.',
+    icon: Monitor,
+    category: 'media-server',
+  },
+  {
     name: 'Prowlarr',
     description: 'Indexer manager for the *arr stack.',
     icon: Search,

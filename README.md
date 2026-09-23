@@ -141,7 +141,7 @@ Set via `ADD_STRATEGY` environment variable.
 - **WebDAV Bridge** — built-in translation layer that converts debrid API keys into WebDAV endpoints for rclone (no native WebDAV credentials required!)
 - **Zurg-compatible organised directories** — automatic media classification into `anime/`, `shows/`, `movies/`, and `__all__/`
 - Configurable mount options (VFS cache, permissions, buffer sizes, chunk sizes)
-- Works with Plex, Jellyfin, Emby, and any media server that reads local files
+- Works with Plex, Jellyfin, Emby, Silo, and any media server that reads local files
 - Per-provider mount points under a shared base directory
 - **Cloud storage mounts** — mount MEGA, Dropbox, Google Drive, and OneDrive alongside debrid content via rclone
 - **External WebDAV mounts** — mount third-party WebDAV servers (NAS shares, media servers) with optional organiser skip and per-mount rclone options
@@ -287,6 +287,9 @@ Overseerr → Radarr/Sonarr → SchroDrive (fake qBit, port 8282) → Debrid Pro
 | **Plex** | ✅ | ✅ | Supported |
 | **Jellyfin** | ✅ | ✅ | Supported |
 | **Emby** | ✅ | ✅ | Supported |
+| **Silo** | ✅ | ✅ | Supported — via Jellyfin protocol on `:8096` — [siloserver.org](https://siloserver.org) |
+
+> **Silo** is a modern self-hosted media server (Go + Postgres + pgvector, pre-1.0 AGPL-3.0). SchröDrive treats it as a Jellyfin-compatible server — point your `JELLYFIN_URL` to `http://silo:8096` and use your Silo credentials. Native Silo plugins, hardware transcode, and worker nodes work as normal; watchlist + library refresh behave like Jellyfin.
 
 ### 🛡️ Resilience & Self-Healing
 
@@ -296,7 +299,7 @@ SchröDrive is designed to handle the real-world chaos of debrid services:
 - **Stale-while-locked cache** — expired CDN URLs are kept in a stale cache; when fresh resolution fails, the stale URL is served as a fallback (CDN URLs typically live 6-12 hours past expiry)
 - **Mount health monitor** — background process watches rclone log patterns for IO errors and auto-remounts when consecutive failures exceed threshold
 - **Stale/Broken FUSE Mount Auto-Recovery** — Automatically detects and recovers from `"Transport endpoint is not connected"` or busy FUSE mounts on startup (often caused by previous container crashes). Unlike legacy systems (like pd_zurg) which permanently lock up the host mount points requiring manual SSH unmounts, SchröDrive forcefully unmounts the broken references and remounts them automatically.
-- **Unified Media Server Stream Detection** — Automatically detects active streaming sessions on Plex, Jellyfin, and Emby in parallel. While anyone is watching, background poller queries, watchlist polls, and dead scanner operations are fully paused. This eliminates background API traffic to debrid providers during streaming, preventing rate-limiting, buffering, and mid-stream freezing.
+- **Unified Media Server Stream Detection** — Automatically detects active streaming sessions on Plex, Jellyfin, Emby, and Silo in parallel. While anyone is watching, background poller queries, watchlist polls, and dead scanner operations are fully paused. This eliminates background API traffic to debrid providers during streaming, preventing rate-limiting, buffering, and mid-stream freezing.
 - **Dead torrent auto-lifecycle** — persistent download failures (10+ consecutive) trigger automatic deletion from provider → blacklisting → replacement search via indexer
 - **Persistent blacklist** — dead torrent names are stored on disk and checked before re-adding, preventing re-download of known broken content
 - **Adaptive rate limiting** with exponential backoff and per-provider tracking

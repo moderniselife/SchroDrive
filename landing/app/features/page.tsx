@@ -132,6 +132,7 @@ const mediaServers = [
   { name: 'Plex', watchlist: true, libraryRefresh: true },
   { name: 'Jellyfin', watchlist: true, libraryRefresh: true },
   { name: 'Emby', watchlist: true, libraryRefresh: true },
+  { name: 'Silo', watchlist: true, libraryRefresh: true },
 ];
 
 const watchlistSources = [
