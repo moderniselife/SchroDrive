@@ -197,7 +197,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     name: 'PikPak',
-    status: 'untested',
+    status: 'testing',
     features: ['Torrents', 'WebDAV bridge', 'FUSE mounts', 'JWT auth'],
   },
 ];
