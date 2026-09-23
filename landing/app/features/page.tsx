@@ -170,7 +170,7 @@ function FeatureCheck({ supported }: { supported: boolean }) {
 
 function StatusBadge({ status }: { status: 'supported' | 'in-testing' | 'untested' }) {
   if (status === 'supported') {
-    return <Badge variant="gradient">✅ Fully Supported</Badge>;
+    return <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400 whitespace-nowrap text-xs">Fully Supported</Badge>;
   }
   if (status === 'in-testing') {
     return (
@@ -260,9 +260,11 @@ export default function FeaturesPage() {
               {providers.map((provider) => (
                 <AnimatedChild key={provider.name}>
                   <GlassCard className="p-6 h-full">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-semibold">{provider.name}</h3>
-                      <StatusBadge status={provider.status} />
+                    <div className="flex items-center justify-between gap-2 mb-4">
+                      <h3 className="text-lg font-semibold truncate min-w-0">{provider.name}</h3>
+                      <div className="shrink-0">
+                        <StatusBadge status={provider.status} />
+                      </div>
                     </div>
                     <div className="space-y-2">
                       {Object.entries(provider.features).map(([feature, supported]) => (
