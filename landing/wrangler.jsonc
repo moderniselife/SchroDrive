@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "schrodrive-landing",
+  "compatibility_date": "2026-09-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "not_found_handling": "single-page-application"
+  },
+  "main": ".open-next/worker.js",
+  // Custom domain — configure in Cloudflare dashboard after first deploy:
+  // schrodrive.org and www.schrodrive.org → this worker
+  // Then set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN secrets in GitHub
+  "routes": [
+    { "pattern": "schrodrive.org/*", "zone_name": "schrodrive.org" },
+    { "pattern": "www.schrodrive.org/*", "zone_name": "schrodrive.org" }
+  ]
+}
