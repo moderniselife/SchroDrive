@@ -1,5 +1,6 @@
 'use client';
 
+import { SoftwareAppJsonLd, FaqJsonLd } from '@/components/seo/JsonLd';
 import dynamic from 'next/dynamic';
 import HeroSection from '@/components/hero/HeroSection';
 import LogoCloud from '@/components/sections/LogoCloud';
@@ -18,6 +19,8 @@ const ParticleScene = dynamic(
 export default function Home() {
   return (
     <main className="relative min-h-screen bg-[#030014] text-white overflow-hidden">
+      <SoftwareAppJsonLd />
+      <FaqJsonLd />
       {/* Three.js particle background — absolute, behind everything */}
       <ParticleScene />
 

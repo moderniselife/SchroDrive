@@ -1,0 +1,32 @@
+# SchröDrive
+
+> Your content exists everywhere and nowhere — until SchröDrive observes it.
+
+SchröDrive is an open-source media automation orchestrator for Plex, Jellyfin & Emby. Single container, 11 debrid providers, Prowlarr/Jackett, Stremio scrapers, fake qBittorrent bridge for Sonarr/Radarr, rclone FUSE mounts.
+
+- Site: https://schrodrive.org
+- Docs: https://schrodrive.org/docs
+- Docker Generator: https://schrodrive.org/docs/docker
+- GitHub: https://github.com/moderniselife/SchroDrive
+- Changelog: https://schrodrive.org/changelog
+
+## Docs
+
+- Installation: https://schrodrive.org/docs
+- Configuration: env vars in src/core/config.ts — PORT 8978, PROVIDERS, ADD_STRATEGY all|failover|single, MOUNT_BASE, etc.
+- Providers: https://schrodrive.org/features#providers — 11 providers
+- Architecture: https://schrodrive.org/docs — data flow and dead-torrent lifecycle
+
+## Features
+
+- Multi-debrid (11), Prowlarr/Jackett auto-detect, Torrentio/Comet/Zilean/Mediafusion, 6 watchlists, *arr bridge :8282, rclone WebDAV bridge, 10-page dashboard
+
+## FAQ
+
+- Fake qBittorrent? Yes, port 8282, add as qBittorrent in Radarr/Sonarr.
+- Need Prowlarr or Jackett? Either, or Stremio scrapers alone.
+- Which providers work? TorBox/RealDebrid/AllDebrid stable, 8 untested but implemented.
+
+## llms.txt
+
+This file helps AI crawlers. Full docs at /docs. No tracking.
