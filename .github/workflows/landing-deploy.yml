@@ -33,7 +33,7 @@ jobs:
       - name: Setup Node (for wrangler)
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Install landing dependencies
         working-directory: landing
@@ -47,7 +47,7 @@ jobs:
           NEXT_TELEMETRY_DISABLED: "1"
 
       - name: Deploy to Cloudflare Workers
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v3.14.1
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
