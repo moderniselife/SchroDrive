@@ -145,6 +145,7 @@ export default function ActivityPage() {
     eventSource.addEventListener("done", () => {
       setIsStreaming(false)
       setRefreshing(false)
+      setLoading(false)
       setStatus("")
       eventSource.close()
     })
