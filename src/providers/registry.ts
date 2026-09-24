@@ -240,9 +240,11 @@ class ProviderRegistry {
     let fileBuffer: Buffer;
     try {
       assertPublicHttpUrl(torrentUrl);
-      const resp = await axios.get(torrentUrl, {
+      const safeUrl = new URL(torrentUrl).toString();
+      const resp = await axios.get(safeUrl, {
         responseType: 'arraybuffer',
         timeout: 30000,
+        maxRedirects: 0,
         httpAgent: new http.Agent({ family: 4 }),
         httpsAgent: new https.Agent({ family: 4 }),
       });
