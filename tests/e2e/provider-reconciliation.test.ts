@@ -1,25 +1,25 @@
 import { describe, expect, test } from 'bun:test';
 import { closeDb } from '../../src/core/db';
 import {
-  CineCircleAllDebridIntake,
+  ProviderReconciliationIntake,
   InMemoryIntakeStateStore,
   SqliteIntakeStateStore,
-  type AllDebridSnapshot,
+  type ProviderSnapshot,
   type ArrClient,
   type ArrCommandResult,
   type DirectFileEvent,
   isMediaFile,
-  AllDebridProviderSource,
-  CineCircleAllDebridReconciliationWorker,
-} from '../../src/services/cinecircleAlldebridIntake';
+  ProviderSnapshotSource,
+  ProviderReconciliationWorker,
+} from '../../src/services/providerReconciliation';
 
-function snapshot(id: string, name: string, files = [{ path: `${name}.mkv`, size: 10 }]): AllDebridSnapshot {
+function snapshot(id: string, name: string, files = [{ path: `${name}.mkv`, size: 10 }]): ProviderSnapshot {
   return { providerItemId: id, name, status: 'finished', files, observedAt: '2026-09-17T00:00:00.000Z' };
 }
 
 class SequenceSource {
-  constructor(private readonly rounds: AllDebridSnapshot[][]) {}
-  async listSnapshot(): Promise<AllDebridSnapshot[]> { return this.rounds.shift() || []; }
+  constructor(private readonly rounds: ProviderSnapshot[][]) {}
+  async listSnapshot(): Promise<ProviderSnapshot[]> { return this.rounds.shift() || []; }
 }
 
 class FakeArr implements ArrClient {
@@ -41,7 +41,18 @@ const routeFor = (category: 'Movies' | 'Shows') => ({
   apiKey: 'fixture-key',
 });
 
-describe('CineCircle AllDebrid direct intake', () => {
+describe('provider reconciliation direct intake', () => {
+  test('uses the common provider contract for a non-AllDebrid provider', async () => {
+    const source = new ProviderSnapshotSource({
+      id: 'realdebrid',
+      async listTorrents() { return [{ id: 'rd-1', name: 'Example.Show S01E01', status: 'seeding', progress: 100, bytes: 10, files: [{ id: 'f1', name: 'Example.Show.S01E01.mkv', path: 'Example.Show.S01E01.mkv', size: 10, selected: true }] } as any]; },
+      async fetchDirectories() { return [{ id: 'rd-1', name: 'Example.Show.S01E01', originalName: 'Example.Show S01E01', files: [{ id: 'f1', name: 'Example.Show.S01E01.mkv', size: 10 }] }]; },
+    });
+    const snapshots = await source.listSnapshot();
+    expect(snapshots[0]).toMatchObject({ provider: 'realdebrid', providerItemId: 'realdebrid:rd-1', status: 'seeding' });
+    expect(snapshots[0].files).toEqual([{ path: 'Example.Show.S01E01.mkv', size: 10 }]);
+  });
+
   test('uses the existing AllDebrid client for bounded recent and full snapshots', async () => {
     const recentRequests: string[][] = [];
     let fullCalls = 0;
@@ -61,7 +72,7 @@ describe('CineCircle AllDebrid direct intake', () => {
         return items.map((item) => ({ id: item.id, name: item.id, originalName: item.id, files: [{ id: `${item.id}.mkv`, name: `${item.id}.mkv`, size: 1 }] }));
       },
     };
-    const source = new AllDebridProviderSource(provider as any);
+    const source = new ProviderSnapshotSource(provider as any, false);
     const recent = await source.listRecentSnapshot!(1);
     const full = await source.listSnapshot();
     expect(recent.map((item) => item.providerItemId)).toEqual(['new']);
@@ -70,8 +81,8 @@ describe('CineCircle AllDebrid direct intake', () => {
     expect(fullCalls).toBe(1);
 
     const arr = new FakeArr();
-    const intake = new CineCircleAllDebridIntake(
-      new AllDebridProviderSource(provider as any), arr, new InMemoryIntakeStateStore(), { routeFor },
+    const intake = new ProviderReconciliationIntake(
+      new ProviderSnapshotSource(provider as any, false), arr, new InMemoryIntakeStateStore(), { routeFor },
     );
     const events = await intake.reconcile('recent', 1);
     expect(events).toHaveLength(1);
@@ -81,7 +92,7 @@ describe('CineCircle AllDebrid direct intake', () => {
 
   test('emits add and routes Movies to Radarr and Shows to Sonarr', async () => {
     const arr = new FakeArr();
-    const intake = new CineCircleAllDebridIntake(
+    const intake = new ProviderReconciliationIntake(
       new SequenceSource([[snapshot('m-1', 'Movie (2026)'), snapshot('s-1', 'Show S01E02')]]),
       arr,
       new InMemoryIntakeStateStore(),
@@ -98,7 +109,7 @@ describe('CineCircle AllDebrid direct intake', () => {
   test('emits changed when a completed file tree changes, even after a missed round', async () => {
     const store = new InMemoryIntakeStateStore();
     const arr = new FakeArr();
-    const intake = new CineCircleAllDebridIntake(
+    const intake = new ProviderReconciliationIntake(
       new SequenceSource([
         [snapshot('m-1', 'Movie (2026)', [{ path: 'Movie.mkv', size: 10 }])],
         [snapshot('m-1', 'Movie (2026)', [{ path: 'Movie.mkv', size: 20 }])],
@@ -115,7 +126,7 @@ describe('CineCircle AllDebrid direct intake', () => {
   test('suppresses duplicate delivery and emits deletion from a missing status item', async () => {
     const store = new InMemoryIntakeStateStore();
     const arr = new FakeArr();
-    const intake = new CineCircleAllDebridIntake(
+    const intake = new ProviderReconciliationIntake(
       new SequenceSource([[snapshot('m-1', 'Movie (2026)')], [snapshot('m-1', 'Movie (2026)')], []]),
       arr, store, { routeFor },
     );
@@ -128,7 +139,7 @@ describe('CineCircle AllDebrid direct intake', () => {
   test('dry-run persists state without submitting to Arr', async () => {
     const arr = new FakeArr();
     const store = new InMemoryIntakeStateStore();
-    const intake = new CineCircleAllDebridIntake(
+    const intake = new ProviderReconciliationIntake(
       new SequenceSource([[snapshot('m-1', 'Movie (2026)')]]), arr, store,
       { routeFor, dryRun: true },
     );
@@ -141,7 +152,7 @@ describe('CineCircle AllDebrid direct intake', () => {
   test('keeps all supported subtitles and attachments in the event tree', async () => {
     const names = ['video.mkv', 'captions.srt', 'captions.ass', 'captions.ssa', 'captions.sub', 'captions.vtt', 'captions.idx', 'captions.sup', 'captions.sbv', 'captions.mpsub', 'cover.jpg'];
     const arr = new FakeArr();
-    const intake = new CineCircleAllDebridIntake(
+    const intake = new ProviderReconciliationIntake(
       new SequenceSource([[snapshot('m-1', 'Movie (2026)', names.map((path) => ({ path, size: 1 })))]]) ,
       arr, new InMemoryIntakeStateStore(), { routeFor },
     );
@@ -153,11 +164,11 @@ describe('CineCircle AllDebrid direct intake', () => {
   test('restarts from persisted state and polls the pending Arr command', async () => {
     const store = new InMemoryIntakeStateStore();
     const firstArr = new FakeArr();
-    await new CineCircleAllDebridIntake(
+    await new ProviderReconciliationIntake(
       new SequenceSource([[snapshot('m-1', 'Movie (2026)')]]), firstArr, store, { routeFor },
     ).reconcile();
     const secondArr = new FakeArr();
-    const events = await new CineCircleAllDebridIntake(
+    const events = await new ProviderReconciliationIntake(
       new SequenceSource([[snapshot('m-1', 'Movie (2026)')]]), secondArr, store, { routeFor },
     ).reconcile();
     expect(events).toEqual([]);
@@ -170,7 +181,7 @@ describe('CineCircle AllDebrid direct intake', () => {
     const firstArr = new FakeArr();
     const firstStore = new SqliteIntakeStateStore();
     const source = new SequenceSource([[snapshot(itemId, 'Movie (2026)')]]);
-    const first = new CineCircleAllDebridIntake(source, firstArr, firstStore, { routeFor });
+    const first = new ProviderReconciliationIntake(source, firstArr, firstStore, { routeFor });
     const events = await first.reconcile('full');
     expect(events.some((event) => event.providerItemId === itemId && event.action === 'added')).toBe(true);
     expect(firstStore.getCursor().fullAt).toBeDefined();
@@ -179,7 +190,7 @@ describe('CineCircle AllDebrid direct intake', () => {
     closeDb();
     const secondStore = new SqliteIntakeStateStore();
     const secondArr = new FakeArr();
-    const second = new CineCircleAllDebridIntake(
+    const second = new ProviderReconciliationIntake(
       new SequenceSource([[snapshot(itemId, 'Movie (2026)')]]), secondArr, secondStore, { routeFor },
     );
     expect(await second.reconcile('full')).toEqual([]);
@@ -198,7 +209,7 @@ describe('CineCircle AllDebrid direct intake', () => {
       },
       async getCommand(_route, commandId) { return { commandId, status: 'completed' }; },
     };
-    const intake = new CineCircleAllDebridIntake(
+    const intake = new ProviderReconciliationIntake(
       new SequenceSource([[snapshot('s-1', 'Show S01E02')]]), arr, new InMemoryIntakeStateStore(),
       { routeFor, maxAttempts: 3 },
     );
@@ -212,7 +223,7 @@ describe('CineCircle AllDebrid direct intake', () => {
       async submitScan() { throw new Error('permanent'); },
       async getCommand(_route, commandId) { return { commandId, status: 'failed' }; },
     };
-    const intake = new CineCircleAllDebridIntake(
+    const intake = new ProviderReconciliationIntake(
       new SequenceSource([[snapshot('m-1', 'Movie (2026)')]]), arr, new InMemoryIntakeStateStore(),
       { routeFor, maxAttempts: 2, onReview: (event) => { reviewed.push(event); } },
     );
@@ -224,7 +235,7 @@ describe('CineCircle AllDebrid direct intake', () => {
   test('starts recent and full polling at configured intervals and stops cleanly', async () => {
     let calls = 0;
     const intake = { async reconcile() { calls++; return []; } };
-    const worker = new CineCircleAllDebridReconciliationWorker(intake as any, { recentMs: 10, fullMs: 15, recentLimit: 2 });
+    const worker = new ProviderReconciliationWorker(intake as any, { recentMs: 10, fullMs: 15, recentLimit: 2 });
     worker.start();
     expect(worker.isRunning()).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 25));

@@ -12,8 +12,8 @@ import { getDb, closeDb, pruneOldEntries, pruneExpiredStrmCodes } from "./core/d
 import { startStrmServer, stopStrmServer } from "./services/strmService";
 import { startCloudLinksBridge, stopCloudLinksBridge } from "./services/cloudLinks/bridge";
 import { startArrBridge, stopArrBridge } from "./services/arrBridge";
-import { startCineCircleAllDebridReconciliation } from "./services/cinecircleAlldebridRuntime";
-import type { CineCircleAllDebridReconciliationWorker } from "./services/cinecircleAlldebridIntake";
+import { startProviderReconciliation } from "./services/providerReconciliationRuntime";
+import type { ProviderReconciliationWorker } from "./services/providerReconciliation";
 
 const program = new Command();
 program
@@ -33,7 +33,7 @@ program
     }
 
     // Register graceful shutdown handlers
-    let cineCircleReconciliationWorker: CineCircleAllDebridReconciliationWorker | undefined;
+    let providerReconciliationWorker: ProviderReconciliationWorker | undefined;
     const shutdown = () => {
       console.log(`[${new Date().toISOString()}][serve] Shutting down — unmounting FUSE drives...`);
       try {
@@ -46,7 +46,7 @@ program
       stopStrmServer().catch(() => {});
       stopCloudLinksBridge().catch(() => {});
       stopArrBridge().catch(() => {});
-      cineCircleReconciliationWorker?.stop();
+      providerReconciliationWorker?.stop();
       setTimeout(() => {
         console.log(`[${new Date().toISOString()}][serve] Closing database and exiting...`);
         closeDb();
@@ -81,7 +81,7 @@ program
         });
       }
 
-      // The AllDebrid reconciliation worker submits Arr scans against this
+      // The provider reconciliation worker submits Arr rescans against this
       // mount. Wait until mountVirtualDrive has established the visible paths
       // before starting the worker below; otherwise Arr can reject the first
       // scan as a missing file during FUSE startup.
@@ -108,7 +108,7 @@ program
       startWatchlistPoller();
     }
 
-    cineCircleReconciliationWorker = startCineCircleAllDebridReconciliation();
+    providerReconciliationWorker = startProviderReconciliation();
     
     // Start the main server
     startServer();

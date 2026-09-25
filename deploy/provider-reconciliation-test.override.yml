@@ -1,25 +1,24 @@
-# Test-only override for the CineCircle AllDebrid reconciliation worker.
+# Test-only override for the provider reconciliation worker.
 # Apply with the existing cinecircle-test compose file only.
 services:
   schrodrive-test:
-    image: schrodrive:cinecircle-alldebrid-reconciliation
+    image: schrodrive:provider-reconciliation
     environment:
-      CINECIRCLE_ALLDEBRID_RECONCILIATION_ENABLED: "true"
-      CINECIRCLE_ALLDEBRID_RECENT_INTERVAL_MS: "60000"
-      CINECIRCLE_ALLDEBRID_FULL_INTERVAL_MS: "86400000"
-      CINECIRCLE_ALLDEBRID_RECENT_LIMIT: "1"
-      CINECIRCLE_ALLDEBRID_RUN_FULL_ON_START: "false"
-      CINECIRCLE_ALLDEBRID_DRY_RUN: "false"
-      CINECIRCLE_RADARR_URL: http://radarr-test:7878
-      CINECIRCLE_RADARR_API_KEY: ${CINECIRCLE_RADARR_API_KEY:-}
-      CINECIRCLE_SONARR_URL: http://sonarr-test:8989
-      CINECIRCLE_SONARR_API_KEY: ${CINECIRCLE_SONARR_API_KEY:-}
-      CINECIRCLE_ALLDEBRID_ARR_PATH: /mnt/schrodrive/alldebrid
-      CINECIRCLE_ALLDEBRID_ARR_IMPORT_MODE: Copy
-      CINECIRCLE_ALLDEBRID_MOVIES_LIBRARY_PATH: /mnt/cinecircle-test/radarr/movies
-      CINECIRCLE_ALLDEBRID_SHOWS_LIBRARY_PATH: /mnt/cinecircle-test/sonarr/shows
+      PROVIDER_RECONCILIATION_ENABLED: "true"
+      PROVIDER_RECONCILIATION_RECENT_INTERVAL_MS: "60000"
+      PROVIDER_RECONCILIATION_FULL_INTERVAL_MS: "86400000"
+      PROVIDER_RECONCILIATION_RECENT_LIMIT: "1"
+      PROVIDER_RECONCILIATION_RUN_FULL_ON_START: "false"
+      PROVIDER_RECONCILIATION_DRY_RUN: "false"
+      PROVIDER_RECONCILIATION_RADARR_URL: http://radarr-test:7878
+      PROVIDER_RECONCILIATION_RADARR_API_KEY: ${CINECIRCLE_RADARR_API_KEY:-}
+      PROVIDER_RECONCILIATION_SONARR_URL: http://sonarr-test:8989
+      PROVIDER_RECONCILIATION_SONARR_API_KEY: ${CINECIRCLE_SONARR_API_KEY:-}
+      PROVIDER_RECONCILIATION_MOUNT_BASE: /mnt/schrodrive
+      PROVIDER_RECONCILIATION_MOVIES_LIBRARY_PATH: /mnt/cinecircle-test/radarr/movies
+      PROVIDER_RECONCILIATION_SHOWS_LIBRARY_PATH: /mnt/cinecircle-test/sonarr/shows
       ALLDEBRID_API_KEY: ${ALLDEBRID_API_KEY:-}
-      # Direct AllDebrid polling is the only input under test here.
+      # Direct provider polling is the only input under test here.
       RUN_WEBHOOK: "false"
       RUN_POLLER: "false"
       RUN_WATCHLIST_POLLER: "false"
