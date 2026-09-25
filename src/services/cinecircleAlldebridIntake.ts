@@ -20,6 +20,7 @@ export type ArrKind = 'radarr' | 'sonarr';
 export interface AllDebridSnapshot {
   providerItemId: string;
   name: string;
+  directoryName?: string;
   status: string;
   files: Array<{ path: string; size: number }>;
   observedAt: string;
@@ -40,6 +41,10 @@ export interface ArrRoute {
   kind: ArrKind;
   baseUrl: string;
   apiKey: string;
+  /** Absolute path visible inside the target Arr container. */
+  sourcePathPrefix?: string;
+  /** Import mode used by Arr for provider-backed paths. */
+  importMode?: 'Move' | 'Copy';
 }
 
 export interface ArrCommandResult {
@@ -141,10 +146,13 @@ export class SqliteIntakeStateStore implements IntakeStateStore {
 export class HttpArrClient implements ArrClient {
   async submitScan(route: ArrRoute, event: DirectFileEvent): Promise<ArrCommandResult> {
     const commandName = route.kind === 'radarr' ? 'DownloadedMoviesScan' : 'DownloadedEpisodesScan';
+    const path = route.sourcePathPrefix
+      ? `${route.sourcePathPrefix.replace(/\/$/, '')}/${event.path.replace(/^\/+/, '')}`
+      : event.path;
     const response = await fetch(`${route.baseUrl.replace(/\/$/, '')}/api/v3/command`, {
       method: 'POST',
       headers: { 'X-Api-Key': route.apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: commandName, path: event.path, importMode: 'Move' }),
+      body: JSON.stringify({ name: commandName, path, importMode: route.importMode || 'Copy' }),
     });
     if (!response.ok) throw new Error(`Arr command submission failed: HTTP ${response.status}`);
     const body = await response.json() as { id?: number; status?: string; result?: string };
@@ -191,7 +199,7 @@ export class AllDebridProviderSource implements AllDebridReadOnlySource {
   private toSnapshots(torrents: TorrentInfo[], trees: Map<string, VirtualDirectory>, observedAt: string): AllDebridSnapshot[] {
     return torrents.map((torrent) => {
       const directory = trees.get(String(torrent.id));
-      return { providerItemId: String(torrent.id), name: torrent.name, status: torrent.status,
+      return { providerItemId: String(torrent.id), name: torrent.name, directoryName: directory?.name, status: torrent.status,
         files: (directory?.files || []).map((file) => ({ path: file.name, size: file.size })), observedAt };
     });
   }
@@ -298,9 +306,14 @@ export class CineCircleAllDebridIntake {
 
   private makeEvent(item: AllDebridSnapshot, action: DirectFileAction, fp: string): DirectFileEvent {
     const category = categoryFor(item);
+    const categoryDirectory = category.toLowerCase();
+    const providerPath = item.files[0].path.replace(/^\/+/, '');
+    const path = item.directoryName
+      ? `${categoryDirectory}/${item.directoryName.replace(/^\/+|\/+$/g, '')}/${providerPath}`
+      : providerPath;
     return {
       provider: 'alldebrid', providerItemId: item.providerItemId, action,
-      path: item.files[0].path, tree: item.files, sourceCategory: category,
+      path, tree: item.files, sourceCategory: category,
       observedAt: item.observedAt, stableDedupeKey: eventKey(item.providerItemId, action, fp),
     };
   }

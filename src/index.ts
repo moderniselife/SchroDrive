@@ -81,7 +81,13 @@ program
         });
       }
 
-      promises.push(mountVirtualDrive());
+      // The AllDebrid reconciliation worker submits Arr scans against this
+      // mount. Wait until mountVirtualDrive has established the visible paths
+      // before starting the worker below; otherwise Arr can reject the first
+      // scan as a missing file during FUSE startup.
+      await mountVirtualDrive().catch((err: any) => {
+        console.error(`[${new Date().toISOString()}][serve] Virtual drive mount failed (non-fatal): ${err?.message}`);
+      });
     }
     
     if (config.runDeadScannerWatch) {

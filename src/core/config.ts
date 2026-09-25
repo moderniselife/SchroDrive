@@ -69,6 +69,8 @@ export const config = {
   cineCircleRadarrApiKey: process.env.CINECIRCLE_RADARR_API_KEY || "",
   cineCircleSonarrUrl: process.env.CINECIRCLE_SONARR_URL || "",
   cineCircleSonarrApiKey: process.env.CINECIRCLE_SONARR_API_KEY || "",
+  cineCircleAlldebridArrPath: process.env.CINECIRCLE_ALLDEBRID_ARR_PATH || "/mnt/schrodrive/alldebrid",
+  cineCircleAlldebridArrImportMode: process.env.CINECIRCLE_ALLDEBRID_ARR_IMPORT_MODE || "Copy",
   // AllDebrid WebDAV (if supported)
   alldebridWebdavUrl: process.env.ALLDEBRID_WEBDAV_URL || "",
   alldebridWebdavUsername: process.env.ALLDEBRID_WEBDAV_USERNAME || "",

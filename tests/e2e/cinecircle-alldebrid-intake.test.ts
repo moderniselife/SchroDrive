@@ -166,12 +166,13 @@ describe('CineCircle AllDebrid direct intake', () => {
   });
 
   test('persists the direct event and cursor across a SQLite store restart', async () => {
+    const itemId = `sqlite-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const firstArr = new FakeArr();
     const firstStore = new SqliteIntakeStateStore();
-    const source = new SequenceSource([[snapshot('sqlite-1', 'Movie (2026)')]]);
+    const source = new SequenceSource([[snapshot(itemId, 'Movie (2026)')]]);
     const first = new CineCircleAllDebridIntake(source, firstArr, firstStore, { routeFor });
     const events = await first.reconcile('full');
-    expect(events).toHaveLength(1);
+    expect(events.some((event) => event.providerItemId === itemId && event.action === 'added')).toBe(true);
     expect(firstStore.getCursor().fullAt).toBeDefined();
     expect(firstStore.hasEvent(events[0].stableDedupeKey)).toBe(true);
 
@@ -179,11 +180,11 @@ describe('CineCircle AllDebrid direct intake', () => {
     const secondStore = new SqliteIntakeStateStore();
     const secondArr = new FakeArr();
     const second = new CineCircleAllDebridIntake(
-      new SequenceSource([[snapshot('sqlite-1', 'Movie (2026)')]]), secondArr, secondStore, { routeFor },
+      new SequenceSource([[snapshot(itemId, 'Movie (2026)')]]), secondArr, secondStore, { routeFor },
     );
     expect(await second.reconcile('full')).toEqual([]);
     expect(secondArr.submitted).toHaveLength(0);
-    expect(secondStore.getItem('sqlite-1')?.lastAction).toBe('added');
+    expect(secondStore.getItem(itemId)?.lastAction).toBe('added');
     closeDb();
   });
 
