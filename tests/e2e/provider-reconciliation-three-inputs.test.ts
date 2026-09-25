@@ -82,7 +82,7 @@ describe('provider reconciliation fixture E2E', () => {
       if (!init?.body) return new Response(JSON.stringify([{ id: 1, title: 'Lanterns' }]), { status: 200 });
       return new Response(JSON.stringify({ id: 1, status: 'queued' }), { status: 201, headers: { 'content-type': 'application/json' } });
     }) as typeof fetch;
-    const root = await mkdtemp(path.join(tmpdir(), 'cinecircle-symlink-'));
+    const root = await mkdtemp(path.join(tmpdir(), 'provider-reconciliation-symlink-'));
     try {
       const routeWithLibrary = { ...route('sonarr', '/mnt/schrodrive/alldebrid'), symlinkLibraryPath: root };
       const item = event('Shows', 'shows/Lanterns/Lanterns.S01E06.Bad.Optics.mkv');
