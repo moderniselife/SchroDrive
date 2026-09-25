@@ -13,6 +13,7 @@ services:
       CINECIRCLE_RADARR_API_KEY: ${CINECIRCLE_RADARR_API_KEY:-}
       CINECIRCLE_SONARR_URL: http://sonarr-test:8989
       CINECIRCLE_SONARR_API_KEY: ${CINECIRCLE_SONARR_API_KEY:-}
+      ALLDEBRID_API_KEY: ${ALLDEBRID_API_KEY:-}
       # Direct AllDebrid polling is the only input under test here.
       RUN_WEBHOOK: "false"
       RUN_POLLER: "false"
