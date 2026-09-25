@@ -908,10 +908,12 @@ All configuration is done via environment variables. Below is the complete refer
 
 ### 🔄 Provider Reconciliation (opt-in)
 
-Provider reconciliation discovers completed files already present in configured
-debrid providers, compares snapshots in SQLite, creates mount-backed symlinks,
-and asks Radarr/Sonarr to rescan the existing library. It does not copy media
-locally and does not delete or repair provider content.
+After the initial historical library import performed in Radarr/Sonarr,
+provider reconciliation detects newly completed files added directly to a
+configured debrid provider. It compares snapshots in SQLite, creates
+mount-backed symlinks in the existing Arr library, and asks Radarr/Sonarr to
+rescan the affected movie or series. It does not copy media locally and does
+not delete or repair provider content.
 
 | Variable | Default | Description |
 | --- | --- | --- |

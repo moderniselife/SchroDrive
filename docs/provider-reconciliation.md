@@ -4,6 +4,11 @@ SchröDrive's provider reconciliation layer is provider-agnostic. It consumes
 the existing `DebridProvider` contract and never calls provider delete, repair,
 or dead-scanner operations.
 
+The historical library import is a one-time operation performed through the
+Radarr/Sonarr library import flow. This worker handles the ongoing case where
+a new completed file is added directly to a provider after that library is
+already configured.
+
 ```text
 provider listTorrents/fetchDirectories
   -> normalized snapshot and local SQLite diff
