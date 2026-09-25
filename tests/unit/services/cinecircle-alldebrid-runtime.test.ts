@@ -8,6 +8,8 @@ const original = {
   radarrKey: config.cineCircleRadarrApiKey,
   sonarrUrl: config.cineCircleSonarrUrl,
   sonarrKey: config.cineCircleSonarrApiKey,
+  alldebridArrPath: config.cineCircleAlldebridArrPath,
+  alldebridArrImportMode: config.cineCircleAlldebridArrImportMode,
 };
 
 afterEach(() => {
@@ -16,6 +18,8 @@ afterEach(() => {
   config.cineCircleRadarrApiKey = original.radarrKey;
   config.cineCircleSonarrUrl = original.sonarrUrl;
   config.cineCircleSonarrApiKey = original.sonarrKey;
+  config.cineCircleAlldebridArrPath = original.alldebridArrPath;
+  config.cineCircleAlldebridArrImportMode = original.alldebridArrImportMode;
 });
 
 describe('CineCircle AllDebrid runtime wiring', () => {
@@ -39,8 +43,8 @@ describe('CineCircle AllDebrid runtime wiring', () => {
     config.cineCircleSonarrUrl = 'http://sonarr.test/';
     config.cineCircleSonarrApiKey = 'sonarr-fixture-key';
     expect(cineCircleReconciliationRoutes()).toEqual({
-      movies: { kind: 'radarr', baseUrl: 'http://radarr.test/', apiKey: 'radarr-fixture-key' },
-      shows: { kind: 'sonarr', baseUrl: 'http://sonarr.test/', apiKey: 'sonarr-fixture-key' },
+      movies: { kind: 'radarr', baseUrl: 'http://radarr.test/', apiKey: 'radarr-fixture-key', sourcePathPrefix: '/mnt/schrodrive/alldebrid', importMode: 'Copy' },
+      shows: { kind: 'sonarr', baseUrl: 'http://sonarr.test/', apiKey: 'sonarr-fixture-key', sourcePathPrefix: '/mnt/schrodrive/alldebrid', importMode: 'Copy' },
     });
   });
 });

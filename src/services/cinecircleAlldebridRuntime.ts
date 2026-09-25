@@ -14,8 +14,8 @@ import {
 
 export function cineCircleReconciliationRoutes(): { movies: ArrRoute; shows: ArrRoute } {
   return {
-    movies: { kind: "radarr", baseUrl: config.cineCircleRadarrUrl, apiKey: config.cineCircleRadarrApiKey },
-    shows: { kind: "sonarr", baseUrl: config.cineCircleSonarrUrl, apiKey: config.cineCircleSonarrApiKey },
+    movies: { kind: "radarr", baseUrl: config.cineCircleRadarrUrl, apiKey: config.cineCircleRadarrApiKey, sourcePathPrefix: config.cineCircleAlldebridArrPath, importMode: config.cineCircleAlldebridArrImportMode === "Move" ? "Move" : "Copy" },
+    shows: { kind: "sonarr", baseUrl: config.cineCircleSonarrUrl, apiKey: config.cineCircleSonarrApiKey, sourcePathPrefix: config.cineCircleAlldebridArrPath, importMode: config.cineCircleAlldebridArrImportMode === "Move" ? "Move" : "Copy" },
   };
 }
 

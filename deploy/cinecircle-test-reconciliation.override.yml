@@ -13,6 +13,8 @@ services:
       CINECIRCLE_RADARR_API_KEY: ${CINECIRCLE_RADARR_API_KEY:-}
       CINECIRCLE_SONARR_URL: http://sonarr-test:8989
       CINECIRCLE_SONARR_API_KEY: ${CINECIRCLE_SONARR_API_KEY:-}
+      CINECIRCLE_ALLDEBRID_ARR_PATH: /mnt/schrodrive/alldebrid
+      CINECIRCLE_ALLDEBRID_ARR_IMPORT_MODE: Copy
       ALLDEBRID_API_KEY: ${ALLDEBRID_API_KEY:-}
       # Direct AllDebrid polling is the only input under test here.
       RUN_WEBHOOK: "false"
@@ -29,6 +31,12 @@ services:
         target: /mnt/schrodrive
         bind:
           propagation: rshared
+      - type: bind
+        source: /home/samtruman/cinecircle-test-clean/schrodrive/data
+        target: /data
+      - type: bind
+        source: /home/samtruman/cinecircle-test-clean/schrodrive/config
+        target: /config
 
   radarr-test:
     volumes:
@@ -51,10 +59,10 @@ services:
   sonarr-test:
     volumes:
       - type: bind
-        source: /home/samtruman/docker/cinecircle-test/sonarr/config
+        source: /home/samtruman/cinecircle-test-clean/sonarr/config
         target: /config
       - type: bind
-        source: /home/samtruman/docker/cinecircle-test
+        source: /home/samtruman/cinecircle-test-clean
         target: /mnt/cinecircle-test
       - type: bind
         source: /home/samtruman/docker/cinecircle-test/schrodrive

@@ -13,8 +13,8 @@ function event(category: 'Movies' | 'Shows', path: string): DirectFileEvent {
   };
 }
 
-function route(kind: 'radarr' | 'sonarr'): ArrRoute {
-  return { kind, baseUrl: `http://${kind}.fixture`, apiKey: 'fixture-api-key' };
+function route(kind: 'radarr' | 'sonarr', sourcePathPrefix?: string): ArrRoute {
+  return { kind, baseUrl: `http://${kind}.fixture`, apiKey: 'fixture-api-key', sourcePathPrefix };
 }
 
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -58,6 +58,18 @@ describe('CineCircle three-input fixture E2E', () => {
     expect(requests.filter((request) => request.method !== 'POST').map((request) => request.url)).toEqual([
       'http://radarr.fixture/api/v3/command/1', 'http://sonarr.fixture/api/v3/command/2',
     ]);
+  });
+
+  test('B2: prefixes the provider-relative path with the Arr-visible mount path', async () => {
+    let body: any;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ id: 1, status: 'queued' }), { status: 201, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+
+    await new HttpArrClient().submitScan(route('sonarr', '/mnt/schrodrive/alldebrid'), event('Shows', 'Shows/Lanterns.S01E06.mkv'));
+    expect(body.path).toBe('/mnt/schrodrive/alldebrid/Shows/Lanterns.S01E06.mkv');
+    expect(body.importMode).toBe('Copy');
   });
 
   test('C: direct AllDebrid fixture reaches the same Arr completion boundary', async () => {
