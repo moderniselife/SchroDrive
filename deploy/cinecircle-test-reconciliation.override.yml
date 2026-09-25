@@ -22,3 +22,45 @@ services:
       ENABLE_REPAIR: "false"
       PREEMPTIVE_REPAIR: "false"
       RUN_ORGANIZER_WATCH: "false"
+    volumes:
+      - type: bind
+        source: /home/samtruman/docker/cinecircle-test/schrodrive
+        target: /mnt/schrodrive
+        bind:
+          propagation: rshared
+
+  radarr-test:
+    volumes:
+      - type: bind
+        source: /home/samtruman/docker/cinecircle-test/radarr/config
+        target: /config
+      - type: bind
+        source: /home/samtruman/docker/cinecircle-test
+        target: /mnt/cinecircle-test
+      - type: bind
+        source: /home/samtruman/docker/cinecircle-test/schrodrive
+        target: /mnt/schrodrive
+        read_only: true
+        bind:
+          propagation: rslave
+      - type: bind
+        source: /home/samtruman/docker/cinecircle-test/schrodrive/downloads
+        target: /mnt/schrodrive/downloads
+
+  sonarr-test:
+    volumes:
+      - type: bind
+        source: /home/samtruman/docker/cinecircle-test/sonarr/config
+        target: /config
+      - type: bind
+        source: /home/samtruman/docker/cinecircle-test
+        target: /mnt/cinecircle-test
+      - type: bind
+        source: /home/samtruman/docker/cinecircle-test/schrodrive
+        target: /mnt/schrodrive
+        read_only: true
+        bind:
+          propagation: rslave
+      - type: bind
+        source: /home/samtruman/docker/cinecircle-test/schrodrive/downloads
+        target: /mnt/schrodrive/downloads
