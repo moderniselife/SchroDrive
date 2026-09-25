@@ -6,8 +6,9 @@ services:
     environment:
       CINECIRCLE_ALLDEBRID_RECONCILIATION_ENABLED: "true"
       CINECIRCLE_ALLDEBRID_RECENT_INTERVAL_MS: "60000"
-      CINECIRCLE_ALLDEBRID_FULL_INTERVAL_MS: "300000"
-      CINECIRCLE_ALLDEBRID_RECENT_LIMIT: "30"
+      CINECIRCLE_ALLDEBRID_FULL_INTERVAL_MS: "86400000"
+      CINECIRCLE_ALLDEBRID_RECENT_LIMIT: "1"
+      CINECIRCLE_ALLDEBRID_RUN_FULL_ON_START: "false"
       CINECIRCLE_ALLDEBRID_DRY_RUN: "false"
       CINECIRCLE_RADARR_URL: http://radarr-test:7878
       CINECIRCLE_RADARR_API_KEY: ${CINECIRCLE_RADARR_API_KEY:-}
@@ -15,6 +16,8 @@ services:
       CINECIRCLE_SONARR_API_KEY: ${CINECIRCLE_SONARR_API_KEY:-}
       CINECIRCLE_ALLDEBRID_ARR_PATH: /mnt/schrodrive/alldebrid
       CINECIRCLE_ALLDEBRID_ARR_IMPORT_MODE: Copy
+      CINECIRCLE_ALLDEBRID_MOVIES_LIBRARY_PATH: /mnt/cinecircle-test/radarr/movies
+      CINECIRCLE_ALLDEBRID_SHOWS_LIBRARY_PATH: /mnt/cinecircle-test/sonarr/shows
       ALLDEBRID_API_KEY: ${ALLDEBRID_API_KEY:-}
       # Direct AllDebrid polling is the only input under test here.
       RUN_WEBHOOK: "false"
@@ -37,6 +40,9 @@ services:
       - type: bind
         source: /home/samtruman/cinecircle-test-clean/schrodrive/config
         target: /config
+      - type: bind
+        source: /home/samtruman/cinecircle-test-clean
+        target: /mnt/cinecircle-test
 
   radarr-test:
     volumes:

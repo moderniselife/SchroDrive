@@ -1,4 +1,7 @@
 import { describe, expect, test, afterEach } from 'bun:test';
+import { mkdtemp, readlink, lstat, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { classifyTorrent } from '../../src/core/mediaClassifier';
 import { parseMediaFilename } from '../../src/services/mediaParser';
 import { HttpArrClient, type ArrRoute, type DirectFileEvent } from '../../src/services/cinecircleAlldebridIntake';
@@ -70,6 +73,28 @@ describe('CineCircle three-input fixture E2E', () => {
     await new HttpArrClient().submitScan(route('sonarr', '/mnt/schrodrive/alldebrid'), event('Shows', 'Shows/Lanterns.S01E06.mkv'));
     expect(body.path).toBe('/mnt/schrodrive/alldebrid/Shows/Lanterns.S01E06.mkv');
     expect(body.importMode).toBe('Copy');
+  });
+
+  test('B3: exposes provider media as a symlink and never copies it locally', async () => {
+    let body: any;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.body) body = JSON.parse(String(init.body));
+      if (!init?.body) return new Response(JSON.stringify([{ id: 1, title: 'Lanterns' }]), { status: 200 });
+      return new Response(JSON.stringify({ id: 1, status: 'queued' }), { status: 201, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    const root = await mkdtemp(path.join(tmpdir(), 'cinecircle-symlink-'));
+    try {
+      const routeWithLibrary = { ...route('sonarr', '/mnt/schrodrive/alldebrid'), symlinkLibraryPath: root };
+      const item = event('Shows', 'shows/Lanterns/Lanterns.S01E06.Bad.Optics.mkv');
+      await new HttpArrClient().submitScan(routeWithLibrary, item);
+      const link = path.join(root, 'Lanterns', 'Season 1', 'Lanterns.S01E06.Bad.Optics.mkv');
+      expect((await lstat(link)).isSymbolicLink()).toBe(true);
+      expect(await readlink(link)).toBe('/mnt/schrodrive/alldebrid/shows/Lanterns/Lanterns.S01E06.Bad.Optics.mkv');
+      expect(body.name).toBe('RescanSeries');
+      expect(body.seriesId).toBe(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test('C: direct AllDebrid fixture reaches the same Arr completion boundary', async () => {
