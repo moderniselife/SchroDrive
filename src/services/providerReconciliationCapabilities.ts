@@ -45,5 +45,7 @@ export function assessReconciliationCapabilities(
   if (hasPush) {
     return { capabilities: { ...capabilities, changeDetection }, mode: 'push-only', reason: 'provider exposes push events but not a complete polling snapshot contract' };
   }
-  return { capabilities: { ...capabilities, recentSnapshot: hasRecent, changeDetection }, mode: 'polling', reason: hasRecent ? 'full/recent polling with worker-side snapshot diff is available' : 'full polling with worker-side snapshot diff is available; recent polling is unavailable' };
+  // Keep an exhaustive fallback for future capability extensions. The current
+  // branches above make this unreachable, but it must remain a valid mode.
+  return { capabilities: { ...capabilities, recentSnapshot: hasRecent, changeDetection }, mode: 'polling-full-only', reason: 'fallback polling mode with worker-side snapshot diff' };
 }

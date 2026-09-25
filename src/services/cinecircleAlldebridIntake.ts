@@ -361,4 +361,8 @@ export class CineCircleAllDebridReconciliationWorker {
     this.recentTimer = undefined;
     this.fullTimer = undefined;
   }
+
+  isRunning(): boolean {
+    return !!this.recentTimer || !!this.fullTimer;
+  }
 }

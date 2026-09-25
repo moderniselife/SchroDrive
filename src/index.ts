@@ -12,6 +12,8 @@ import { getDb, closeDb, pruneOldEntries, pruneExpiredStrmCodes } from "./core/d
 import { startStrmServer, stopStrmServer } from "./services/strmService";
 import { startCloudLinksBridge, stopCloudLinksBridge } from "./services/cloudLinks/bridge";
 import { startArrBridge, stopArrBridge } from "./services/arrBridge";
+import { startCineCircleAllDebridReconciliation } from "./services/cinecircleAlldebridRuntime";
+import type { CineCircleAllDebridReconciliationWorker } from "./services/cinecircleAlldebridIntake";
 
 const program = new Command();
 program
@@ -31,6 +33,7 @@ program
     }
 
     // Register graceful shutdown handlers
+    let cineCircleReconciliationWorker: CineCircleAllDebridReconciliationWorker | undefined;
     const shutdown = () => {
       console.log(`[${new Date().toISOString()}][serve] Shutting down — unmounting FUSE drives...`);
       try {
@@ -43,6 +46,7 @@ program
       stopStrmServer().catch(() => {});
       stopCloudLinksBridge().catch(() => {});
       stopArrBridge().catch(() => {});
+      cineCircleReconciliationWorker?.stop();
       setTimeout(() => {
         console.log(`[${new Date().toISOString()}][serve] Closing database and exiting...`);
         closeDb();
@@ -97,6 +101,8 @@ program
       console.log("[serve] Starting media server watchlist poller (RUN_WATCHLIST_POLLER=true)");
       startWatchlistPoller();
     }
+
+    cineCircleReconciliationWorker = startCineCircleAllDebridReconciliation();
     
     // Start the main server
     startServer();

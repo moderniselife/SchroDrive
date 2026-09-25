@@ -58,6 +58,16 @@ export const config = {
   alldebridApiKey: process.env.ALLDEBRID_API_KEY || "",
   alldebridApiBase: process.env.ALLDEBRID_API_BASE || "https://api.alldebrid.com/v4",
   alldebridAgent: process.env.ALLDEBRID_AGENT || "schrodrive",
+  // CineCircle direct AllDebrid reconciliation is opt-in and disabled by default.
+  cineCircleAlldebridReconciliationEnabled: String(process.env.CINECIRCLE_ALLDEBRID_RECONCILIATION_ENABLED ?? "false").toLowerCase() === "true",
+  cineCircleAlldebridRecentIntervalMs: Number(process.env.CINECIRCLE_ALLDEBRID_RECENT_INTERVAL_MS || 900000),
+  cineCircleAlldebridFullIntervalMs: Number(process.env.CINECIRCLE_ALLDEBRID_FULL_INTERVAL_MS || 21600000),
+  cineCircleAlldebridRecentLimit: Number(process.env.CINECIRCLE_ALLDEBRID_RECENT_LIMIT || 30),
+  cineCircleAlldebridDryRun: String(process.env.CINECIRCLE_ALLDEBRID_DRY_RUN ?? "false").toLowerCase() === "true",
+  cineCircleRadarrUrl: process.env.CINECIRCLE_RADARR_URL || "",
+  cineCircleRadarrApiKey: process.env.CINECIRCLE_RADARR_API_KEY || "",
+  cineCircleSonarrUrl: process.env.CINECIRCLE_SONARR_URL || "",
+  cineCircleSonarrApiKey: process.env.CINECIRCLE_SONARR_API_KEY || "",
   // AllDebrid WebDAV (if supported)
   alldebridWebdavUrl: process.env.ALLDEBRID_WEBDAV_URL || "",
   alldebridWebdavUsername: process.env.ALLDEBRID_WEBDAV_USERNAME || "",

@@ -10,6 +10,7 @@ import {
   type DirectFileEvent,
   isMediaFile,
   AllDebridProviderSource,
+  CineCircleAllDebridReconciliationWorker,
 } from '../../src/services/cinecircleAlldebridIntake';
 
 function snapshot(id: string, name: string, files = [{ path: `${name}.mkv`, size: 10 }]): AllDebridSnapshot {
@@ -217,5 +218,20 @@ describe('CineCircle AllDebrid direct intake', () => {
     await expect(intake.reconcile()).rejects.toThrow('permanent');
     expect(reviewed).toHaveLength(1);
     expect(reviewed[0].action).toBe('added');
+  });
+
+  test('starts recent and full polling at configured intervals and stops cleanly', async () => {
+    let calls = 0;
+    const intake = { async reconcile() { calls++; return []; } };
+    const worker = new CineCircleAllDebridReconciliationWorker(intake as any, { recentMs: 10, fullMs: 15, recentLimit: 2 });
+    worker.start();
+    expect(worker.isRunning()).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    worker.stop();
+    const stoppedAt = calls;
+    expect(stoppedAt).toBeGreaterThanOrEqual(2);
+    expect(worker.isRunning()).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(calls).toBe(stoppedAt);
   });
 });
