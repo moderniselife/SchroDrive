@@ -1,0 +1,24 @@
+# Test-only override for the CineCircle AllDebrid reconciliation worker.
+# Apply with the existing cinecircle-test compose file only.
+services:
+  schrodrive-test:
+    image: schrodrive:cinecircle-alldebrid-reconciliation
+    environment:
+      CINECIRCLE_ALLDEBRID_RECONCILIATION_ENABLED: "true"
+      CINECIRCLE_ALLDEBRID_RECENT_INTERVAL_MS: "60000"
+      CINECIRCLE_ALLDEBRID_FULL_INTERVAL_MS: "300000"
+      CINECIRCLE_ALLDEBRID_RECENT_LIMIT: "30"
+      CINECIRCLE_ALLDEBRID_DRY_RUN: "false"
+      CINECIRCLE_RADARR_URL: http://radarr-test:7878
+      CINECIRCLE_RADARR_API_KEY: ${CINECIRCLE_RADARR_API_KEY:-}
+      CINECIRCLE_SONARR_URL: http://sonarr-test:8989
+      CINECIRCLE_SONARR_API_KEY: ${CINECIRCLE_SONARR_API_KEY:-}
+      # Direct AllDebrid polling is the only input under test here.
+      RUN_WEBHOOK: "false"
+      RUN_POLLER: "false"
+      RUN_WATCHLIST_POLLER: "false"
+      RUN_DEAD_SCANNER: "false"
+      RUN_DEAD_SCANNER_WATCH: "false"
+      ENABLE_REPAIR: "false"
+      PREEMPTIVE_REPAIR: "false"
+      RUN_ORGANIZER_WATCH: "false"
