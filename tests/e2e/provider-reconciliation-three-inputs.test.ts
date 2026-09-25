@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { classifyTorrent } from '../../src/core/mediaClassifier';
 import { parseMediaFilename } from '../../src/services/mediaParser';
-import { HttpArrClient, type ArrRoute, type DirectFileEvent } from '../../src/services/cinecircleAlldebridIntake';
+import { HttpArrClient, type ArrRoute, type DirectFileEvent } from '../../src/services/providerReconciliation';
 
 const originalFetch = globalThis.fetch;
 
@@ -22,7 +22,7 @@ function route(kind: 'radarr' | 'sonarr', sourcePathPrefix?: string): ArrRoute {
 
 afterEach(() => { globalThis.fetch = originalFetch; });
 
-describe('CineCircle three-input fixture E2E', () => {
+describe('provider reconciliation fixture E2E', () => {
   test('A: historical library input parses and classifies without a write boundary', () => {
     const movie = parseMediaFilename('Fixture.Movie (2020).mkv', 'Movies/Fixture.Movie (2020).mkv');
     const episode = parseMediaFilename('Fixture.Show S01E02.mkv', 'Shows/Fixture.Show S01E02.mkv');
@@ -100,13 +100,13 @@ describe('CineCircle three-input fixture E2E', () => {
   test('C: direct AllDebrid fixture reaches the same Arr completion boundary', async () => {
     const completed: string[] = [];
     const source = { async listSnapshot() { return [{ providerItemId: 'fixture-ad', name: 'Fixture.Show S01E02', status: 'finished', files: [{ path: 'arr-visible/show.mkv', size: 1 }], observedAt: '2026-09-17T00:00:00.000Z' }]; } };
-    const store = new (await import('../../src/services/cinecircleAlldebridIntake')).InMemoryIntakeStateStore();
+    const store = new (await import('../../src/services/providerReconciliation')).InMemoryIntakeStateStore();
     const arr = {
       async submitScan(_route: ArrRoute, item: DirectFileEvent) { completed.push(`${item.sourceCategory}:${item.path}`); return { commandId: 'fixture-command', status: 'queued' }; },
       async getCommand(_route: ArrRoute, commandId: string) { return { commandId, status: 'completed', result: 'successful' }; },
     };
-    const { CineCircleAllDebridIntake } = await import('../../src/services/cinecircleAlldebridIntake');
-    const intake = new CineCircleAllDebridIntake(source, arr, store, { routeFor: () => route('sonarr') });
+    const { ProviderReconciliationIntake } = await import('../../src/services/providerReconciliation');
+    const intake = new ProviderReconciliationIntake(source, arr, store, { routeFor: () => route('sonarr') });
     await intake.reconcile();
     await intake.reconcile();
     expect(completed).toEqual(['Shows:arr-visible/show.mkv']);

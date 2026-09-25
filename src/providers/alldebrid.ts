@@ -620,7 +620,7 @@ export class AllDebridProvider implements DebridProvider {
 
   /**
    * Returns completed virtual directories for an explicit magnet subset.
-   * This is read-only and lets the CineCircle reconciliation worker implement
+   * This is read-only and lets provider reconciliation implement
    * a bounded recent scan without downloading or mutating provider state.
    */
   async fetchDirectoriesForIds(magnets: Array<Pick<TorrentInfo, 'id' | 'name' | 'filename'>>): Promise<VirtualDirectory[]> {
