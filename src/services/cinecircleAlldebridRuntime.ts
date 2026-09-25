@@ -14,8 +14,8 @@ import {
 
 export function cineCircleReconciliationRoutes(): { movies: ArrRoute; shows: ArrRoute } {
   return {
-    movies: { kind: "radarr", baseUrl: config.cineCircleRadarrUrl, apiKey: config.cineCircleRadarrApiKey, sourcePathPrefix: config.cineCircleAlldebridArrPath, importMode: config.cineCircleAlldebridArrImportMode === "Move" ? "Move" : "Copy" },
-    shows: { kind: "sonarr", baseUrl: config.cineCircleSonarrUrl, apiKey: config.cineCircleSonarrApiKey, sourcePathPrefix: config.cineCircleAlldebridArrPath, importMode: config.cineCircleAlldebridArrImportMode === "Move" ? "Move" : "Copy" },
+    movies: { kind: "radarr", baseUrl: config.cineCircleRadarrUrl, apiKey: config.cineCircleRadarrApiKey, sourcePathPrefix: config.cineCircleAlldebridArrPath, importMode: config.cineCircleAlldebridArrImportMode === "Move" ? "Move" : "Copy", symlinkLibraryPath: config.cineCircleAlldebridMoviesLibraryPath || undefined },
+    shows: { kind: "sonarr", baseUrl: config.cineCircleSonarrUrl, apiKey: config.cineCircleSonarrApiKey, sourcePathPrefix: config.cineCircleAlldebridArrPath, importMode: config.cineCircleAlldebridArrImportMode === "Move" ? "Move" : "Copy", symlinkLibraryPath: config.cineCircleAlldebridShowsLibraryPath || undefined },
   };
 }
 
@@ -56,6 +56,7 @@ export function createCineCircleAllDebridReconciliationWorker(): CineCircleAllDe
     recentMs: Math.max(1000, config.cineCircleAlldebridRecentIntervalMs),
     fullMs: Math.max(1000, config.cineCircleAlldebridFullIntervalMs),
     recentLimit: Math.max(1, config.cineCircleAlldebridRecentLimit),
+    runFullOnStart: config.cineCircleAlldebridRunFullOnStart,
   });
 }
 

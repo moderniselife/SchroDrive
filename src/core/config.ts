@@ -63,6 +63,7 @@ export const config = {
   cineCircleAlldebridRecentIntervalMs: Number(process.env.CINECIRCLE_ALLDEBRID_RECENT_INTERVAL_MS || 900000),
   cineCircleAlldebridFullIntervalMs: Number(process.env.CINECIRCLE_ALLDEBRID_FULL_INTERVAL_MS || 21600000),
   cineCircleAlldebridRecentLimit: Number(process.env.CINECIRCLE_ALLDEBRID_RECENT_LIMIT || 30),
+  cineCircleAlldebridRunFullOnStart: String(process.env.CINECIRCLE_ALLDEBRID_RUN_FULL_ON_START ?? "true").toLowerCase() !== "false",
   cineCircleAlldebridDryRun: String(process.env.CINECIRCLE_ALLDEBRID_DRY_RUN ?? "false").toLowerCase() === "true",
   cineCircleRadarrUrl: process.env.CINECIRCLE_RADARR_URL || "",
   cineCircleRadarrApiKey: process.env.CINECIRCLE_RADARR_API_KEY || "",
@@ -70,6 +71,8 @@ export const config = {
   cineCircleSonarrApiKey: process.env.CINECIRCLE_SONARR_API_KEY || "",
   cineCircleAlldebridArrPath: process.env.CINECIRCLE_ALLDEBRID_ARR_PATH || "/mnt/schrodrive/alldebrid",
   cineCircleAlldebridArrImportMode: process.env.CINECIRCLE_ALLDEBRID_ARR_IMPORT_MODE || "Copy",
+  cineCircleAlldebridMoviesLibraryPath: process.env.CINECIRCLE_ALLDEBRID_MOVIES_LIBRARY_PATH || "",
+  cineCircleAlldebridShowsLibraryPath: process.env.CINECIRCLE_ALLDEBRID_SHOWS_LIBRARY_PATH || "",
   // AllDebrid WebDAV (if supported)
   alldebridWebdavUrl: process.env.ALLDEBRID_WEBDAV_URL || "",
   alldebridWebdavUsername: process.env.ALLDEBRID_WEBDAV_USERNAME || "",

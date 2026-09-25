@@ -8,10 +8,13 @@
  */
 
 import { createHash } from 'node:crypto';
+import { promises as fsp } from 'node:fs';
+import path from 'node:path';
 import { getDb } from '../core/db';
 import type { AllDebridProvider } from '../providers/alldebrid';
 import type { TorrentInfo, VirtualDirectory } from '../providers';
 import { classifyTorrent } from '../core/mediaClassifier';
+import { parseMediaFilename } from './mediaParser';
 
 export type DirectFileAction = 'added' | 'changed' | 'deleted';
 export type SourceCategory = 'Movies' | 'Shows';
@@ -45,6 +48,8 @@ export interface ArrRoute {
   sourcePathPrefix?: string;
   /** Import mode used by Arr for provider-backed paths. */
   importMode?: 'Move' | 'Copy';
+  /** Optional Arr-visible library root. When set, media is exposed by symlink. */
+  symlinkLibraryPath?: string;
 }
 
 export interface ArrCommandResult {
@@ -145,14 +150,23 @@ export class SqliteIntakeStateStore implements IntakeStateStore {
 
 export class HttpArrClient implements ArrClient {
   async submitScan(route: ArrRoute, event: DirectFileEvent): Promise<ArrCommandResult> {
-    const commandName = route.kind === 'radarr' ? 'DownloadedMoviesScan' : 'DownloadedEpisodesScan';
-    const path = route.sourcePathPrefix
+    let commandName = route.kind === 'radarr' ? 'DownloadedMoviesScan' : 'DownloadedEpisodesScan';
+    const providerPath = route.sourcePathPrefix
       ? `${route.sourcePathPrefix.replace(/\/$/, '')}/${event.path.replace(/^\/+/, '')}`
       : event.path;
+    const scanPath = route.symlinkLibraryPath
+      ? await exposeAsSymlink(route, event, providerPath)
+      : providerPath;
+    let commandBody: Record<string, unknown> = { name: commandName, path: scanPath, importMode: route.importMode || 'Copy' };
+    if (route.symlinkLibraryPath) {
+      const entityId = await findArrEntityId(route, event);
+      commandName = route.kind === 'radarr' ? 'RescanMovie' : 'RescanSeries';
+      commandBody = { name: commandName, [route.kind === 'radarr' ? 'movieId' : 'seriesId']: entityId };
+    }
     const response = await fetch(`${route.baseUrl.replace(/\/$/, '')}/api/v3/command`, {
       method: 'POST',
       headers: { 'X-Api-Key': route.apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: commandName, path, importMode: route.importMode || 'Copy' }),
+      body: JSON.stringify(commandBody),
     });
     if (!response.ok) throw new Error(`Arr command submission failed: HTTP ${response.status}`);
     const body = await response.json() as { id?: number; status?: string; result?: string };
@@ -168,6 +182,59 @@ export class HttpArrClient implements ArrClient {
     const body = await response.json() as { id?: number; status?: string; result?: string };
     return { commandId, status: body.status || 'unknown', result: body.result };
   }
+}
+
+function normalizedTitle(value: string): string {
+  return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+async function findArrEntityId(route: ArrRoute, event: DirectFileEvent): Promise<number> {
+  const filename = path.basename(event.path);
+  const parsed = parseMediaFilename(filename, event.path);
+  const title = normalizedTitle(parsed.title || event.path.split('/').filter(Boolean).slice(-2, -1)[0] || '');
+  const endpoint = route.kind === 'radarr' ? 'movie' : 'series';
+  const response = await fetch(`${route.baseUrl.replace(/\/$/, '')}/api/v3/${endpoint}`, {
+    headers: { 'X-Api-Key': route.apiKey },
+  });
+  if (!response.ok) throw new Error(`Arr ${endpoint} lookup failed: HTTP ${response.status}`);
+  const records = await response.json() as Array<{ id?: number; title?: string }>; 
+  const match = records.find((record) => record.id && normalizedTitle(record.title || '') === title);
+  if (!match?.id) throw new Error(`Arr ${endpoint} record not found for ${parsed.title || filename}`);
+  return match.id;
+}
+
+function safeSegment(value: string): string {
+  return value.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim() || 'Unknown';
+}
+
+/**
+ * Creates the Arr-facing library entry without copying provider data. The
+ * target is deliberately a symlink into the shared SchröDrive mount.
+ */
+async function exposeAsSymlink(route: ArrRoute, event: DirectFileEvent, providerPath: string): Promise<string> {
+  const library = route.symlinkLibraryPath!;
+  const filename = path.basename(event.path);
+  const parsed = parseMediaFilename(filename, event.path);
+  const pathParts = event.path.split('/').filter(Boolean);
+  const title = safeSegment(parsed.title || pathParts[pathParts.length - 2] || path.parse(filename).name);
+  const directory = event.sourceCategory === 'Shows'
+    ? path.join(library, title, `Season ${parsed.season ?? 1}`)
+    : path.join(library, parsed.year ? `${title} (${parsed.year})` : title);
+  const destination = path.join(directory, filename);
+  await fsp.mkdir(directory, { recursive: true });
+  const existing = await fsp.lstat(destination).catch(() => undefined);
+  if (existing?.isSymbolicLink()) {
+    const current = await fsp.readlink(destination);
+    if (current === providerPath) return destination;
+    await fsp.unlink(destination);
+  } else if (existing) {
+    throw new Error(`Refusing to overwrite non-symlink Arr library entry: ${destination}`);
+  }
+  // Use the container-visible absolute mount path. A relative link would be
+  // resolved against the host bind source, which differs between SchröDrive
+  // and Arr containers.
+  await fsp.symlink(providerPath, destination);
+  return destination;
 }
 
 export interface AllDebridReadOnlySource {
@@ -354,7 +421,7 @@ export class CineCircleAllDebridReconciliationWorker {
 
   constructor(
     private readonly intake: CineCircleAllDebridIntake,
-    private readonly intervals: { recentMs: number; fullMs: number; recentLimit?: number },
+    private readonly intervals: { recentMs: number; fullMs: number; recentLimit?: number; runFullOnStart?: boolean },
   ) {}
 
   runRecent(): Promise<DirectFileEvent[]> { return this.intake.reconcile('recent', this.intervals.recentLimit || 30); }
@@ -363,7 +430,7 @@ export class CineCircleAllDebridReconciliationWorker {
   start(): void {
     if (this.recentTimer || this.fullTimer) return;
     this.runRecent().catch(() => undefined);
-    this.runFull().catch(() => undefined);
+    if (this.intervals.runFullOnStart !== false) this.runFull().catch(() => undefined);
     this.recentTimer = setInterval(() => { this.runRecent().catch(() => undefined); }, this.intervals.recentMs);
     this.fullTimer = setInterval(() => { this.runFull().catch(() => undefined); }, this.intervals.fullMs);
   }
