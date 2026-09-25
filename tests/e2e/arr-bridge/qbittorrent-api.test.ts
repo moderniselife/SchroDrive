@@ -93,7 +93,7 @@ describe('*arr bridge qBittorrent-compatible API', () => {
     form.append('urls', magnet);
     form.append('savepath', `/downloads/${category}`);
     form.append('category', category);
-    form.append('tags', 'cinecircle-test');
+    form.append('tags', 'provider-reconciliation-test');
     form.append('skip_checking', 'false');
     form.append('paused', 'false');
     form.append('sequentialDownload', 'false');
@@ -107,7 +107,7 @@ describe('*arr bridge qBittorrent-compatible API', () => {
     expect(res.status).toBe(200);
     const torrents = await (await fetch(`${BASE_URL}/api/v2/torrents/info`)).json();
     expect(torrents).toEqual(expect.arrayContaining([
-      expect.objectContaining({ hash, category, tags: 'cinecircle-test' }),
+      expect.objectContaining({ hash, category, tags: 'provider-reconciliation-test' }),
     ]));
   });
 
