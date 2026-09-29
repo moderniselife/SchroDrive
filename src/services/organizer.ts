@@ -18,6 +18,7 @@
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
+import { createHash } from "crypto";
 import axios from "axios";
 import { config } from "../core/config";
 import { classifyTorrent } from "../core/mediaClassifier";
@@ -713,7 +714,7 @@ async function ensureDir(p: string) {
  * @param dst - The absolute path where the symlink should be created.
  * @param dryRun - If `true`, log but do not actually create the symlink.
  */
-async function makeSymlink(src: string, dst: string, dryRun: boolean) {
+export async function makeSymlink(src: string, dst: string, dryRun: boolean) {
   const dstDir = path.dirname(dst);
   await ensureDir(dstDir);
   const relTarget = path.relative(dstDir, src);
@@ -737,6 +738,33 @@ async function makeSymlink(src: string, dst: string, dryRun: boolean) {
   } catch (e) {
     console.error(`[${new Date().toISOString()}][organize] symlink failed`, { src, dst, err: (e as any)?.message });
   }
+}
+
+/**
+ * Allocates a deterministic alternate target when the canonical destination
+ * is already owned by another source. Existing symlinks are never removed by
+ * this function; the source path is part of the suffix so discovery order
+ * cannot change the alternate name.
+ */
+export async function resolveCollisionTarget(src: string, dst: string): Promise<string> {
+  const dstDir = path.dirname(dst);
+  const ext = path.extname(dst);
+  const stem = path.basename(dst, ext);
+  const fingerprint = createHash("sha1").update(src).digest("hex").slice(0, 8);
+  let candidate = dst;
+
+  for (let index = 0; index < 100; index += 1) {
+    const st = await fsp.lstat(candidate).catch(() => null);
+    if (!st) return candidate;
+    if (st.isSymbolicLink()) {
+      const current = await fsp.readlink(candidate).catch(() => "");
+      if (path.resolve(path.dirname(candidate), current) === src) return candidate;
+    }
+    const suffix = index === 0 ? ` - ${fingerprint}` : ` - ${fingerprint}-${index}`;
+    candidate = path.join(dstDir, `${stem}${suffix}${ext}`);
+  }
+
+  throw new Error(`unable to allocate collision-safe organizer target for ${dst}`);
 }
 
 /**
@@ -938,6 +966,10 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
   }
   console.log(`[${new Date().toISOString()}][organize] scan`, { roots, files: files.length });
 
+  // Filesystem traversal order is not stable across providers/filesystems.
+  // Sorting makes collision assignment deterministic for a given source set.
+  files.sort((a, b) => a.localeCompare(b));
+
   let processed = 0;
   let movieCount = 0;
   let tvCount = 0;
@@ -1027,7 +1059,8 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
     const dst = computeTarget(parsed, base, src);
     if (!dst) continue;
 
-    await makeSymlink(src, dst, dryRun);
+    const safeDst = dryRun ? dst : await resolveCollisionTarget(src, dst);
+    await makeSymlink(src, safeDst, dryRun);
     processed++;
   }
 
