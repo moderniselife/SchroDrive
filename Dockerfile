@@ -40,16 +40,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && printf 'user_allow_other\n' >> /etc/fuse.conf || true
 
-# Copy backend
+# Copy web GUI before the backend artifact so backend-only changes do not
+# invalidate the large web dependency/artifact layers below.
 COPY package.json ./
 RUN bun install --production
-COPY --from=build /app/dist ./dist
-
-# Copy web GUI
 COPY --from=web-build /app/web/.next ./web/.next
 COPY --from=web-build /app/web/public ./web/public
 COPY --from=web-build /app/web/package.json ./web/
 COPY --from=web-build /app/web/node_modules ./web/node_modules
+
+# Keep the small, frequently changing backend artifact last.
+COPY --from=build /app/dist ./dist
 
 # Copy entrypoint script
 COPY docker-entrypoint.sh /docker-entrypoint.sh
