@@ -713,9 +713,9 @@ async function ensureDir(p: string) {
  * @param dst - The absolute path where the symlink should be created.
  * @param dryRun - If `true`, log but do not actually create the symlink.
  */
-async function makeSymlink(src: string, dst: string, dryRun: boolean) {
+export async function makeSymlink(src: string, dst: string, dryRun: boolean) {
   const dstDir = path.dirname(dst);
-  await ensureDir(dstDir);
+  if (!dryRun) await ensureDir(dstDir);
   const relTarget = path.relative(dstDir, src);
   try {
     const st = await fsp.lstat(dst).catch(() => null);
@@ -874,6 +874,22 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
   const movieDir = path.join(orgBase, "Movies");
   const tvDir = path.join(orgBase, "TV");
   const animeDir = path.join(orgBase, "Anime");
+
+  try {
+    const rootStat = await fsp.stat(orgBase);
+    if (!rootStat.isDirectory()) {
+      throw new Error("organized root is not a directory");
+    }
+    await fsp.access(
+      orgBase,
+      dryRun
+        ? fs.constants.R_OK | fs.constants.X_OK
+        : fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK,
+    );
+  } catch (err: any) {
+    throw new Error(`organized root unavailable: ${orgBase}: ${err?.message || String(err)}`);
+  }
+
   let totalRemovedLinks = 0;
   let totalRemovedDirs = 0;
 
