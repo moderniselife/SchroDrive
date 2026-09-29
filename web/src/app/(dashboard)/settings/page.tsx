@@ -531,12 +531,12 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid gap-6 md:grid-cols-2">
-                <ConfigField label="Overseerr URL" envVar="OVERSEERR_URL" description="Must include /api/v1" value={getValue("OVERSEERR_URL")} source={getSource("OVERSEERR_URL")} onChange={(v) => updateValue("OVERSEERR_URL", v)} />
-                <ConfigField label="API Key" envVar="OVERSEERR_API_KEY" type="password" value={getValue("OVERSEERR_API_KEY")} source={getSource("OVERSEERR_API_KEY")} onChange={(v) => updateValue("OVERSEERR_API_KEY", v)} />
+                <ConfigField label="Overseerr URL" envVar="SEERR_URL" description="Must include /api/v1" value={getValue("SEERR_URL")} source={getSource("SEERR_URL")} onChange={(v) => updateValue("SEERR_URL", v)} />
+                <ConfigField label="API Key" envVar="SEERR_API_KEY" type="password" value={getValue("SEERR_API_KEY")} source={getSource("SEERR_API_KEY")} onChange={(v) => updateValue("SEERR_API_KEY", v)} />
               </div>
               <Separator />
               <ConfigSection title="Webhook Authentication" description="Optional security for incoming webhooks">
-                <ConfigField label="Webhook Auth Header" envVar="OVERSEERR_AUTH" description="Authorization header value to require" type="password" value={getValue("OVERSEERR_AUTH")} source={getSource("OVERSEERR_AUTH")} onChange={(v) => updateValue("OVERSEERR_AUTH", v)} />
+                <ConfigField label="Webhook Auth Header" envVar="SEERR_AUTH" description="Authorization header value to require" type="password" value={getValue("SEERR_AUTH")} source={getSource("SEERR_AUTH")} onChange={(v) => updateValue("SEERR_AUTH", v)} />
               </ConfigSection>
               <Separator />
               <ConfigSection title="Poller Settings" description="Poll Overseerr for approved requests">
