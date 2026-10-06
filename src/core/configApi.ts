@@ -55,6 +55,7 @@ export const CONFIG_SCHEMA = {
   RUN_DEAD_SCANNER: { type: "boolean", default: "false", category: "services", label: "Run Dead Scanner" },
   RUN_DEAD_SCANNER_WATCH: { type: "boolean", default: "false", category: "services", label: "Dead Scanner Watch Mode" },
   RUN_ORGANIZER_WATCH: { type: "boolean", default: "false", category: "services", label: "Organizer Watch Mode" },
+  ARR_DOWNLOADS_PATH: { type: "string", default: "", category: "arr", label: "ARR Downloads Path" },
 
   // Mount Settings
   MOUNT_BASE: { type: "string", default: "/mnt/schrodrive", category: "mounts", label: "Mount Base Path" },
