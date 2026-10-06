@@ -1,5 +1,8 @@
 import path from 'path';
 import { asBool, asNumber, splitCsv } from './utils';
+import { getPersistedEnvValue, resolveRuntimeOrPersistedValue } from './configApi';
+
+const persistedTmdbApiKey = getPersistedEnvValue("TMDB_API_KEY");
 
 const defaultMountBase = (process.env.MOUNT_BASE || (process.platform === 'darwin' ? "/Volumes/SchroDrive" : "/mnt/schrodrive"));
 

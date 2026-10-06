@@ -10,4 +10,9 @@ describe("configuration loading", () => {
     expect(resolveRuntimeOrPersistedValue("", "persisted")).toBe("persisted");
     expect(resolveRuntimeOrPersistedValue(undefined, "persisted")).toBe("persisted");
   });
+
+  test("returns an empty value when neither source is configured", () => {
+    expect(resolveRuntimeOrPersistedValue("", "")).toBe("");
+    expect(resolveRuntimeOrPersistedValue(undefined, undefined)).toBe("");
+  });
 });
