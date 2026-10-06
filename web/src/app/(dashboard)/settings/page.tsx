@@ -633,6 +633,7 @@ export default function SettingsPage() {
               </div>
               <div className="grid gap-6 md:grid-cols-2">
                 <ConfigField label="Organizer Mode" envVar="ORGANIZER_MODE" type="select" options={["symlink", "copy", "move"]} value={getValue("ORGANIZER_MODE")} source={getSource("ORGANIZER_MODE")} onChange={(v) => updateValue("ORGANIZER_MODE", v)} />
+                <ConfigField label="Organizer Filename Mode" envVar="ORGANIZER_FILENAME_MODE" description="Use canonical names or preserve source release basenames" type="select" options={["canonical", "original"]} value={getValue("ORGANIZER_FILENAME_MODE")} source={getSource("ORGANIZER_FILENAME_MODE")} onChange={(v) => updateValue("ORGANIZER_FILENAME_MODE", v)} />
                 <ConfigField label="Scan Interval (seconds)" envVar="ORG_SCAN_INTERVAL_S" description="How often to scan for new media" type="number" value={getValue("ORG_SCAN_INTERVAL_S")} source={getSource("ORG_SCAN_INTERVAL_S")} onChange={(v) => updateValue("ORG_SCAN_INTERVAL_S", v)} />
               </div>
             </CardContent>
