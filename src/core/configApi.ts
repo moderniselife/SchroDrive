@@ -156,6 +156,16 @@ function parseEnvFile(filePath: string): Map<string, string> {
   return result;
 }
 
+/** Resolve a runtime setting, falling back to the value persisted in .env. */
+export function resolveRuntimeOrPersistedValue(runtimeValue: string | undefined, persistedValue: string | undefined): string {
+  return runtimeValue !== undefined && runtimeValue !== "" ? runtimeValue : persistedValue || "";
+}
+
+/** Read one persisted setting without exposing or logging its value. */
+export function getPersistedEnvValue(key: ConfigKey): string {
+  return parseEnvFile(findEnvPath()).get(key) || "";
+}
+
 // Get all config values with their sources
 export function getConfigWithSources(): { config: ConfigData; envPath: string } {
   const envPath = findEnvPath();
