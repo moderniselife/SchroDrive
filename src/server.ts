@@ -28,7 +28,7 @@ import { startAutoUpdater } from "./services/autoUpdate";
 import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDocker, CONFIG_SCHEMA } from "./core/configApi";
 import { logBuffer } from "./core/logger";
 import { rateLimiter } from "./core/rateLimiter";
-import { getBridgeStatuses, refreshBridges, getExternalWebdavStatus } from "./services/mount";
+import { getBridgeStatuses, refreshBridges, getExternalWebdavStatus, getMountReadiness } from "./services/mount";
 import { getPreWarmStatus } from "./services/cloudLinks/bridge";
 import { getBlacklistEntries, getBlacklistCount, addToBlacklist, removeFromBlacklist, isBlacklisted } from "./core/blacklist";
 import { tokenRotator } from "./core/tokenRotator";
@@ -1096,6 +1096,10 @@ export function startServer() {
    */
   app.get("/api/files", async (req, res) => {
     try {
+      const mountReadiness = await getMountReadiness();
+      if (!mountReadiness.ready) {
+        throw new FilesystemBrowserError(503, `Mounted filesystem not ready (${mountReadiness.reason})`);
+      }
       const requestedPath = String(req.query.path || "/");
       const mountBase = config.mountBase || "/mnt/schrodrive";
       const listing = await browseMountedFilesystem(mountBase, requestedPath);
