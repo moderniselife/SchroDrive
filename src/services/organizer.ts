@@ -18,10 +18,11 @@
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
+import { createHash } from "crypto";
 import axios from "axios";
 import { config } from "../core/config";
 import { classifyTorrent } from "../core/mediaClassifier";
-import { getWebdavOrganiserRoots } from "./mount";
+import { getConfiguredMountReadiness, getWebdavOrganiserRoots } from "./mount";
 import { parseMediaFilename, selectMediaCandidate } from "./mediaParser";
 import { getOrganizerReview, recordOrganizerReview, type ReviewDecision, type ReviewOverride } from "./organizerReview";
 
@@ -742,7 +743,7 @@ async function ensureDir(p: string) {
  */
 export async function makeSymlink(src: string, dst: string, dryRun: boolean, avoidCollision = false) {
   const dstDir = path.dirname(dst);
-  await ensureDir(dstDir);
+  if (!dryRun) await ensureDir(dstDir);
   const relTarget = path.relative(dstDir, src);
   try {
     const st = await fsp.lstat(dst).catch(() => null);
@@ -772,6 +773,33 @@ export async function makeSymlink(src: string, dst: string, dryRun: boolean, avo
   } catch (e) {
     console.error(`[${new Date().toISOString()}][organize] symlink failed`, { src, dst, err: (e as any)?.message });
   }
+}
+
+/**
+ * Allocates a deterministic alternate target when the canonical destination
+ * is already owned by another source. Existing symlinks are never removed by
+ * this function; the source path is part of the suffix so discovery order
+ * cannot change the alternate name.
+ */
+export async function resolveCollisionTarget(src: string, dst: string): Promise<string> {
+  const dstDir = path.dirname(dst);
+  const ext = path.extname(dst);
+  const stem = path.basename(dst, ext);
+  const fingerprint = createHash("sha1").update(src).digest("hex").slice(0, 8);
+  let candidate = dst;
+
+  for (let index = 0; index < 100; index += 1) {
+    const st = await fsp.lstat(candidate).catch(() => null);
+    if (!st) return candidate;
+    if (st.isSymbolicLink()) {
+      const current = await fsp.readlink(candidate).catch(() => "");
+      if (path.resolve(path.dirname(candidate), current) === src) return candidate;
+    }
+    const suffix = index === 0 ? ` - ${fingerprint}` : ` - ${fingerprint}-${index}`;
+    candidate = path.join(dstDir, `${stem}${suffix}${ext}`);
+  }
+
+  throw new Error(`unable to allocate collision-safe organizer target for ${dst}`);
 }
 
 /**
@@ -904,23 +932,49 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
   const dryRun = !!opts?.dryRun;
   const limit = opts?.limit ?? 10000;
 
+  const mountStatuses = await getConfiguredMountReadiness();
+  const readinessByPath = new Map(
+    mountStatuses.filter((status) => status.path).map((status) => [path.resolve(status.path!), status]),
+  );
+  const hasUnavailableSource = mountStatuses.some((status) => !status.ready);
+
   // --- Prune stale symlinks before scanning ---
   const orgBase = config.organizedBase;
   const movieDir = path.join(orgBase, "Movies");
   const tvDir = path.join(orgBase, "TV");
   const animeDir = path.join(orgBase, "Anime");
+
+  try {
+    const rootStat = await fsp.stat(orgBase);
+    if (!rootStat.isDirectory()) {
+      throw new Error("organized root is not a directory");
+    }
+    await fsp.access(
+      orgBase,
+      dryRun
+        ? fs.constants.R_OK | fs.constants.X_OK
+        : fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK,
+    );
+  } catch (err: any) {
+    throw new Error(`organized root unavailable: ${orgBase}: ${err?.message || String(err)}`);
+  }
+
   let totalRemovedLinks = 0;
   let totalRemovedDirs = 0;
 
-  for (const dir of [movieDir, tvDir, animeDir]) {
-    try {
-      const st = await fsp.stat(dir);
-      if (st.isDirectory()) {
-        const { removedLinks, removedDirs } = await pruneStaleSymlinks(dir);
-        totalRemovedLinks += removedLinks;
-        totalRemovedDirs += removedDirs;
-      }
-    } catch { /* directory may not exist yet */ }
+  if (!hasUnavailableSource) {
+    for (const dir of [movieDir, tvDir, animeDir]) {
+      try {
+        const st = await fsp.stat(dir);
+        if (st.isDirectory()) {
+          const { removedLinks, removedDirs } = await pruneStaleSymlinks(dir);
+          totalRemovedLinks += removedLinks;
+          totalRemovedDirs += removedDirs;
+        }
+      } catch { /* directory may not exist yet */ }
+    }
+  } else {
+    console.warn(`[${new Date().toISOString()}][organize] skipping stale-content pruning while a source mount is not ready`);
   }
 
   if (totalRemovedLinks > 0 || totalRemovedDirs > 0) {
@@ -934,6 +988,11 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
   const providerBases = config.providers.map((p) => path.join(config.mountBase, p));
   const roots: string[] = [];
   for (const b of providerBases) {
+    const status = readinessByPath.get(path.resolve(b));
+    if (config.runMount && status && !status.ready) {
+      console.warn(`[${new Date().toISOString()}][organize] skipping source mount`, { reason: status.reason });
+      continue;
+    }
     // Check for Zurg-style organised category layout (__all__/anime/shows/movies)
     const allDir = path.join(b, "__all__");
     const allStat = await fsp.stat(allDir).catch(() => null);
@@ -956,6 +1015,11 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
   if (config.webdavMountsEnabled) {
     const webdavRoots = getWebdavOrganiserRoots();
     for (const wr of webdavRoots) {
+      const status = readinessByPath.get(path.resolve(wr));
+      if (status && !status.ready) {
+        console.warn(`[${new Date().toISOString()}][organize] skipping WebDAV source mount`, { reason: status.reason });
+        continue;
+      }
       const wrStat = await fsp.stat(wr).catch(() => null);
       if (wrStat?.isDirectory()) {
         roots.push(wr);
@@ -972,6 +1036,10 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
     } catch (_) { /* ignore — directory may not exist yet */ }
   }
   console.log(`[${new Date().toISOString()}][organize] scan`, { roots, files: files.length });
+
+  // Filesystem traversal order is not stable across providers/filesystems.
+  // Sorting makes collision assignment deterministic for a given source set.
+  files.sort((a, b) => a.localeCompare(b));
 
   let processed = 0;
   let movieCount = 0;
@@ -1062,7 +1130,16 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
     const dst = computeTarget(parsed, base, src);
     if (!dst) continue;
 
-    await makeSymlink(src, dst, dryRun, config.organizerFilenameMode === "original");
+    if (config.organizerFilenameMode === "original") {
+      // Original release filenames: never silently replace a different
+      // symlink on collision — keep the existing one.
+      await makeSymlink(src, dst, dryRun, true);
+    } else {
+      // Canonical filenames: preserve colliding media versions under a
+      // deterministic alternate target instead of replacing them.
+      const safeDst = dryRun ? dst : await resolveCollisionTarget(src, dst);
+      await makeSymlink(src, safeDst, dryRun);
+    }
     processed++;
   }
 
