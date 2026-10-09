@@ -56,7 +56,7 @@ export const config = {
   torboxWebdavUsername: process.env.TORBOX_WEBDAV_USERNAME || "",
   torboxWebdavPassword: process.env.TORBOX_WEBDAV_PASSWORD || "",
   // AllDebrid API
-  alldebridApiKey: process.env.ALLDEBRID_API_KEY || "",
+  alldebridApiKey: process.env.ALLDEBRID_API_KEY || process.env.AD_API_KEY || "",
   alldebridApiBase: process.env.ALLDEBRID_API_BASE || "https://api.alldebrid.com/v4",
   alldebridAgent: process.env.ALLDEBRID_AGENT || "schrodrive",
   // Provider reconciliation is opt-in and disabled by default.
@@ -74,16 +74,16 @@ export const config = {
   providerReconciliationMoviesLibraryPath: process.env.PROVIDER_RECONCILIATION_MOVIES_LIBRARY_PATH || "",
   providerReconciliationShowsLibraryPath: process.env.PROVIDER_RECONCILIATION_SHOWS_LIBRARY_PATH || "",
   // AllDebrid WebDAV (if supported)
-  alldebridWebdavUrl: process.env.ALLDEBRID_WEBDAV_URL || "",
-  alldebridWebdavUsername: process.env.ALLDEBRID_WEBDAV_USERNAME || "",
-  alldebridWebdavPassword: process.env.ALLDEBRID_WEBDAV_PASSWORD || "",
+  alldebridWebdavUrl: process.env.ALLDEBRID_WEBDAV_URL || process.env.AD_WEBDAV_URL || "",
+  alldebridWebdavUsername: process.env.ALLDEBRID_WEBDAV_USERNAME || process.env.AD_WEBDAV_USERNAME || "",
+  alldebridWebdavPassword: process.env.ALLDEBRID_WEBDAV_PASSWORD || process.env.AD_WEBDAV_PASSWORD || "",
   // Premiumize API
-  premiumizeApiKey: process.env.PREMIUMIZE_API_KEY || "",
+  premiumizeApiKey: process.env.PREMIUMIZE_API_KEY || process.env.PM_API_KEY || "",
   premiumizeApiBase: process.env.PREMIUMIZE_API_BASE || "https://www.premiumize.me/api",
   // Premiumize WebDAV
-  premiumizeWebdavUrl: process.env.PREMIUMIZE_WEBDAV_URL || "https://webdav.premiumize.me",
-  premiumizeWebdavUsername: process.env.PREMIUMIZE_WEBDAV_USERNAME || "",
-  premiumizeWebdavPassword: process.env.PREMIUMIZE_WEBDAV_PASSWORD || '',
+  premiumizeWebdavUrl: process.env.PREMIUMIZE_WEBDAV_URL || process.env.PM_WEBDAV_URL || "https://webdav.premiumize.me",
+  premiumizeWebdavUsername: process.env.PREMIUMIZE_WEBDAV_USERNAME || process.env.PM_WEBDAV_USERNAME || "",
+  premiumizeWebdavPassword: process.env.PREMIUMIZE_WEBDAV_PASSWORD || process.env.PM_WEBDAV_PASSWORD || '',
   // --- Download Token Rotation (Zurg-style 503 bypass) ---
   rdDownloadTokens: splitCsv(process.env.RD_DOWNLOAD_TOKENS),
   torboxDownloadTokens: splitCsv(process.env.TORBOX_DOWNLOAD_TOKENS),

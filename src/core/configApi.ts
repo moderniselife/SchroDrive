@@ -42,6 +42,19 @@ export const CONFIG_SCHEMA = {
   RD_WEBDAV_USERNAME: { type: "string", default: "", category: "realdebrid", label: "Real-Debrid WebDAV Username" },
   RD_WEBDAV_PASSWORD: { type: "password", default: "", category: "realdebrid", label: "Real-Debrid WebDAV Password" },
 
+  // AllDebrid
+  ALLDEBRID_API_KEY: { type: "password", default: "", category: "alldebrid", label: "AllDebrid API Key" },
+  ALLDEBRID_WEBDAV_URL: { type: "string", default: "", category: "alldebrid", label: "AllDebrid WebDAV URL" },
+  ALLDEBRID_WEBDAV_USERNAME: { type: "string", default: "", category: "alldebrid", label: "AllDebrid WebDAV Username" },
+  ALLDEBRID_WEBDAV_PASSWORD: { type: "password", default: "", category: "alldebrid", label: "AllDebrid WebDAV Password" },
+
+  // Premiumize
+  PREMIUMIZE_API_KEY: { type: "password", default: "", category: "premiumize", label: "Premiumize API Key" },
+  PREMIUMIZE_API_BASE: { type: "string", default: "https://www.premiumize.me/api", category: "premiumize", label: "Premiumize API Base" },
+  PREMIUMIZE_WEBDAV_URL: { type: "string", default: "https://webdav.premiumize.me", category: "premiumize", label: "Premiumize WebDAV URL" },
+  PREMIUMIZE_WEBDAV_USERNAME: { type: "string", default: "", category: "premiumize", label: "Premiumize WebDAV Username" },
+  PREMIUMIZE_WEBDAV_PASSWORD: { type: "password", default: "", category: "premiumize", label: "Premiumize WebDAV Password" },
+
   // Seerr / Overseerr / Jellyseerr (all API-compatible)
   SEERR_URL: { type: "string", default: "", category: "seerr", label: "Seerr URL (or Overseerr/Jellyseerr)" },
   SEERR_API_KEY: { type: "password", default: "", category: "seerr", label: "Seerr API Key (or Overseerr/Jellyseerr)" },
@@ -106,6 +119,17 @@ export const CONFIG_SCHEMA = {
 } as const;
 
 export type ConfigKey = keyof typeof CONFIG_SCHEMA;
+
+const CONFIG_KEY_ALIASES: Record<string, readonly string[]> = {
+  ALLDEBRID_API_KEY: ["AD_API_KEY"],
+  ALLDEBRID_WEBDAV_URL: ["AD_WEBDAV_URL"],
+  ALLDEBRID_WEBDAV_USERNAME: ["AD_WEBDAV_USERNAME"],
+  ALLDEBRID_WEBDAV_PASSWORD: ["AD_WEBDAV_PASSWORD"],
+  PREMIUMIZE_API_KEY: ["PM_API_KEY"],
+  PREMIUMIZE_WEBDAV_URL: ["PM_WEBDAV_URL"],
+  PREMIUMIZE_WEBDAV_USERNAME: ["PM_WEBDAV_USERNAME"],
+  PREMIUMIZE_WEBDAV_PASSWORD: ["PM_WEBDAV_PASSWORD"],
+};
 
 interface ConfigValue {
   value: string;
@@ -211,17 +235,23 @@ export function getConfigWithSources(options: ConfigSourceOptions = {}): { confi
 
   for (const [key, schema] of Object.entries(CONFIG_SCHEMA)) {
     const k = key as ConfigKey;
-    const envValue = process.env[key];
-    const fileValue = fileValues.get(key);
+    const aliases = CONFIG_KEY_ALIASES[key] || [];
+    const runtimeKey = [key, ...aliases].find((candidate) => process.env[candidate] !== undefined && process.env[candidate] !== "");
+    const canonicalFileValue = fileValues.get(key);
+    const legacyFileValue = aliases.map((alias) => fileValues.get(alias)).find((candidate) => candidate !== undefined && candidate !== "");
+    const fileValue = canonicalFileValue !== undefined && canonicalFileValue !== "" ? canonicalFileValue : legacyFileValue ?? canonicalFileValue;
+
+    const runtimeValue = runtimeKey ? process.env[runtimeKey] || "" : undefined;
 
     let value: string;
     let source: "env" | "file" | "default";
     let provenance: ConfigProvenance;
     let locked: boolean;
 
-    if (containerEnvKeys.has(key) && envValue !== undefined && envValue !== "") {
-      // Runtime environment variable takes priority
-      value = envValue;
+    if (runtimeKey !== undefined && containerEnvKeys.has(runtimeKey)) {
+      // Original container environment variable (canonical key or legacy
+      // alias) takes priority and is locked for editing in the UI.
+      value = runtimeValue as string;
       source = "env";
       provenance = "CONTAINER_ENV";
       locked = true;

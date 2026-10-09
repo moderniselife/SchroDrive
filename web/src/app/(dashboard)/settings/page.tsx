@@ -478,7 +478,7 @@ export default function SettingsPage() {
                 <CardDescription>AllDebrid debrid service configuration</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <ConfigField label="API Key" envVar="AD_API_KEY" description="Your AllDebrid API key" type="password" value={getValue("AD_API_KEY")} source={getSource("AD_API_KEY")} onChange={(v) => updateValue("AD_API_KEY", v)} />
+                <ConfigField label="API Key" envVar="ALLDEBRID_API_KEY" description="Your AllDebrid API key" type="password" value={getValue("ALLDEBRID_API_KEY")} source={getSource("ALLDEBRID_API_KEY")} onChange={(v) => updateValue("ALLDEBRID_API_KEY", v)} />
               </CardContent>
             </Card>
 
@@ -488,9 +488,9 @@ export default function SettingsPage() {
                 <CardDescription>WebDAV mount credentials for AllDebrid</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <ConfigField label="WebDAV URL" envVar="AD_WEBDAV_URL" value={getValue("AD_WEBDAV_URL")} source={getSource("AD_WEBDAV_URL")} onChange={(v) => updateValue("AD_WEBDAV_URL", v)} />
-                <ConfigField label="Username" envVar="AD_WEBDAV_USERNAME" value={getValue("AD_WEBDAV_USERNAME")} source={getSource("AD_WEBDAV_USERNAME")} onChange={(v) => updateValue("AD_WEBDAV_USERNAME", v)} />
-                <ConfigField label="Password" envVar="AD_WEBDAV_PASSWORD" type="password" value={getValue("AD_WEBDAV_PASSWORD")} source={getSource("AD_WEBDAV_PASSWORD")} onChange={(v) => updateValue("AD_WEBDAV_PASSWORD", v)} />
+                <ConfigField label="WebDAV URL" envVar="ALLDEBRID_WEBDAV_URL" value={getValue("ALLDEBRID_WEBDAV_URL")} source={getSource("ALLDEBRID_WEBDAV_URL")} onChange={(v) => updateValue("ALLDEBRID_WEBDAV_URL", v)} />
+                <ConfigField label="Username" envVar="ALLDEBRID_WEBDAV_USERNAME" value={getValue("ALLDEBRID_WEBDAV_USERNAME")} source={getSource("ALLDEBRID_WEBDAV_USERNAME")} onChange={(v) => updateValue("ALLDEBRID_WEBDAV_USERNAME", v)} />
+                <ConfigField label="Password" envVar="ALLDEBRID_WEBDAV_PASSWORD" type="password" value={getValue("ALLDEBRID_WEBDAV_PASSWORD")} source={getSource("ALLDEBRID_WEBDAV_PASSWORD")} onChange={(v) => updateValue("ALLDEBRID_WEBDAV_PASSWORD", v)} />
               </CardContent>
             </Card>
           </div>
@@ -505,7 +505,7 @@ export default function SettingsPage() {
                 <CardDescription>Premiumize debrid service configuration</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <ConfigField label="API Key" envVar="PM_API_KEY" description="Your Premiumize API key" type="password" value={getValue("PM_API_KEY")} source={getSource("PM_API_KEY")} onChange={(v) => updateValue("PM_API_KEY", v)} />
+                <ConfigField label="API Key" envVar="PREMIUMIZE_API_KEY" description="Your Premiumize API key" type="password" value={getValue("PREMIUMIZE_API_KEY")} source={getSource("PREMIUMIZE_API_KEY")} onChange={(v) => updateValue("PREMIUMIZE_API_KEY", v)} />
               </CardContent>
             </Card>
 
@@ -515,9 +515,9 @@ export default function SettingsPage() {
                 <CardDescription>WebDAV mount credentials for Premiumize</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <ConfigField label="WebDAV URL" envVar="PM_WEBDAV_URL" value={getValue("PM_WEBDAV_URL")} source={getSource("PM_WEBDAV_URL")} onChange={(v) => updateValue("PM_WEBDAV_URL", v)} />
-                <ConfigField label="Username" envVar="PM_WEBDAV_USERNAME" value={getValue("PM_WEBDAV_USERNAME")} source={getSource("PM_WEBDAV_USERNAME")} onChange={(v) => updateValue("PM_WEBDAV_USERNAME", v)} />
-                <ConfigField label="Password" envVar="PM_WEBDAV_PASSWORD" type="password" value={getValue("PM_WEBDAV_PASSWORD")} source={getSource("PM_WEBDAV_PASSWORD")} onChange={(v) => updateValue("PM_WEBDAV_PASSWORD", v)} />
+                <ConfigField label="WebDAV URL" envVar="PREMIUMIZE_WEBDAV_URL" value={getValue("PREMIUMIZE_WEBDAV_URL")} source={getSource("PREMIUMIZE_WEBDAV_URL")} onChange={(v) => updateValue("PREMIUMIZE_WEBDAV_URL", v)} />
+                <ConfigField label="Username" envVar="PREMIUMIZE_WEBDAV_USERNAME" value={getValue("PREMIUMIZE_WEBDAV_USERNAME")} source={getSource("PREMIUMIZE_WEBDAV_USERNAME")} onChange={(v) => updateValue("PREMIUMIZE_WEBDAV_USERNAME", v)} />
+                <ConfigField label="Password" envVar="PREMIUMIZE_WEBDAV_PASSWORD" type="password" value={getValue("PREMIUMIZE_WEBDAV_PASSWORD")} source={getSource("PREMIUMIZE_WEBDAV_PASSWORD")} onChange={(v) => updateValue("PREMIUMIZE_WEBDAV_PASSWORD", v)} />
               </CardContent>
             </Card>
           </div>
