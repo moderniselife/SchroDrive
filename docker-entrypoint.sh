@@ -9,6 +9,33 @@ BACKEND_URL="${BACKEND_URL:-http://localhost:8978}"
 echo "[entrypoint] Starting SchröDrive (Bun runtime)..."
 echo "[entrypoint] RUN_WEB_GUI=${RUN_WEB_GUI}"
 
+# Keep settings written by the UI on the persistent configuration mount. A
+# legacy /app/.env is migrated once, atomically, without overwriting an
+# existing persistent configuration.
+CONFIG_DIR="${CONFIG_DIR:-/config}"
+PERSISTED_ENV_PATH="${CONFIG_DIR}/.env"
+LEGACY_ENV_PATH="/app/.env"
+if [ -d "$CONFIG_DIR" ] && [ -w "$CONFIG_DIR" ] && [ -f "$LEGACY_ENV_PATH" ] && [ ! -e "$PERSISTED_ENV_PATH" ]; then
+    umask 077
+    TEMP_ENV_PATH="${PERSISTED_ENV_PATH}.tmp.$$"
+    cp "$LEGACY_ENV_PATH" "$TEMP_ENV_PATH"
+    chmod 600 "$TEMP_ENV_PATH"
+    mv "$TEMP_ENV_PATH" "$PERSISTED_ENV_PATH"
+    echo "[entrypoint] Migrated persisted configuration to ${PERSISTED_ENV_PATH}"
+fi
+
+# Bun automatically loads /app/.env before the application starts. Point it at
+# the persistent file so settings survive container recreation and remain the
+# single source of truth. Keep a legacy copy only while the migration is being
+# completed; it is never loaded by the application.
+if [ -f "$PERSISTED_ENV_PATH" ]; then
+    chmod 600 "$PERSISTED_ENV_PATH" 2>/dev/null || true
+    if [ -e "$LEGACY_ENV_PATH" ] && [ ! -L "$LEGACY_ENV_PATH" ]; then
+        mv "$LEGACY_ENV_PATH" "${LEGACY_ENV_PATH}.legacy.$$"
+    fi
+    ln -sfn "$PERSISTED_ENV_PATH" "$LEGACY_ENV_PATH"
+fi
+
 stop_children() {
     kill "$BACKEND_PID" "$WEB_PID" 2>/dev/null || true
     wait "$BACKEND_PID" 2>/dev/null || true

@@ -149,6 +149,7 @@ export function getOriginalEnvironmentKeys(): Set<string> {
 function findEnvPath(): string {
   // Check multiple possible locations
   const candidates = [
+    "/config/.env", // persistent Docker configuration mount
     path.join(process.cwd(), ".env"),
     path.join(__dirname, "..", ".env"),
     "/app/.env", // Docker container path
@@ -159,6 +160,10 @@ function findEnvPath(): string {
       return p;
     }
   }
+
+  // Prefer the persistent configuration mount when it is available so a
+  // settings save survives container recreation.
+  if (fs.existsSync("/config")) return "/config/.env";
 
   // Default to cwd
   return path.join(process.cwd(), ".env");
@@ -322,8 +327,12 @@ export function saveConfigToFile(updates: Record<string, string>): { success: bo
       }
     }
 
-    // Write the updated content
-    fs.writeFileSync(envPath, newLines.join("\n"));
+    // Publish atomically and keep credentials private on disk.
+    const temporaryPath = `${envPath}.tmp.${process.pid}`;
+    fs.writeFileSync(temporaryPath, newLines.join("\n"), { mode: 0o600 });
+    fs.chmodSync(temporaryPath, 0o600);
+    fs.renameSync(temporaryPath, envPath);
+    fs.chmodSync(envPath, 0o600);
 
     return { success: true, path: envPath };
   } catch (err: any) {
