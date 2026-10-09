@@ -328,7 +328,7 @@ export default function SettingsPage() {
       </Card>
 
       <Tabs defaultValue="general" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4 lg:grid-cols-11">
+        <TabsList className="grid w-full grid-cols-4 lg:grid-cols-12">
           <TabsTrigger value="general" className="gap-2"><Settings className="h-4 w-4 hidden sm:block" />General</TabsTrigger>
           <TabsTrigger value="indexers" className="gap-2"><Search className="h-4 w-4 hidden sm:block" />Indexers</TabsTrigger>
           <TabsTrigger value="torbox" className="gap-2"><Database className="h-4 w-4 hidden sm:block" />TorBox</TabsTrigger>
@@ -336,6 +336,7 @@ export default function SettingsPage() {
           <TabsTrigger value="alldebrid" className="gap-2"><Database className="h-4 w-4 hidden sm:block" />AllDebrid</TabsTrigger>
           <TabsTrigger value="premiumize" className="gap-2"><Database className="h-4 w-4 hidden sm:block" />Premiumize</TabsTrigger>
           <TabsTrigger value="overseerr" className="gap-2"><Tv className="h-4 w-4 hidden sm:block" />Overseerr</TabsTrigger>
+          <TabsTrigger value="arr" className="gap-2"><Server className="h-4 w-4 hidden sm:block" />ARR</TabsTrigger>
           <TabsTrigger value="mounts" className="gap-2"><HardDrive className="h-4 w-4 hidden sm:block" />Mounts</TabsTrigger>
           <TabsTrigger value="services" className="gap-2"><Server className="h-4 w-4 hidden sm:block" />Services</TabsTrigger>
           <TabsTrigger value="organizer" className="gap-2"><FolderSync className="h-4 w-4 hidden sm:block" />Organiser</TabsTrigger>
@@ -531,17 +532,54 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid gap-6 md:grid-cols-2">
-                <ConfigField label="Overseerr URL" envVar="OVERSEERR_URL" description="Must include /api/v1" value={getValue("OVERSEERR_URL")} source={getSource("OVERSEERR_URL")} onChange={(v) => updateValue("OVERSEERR_URL", v)} />
-                <ConfigField label="API Key" envVar="OVERSEERR_API_KEY" type="password" value={getValue("OVERSEERR_API_KEY")} source={getSource("OVERSEERR_API_KEY")} onChange={(v) => updateValue("OVERSEERR_API_KEY", v)} />
+                <ConfigField label="Overseerr URL" envVar="SEERR_URL" description="Must include /api/v1" value={getValue("SEERR_URL")} source={getSource("SEERR_URL")} onChange={(v) => updateValue("SEERR_URL", v)} />
+                <ConfigField label="API Key" envVar="SEERR_API_KEY" type="password" value={getValue("SEERR_API_KEY")} source={getSource("SEERR_API_KEY")} onChange={(v) => updateValue("SEERR_API_KEY", v)} />
               </div>
               <Separator />
               <ConfigSection title="Webhook Authentication" description="Optional security for incoming webhooks">
-                <ConfigField label="Webhook Auth Header" envVar="OVERSEERR_AUTH" description="Authorization header value to require" type="password" value={getValue("OVERSEERR_AUTH")} source={getSource("OVERSEERR_AUTH")} onChange={(v) => updateValue("OVERSEERR_AUTH", v)} />
+                <ConfigField label="Webhook Auth Header" envVar="SEERR_AUTH" description="Authorization header value to require" type="password" value={getValue("SEERR_AUTH")} source={getSource("SEERR_AUTH")} onChange={(v) => updateValue("SEERR_AUTH", v)} />
               </ConfigSection>
               <Separator />
               <ConfigSection title="Poller Settings" description="Poll Overseerr for approved requests">
                 <ConfigField label="Poll Interval (seconds)" envVar="POLL_INTERVAL_S" type="number" value={getValue("POLL_INTERVAL_S")} source={getSource("POLL_INTERVAL_S")} onChange={(v) => updateValue("POLL_INTERVAL_S", v)} />
               </ConfigSection>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ARR Integrations Tab */}
+        <TabsContent value="arr" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>ARR Integrations</CardTitle>
+              <CardDescription>Connect Radarr and Sonarr to reconcile media added directly to a configured provider.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <SwitchField label="Enable Provider Reconciliation" envVar="PROVIDER_RECONCILIATION_ENABLED" description="Detect new provider media and request an import in Radarr or Sonarr" value={getBoolValue("PROVIDER_RECONCILIATION_ENABLED")} source={getSource("PROVIDER_RECONCILIATION_ENABLED")} onChange={(v) => updateBoolValue("PROVIDER_RECONCILIATION_ENABLED", v)} />
+              <Separator />
+              <ConfigSection title="Radarr" description="Radarr endpoint used for movie reconciliation">
+                <div className="grid gap-6 md:grid-cols-2">
+                  <ConfigField label="URL" envVar="PROVIDER_RECONCILIATION_RADARR_URL" value={getValue("PROVIDER_RECONCILIATION_RADARR_URL")} source={getSource("PROVIDER_RECONCILIATION_RADARR_URL")} onChange={(v) => updateValue("PROVIDER_RECONCILIATION_RADARR_URL", v)} />
+                  <ConfigField label="API Key" envVar="PROVIDER_RECONCILIATION_RADARR_API_KEY" type="password" value={getValue("PROVIDER_RECONCILIATION_RADARR_API_KEY")} source={getSource("PROVIDER_RECONCILIATION_RADARR_API_KEY")} onChange={(v) => updateValue("PROVIDER_RECONCILIATION_RADARR_API_KEY", v)} />
+                </div>
+              </ConfigSection>
+              <Separator />
+              <ConfigSection title="Sonarr" description="Sonarr endpoint used for series reconciliation">
+                <div className="grid gap-6 md:grid-cols-2">
+                  <ConfigField label="URL" envVar="PROVIDER_RECONCILIATION_SONARR_URL" value={getValue("PROVIDER_RECONCILIATION_SONARR_URL")} source={getSource("PROVIDER_RECONCILIATION_SONARR_URL")} onChange={(v) => updateValue("PROVIDER_RECONCILIATION_SONARR_URL", v)} />
+                  <ConfigField label="API Key" envVar="PROVIDER_RECONCILIATION_SONARR_API_KEY" type="password" value={getValue("PROVIDER_RECONCILIATION_SONARR_API_KEY")} source={getSource("PROVIDER_RECONCILIATION_SONARR_API_KEY")} onChange={(v) => updateValue("PROVIDER_RECONCILIATION_SONARR_API_KEY", v)} />
+                </div>
+              </ConfigSection>
+              <Separator />
+              <ConfigSection title="Reconciliation Schedule" description="Control how often new provider media is checked">
+                <div className="grid gap-6 md:grid-cols-2">
+                  <ConfigField label="Recent Scan Interval (ms)" envVar="PROVIDER_RECONCILIATION_RECENT_INTERVAL_MS" type="number" value={getValue("PROVIDER_RECONCILIATION_RECENT_INTERVAL_MS")} source={getSource("PROVIDER_RECONCILIATION_RECENT_INTERVAL_MS")} onChange={(v) => updateValue("PROVIDER_RECONCILIATION_RECENT_INTERVAL_MS", v)} />
+                  <ConfigField label="Full Scan Interval (ms)" envVar="PROVIDER_RECONCILIATION_FULL_INTERVAL_MS" type="number" value={getValue("PROVIDER_RECONCILIATION_FULL_INTERVAL_MS")} source={getSource("PROVIDER_RECONCILIATION_FULL_INTERVAL_MS")} onChange={(v) => updateValue("PROVIDER_RECONCILIATION_FULL_INTERVAL_MS", v)} />
+                  <ConfigField label="Recent Items Limit" envVar="PROVIDER_RECONCILIATION_RECENT_LIMIT" type="number" value={getValue("PROVIDER_RECONCILIATION_RECENT_LIMIT")} source={getSource("PROVIDER_RECONCILIATION_RECENT_LIMIT")} onChange={(v) => updateValue("PROVIDER_RECONCILIATION_RECENT_LIMIT", v)} />
+                </div>
+                <SwitchField label="Run Full Scan on Startup" envVar="PROVIDER_RECONCILIATION_RUN_FULL_ON_START" description="Perform a complete provider snapshot when SchroDrive starts" value={getBoolValue("PROVIDER_RECONCILIATION_RUN_FULL_ON_START")} source={getSource("PROVIDER_RECONCILIATION_RUN_FULL_ON_START")} onChange={(v) => updateBoolValue("PROVIDER_RECONCILIATION_RUN_FULL_ON_START", v)} />
+              </ConfigSection>
+              <p className="text-xs text-muted-foreground">Mount base and organized library paths are configured in the Mounts and Organiser tabs.</p>
             </CardContent>
           </Card>
         </TabsContent>
