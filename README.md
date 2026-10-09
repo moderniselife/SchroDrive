@@ -938,6 +938,7 @@ provider capability and live-validation status.
 | `TMDB_API_KEY` | — | TMDB API key for metadata lookup |
 | `ORGANIZED_BASE` | `<MOUNT_BASE>/organized` | Output directory for organised symlinks |
 | `ORGANIZER_MODE` | `symlink` | `symlink`, `copy`, or `move` |
+| `ORGANIZER_FILENAME_MODE` | `canonical` | `canonical` keeps the existing name; `original` preserves the source release basename |
 | `ORG_SCAN_INTERVAL_S` | `300` | Organiser scan interval (seconds) |
 
 ### 🔍 Dead Scanner
