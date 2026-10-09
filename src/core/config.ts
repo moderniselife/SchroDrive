@@ -1,5 +1,8 @@
 import path from 'path';
 import { asBool, asNumber, splitCsv } from './utils';
+import { getPersistedEnvValue, resolveRuntimeOrPersistedValue } from './configApi';
+
+const persistedTmdbApiKey = getPersistedEnvValue("TMDB_API_KEY");
 
 const defaultMountBase = (process.env.MOUNT_BASE || (process.platform === 'darwin' ? "/Volumes/SchroDrive" : "/mnt/schrodrive"));
 
@@ -174,7 +177,8 @@ export const config = {
   runDeadScanner: asBool(process.env.RUN_DEAD_SCANNER),
   runDeadScannerWatch: asBool(process.env.RUN_DEAD_SCANNER_WATCH),
   // Organiser (symlinked view)
-  tmdbApiKey: process.env.TMDB_API_KEY || "",
+  // Docker may provide an empty placeholder while Settings persists the real key in .env.
+  tmdbApiKey: resolveRuntimeOrPersistedValue(process.env.TMDB_API_KEY, persistedTmdbApiKey),
   organizedBase: process.env.ORGANIZED_BASE || `${defaultMountBase}/organized`,
   organizerMode: (process.env.ORGANIZER_MODE || "symlink") as "symlink" | "copy" | "move",
   // Filename policy for the organised view. Canonical preserves the existing behaviour; original keeps the source release basename in the symlink.
