@@ -8,7 +8,7 @@ import GradientText from '@/components/ui/GradientText';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 
-function LiveVersionBadge({ fallback = 'v0.11.5' }: { fallback?: string }) {
+function LiveVersionBadge({ fallback = 'v0.12.0' }: { fallback?: string }) {
   const [version, setVersion] = useState(fallback);
   useEffect(() => {
     let cancelled = false;

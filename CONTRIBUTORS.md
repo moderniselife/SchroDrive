@@ -22,9 +22,9 @@ People who have authored commits merged to `main`/`develop`:
 
 | Name | GitHub | Contributions | Highlights |
 |------|--------|---------------|------------|
-| **Sam Truman** | [@samtruman](https://github.com/samtruman) | 8 commits | `fix(webdav): preserve nested multi-file paths`; `fix(alldebrid): use current magnet files API`; `fix(arr-bridge): support multipart qBittorrent add requests`; `fix(arr-bridge): persist qBittorrent categories`; `fix(arr-bridge): recover tracked torrents after restart`; `fix(arr-bridge): preserve nested staging paths`; `fix(mount): honor individual cache settings by default`; `feat(organizer): add identity review workflow` |
+| **Sam Truman** | [@samtruman](https://github.com/samtruman) | 39 commits | `feat: reconcile newly added provider media into Arr libraries`; `fix(organizer): preserve colliding media versions`; `fix(organizer): treat categories as lazy destinations`; `fix(settings): persist canonical Seerr configuration keys`; `fix(seerr): normalize service and API root URLs`; `fix(settings): distinguish container environment from persisted dotenv`; `build: reduce Docker context and preserve dependency layer reuse`; `fix(mount): guard operations when provider mounts are not ready`; `fix(docker): stop container when supervised child exits`; `fix(config): persist settings on the mounted config volume`; `fix(settings): align provider credential keys with backend schema`; `feat(organizer): support original release filenames`; `fix(config): load persisted TMDb key when runtime value is empty`; `fix(arr): keep imported symlinks valid after staging moves`; `fix(webdav): preserve nested multi-file paths`; `fix(alldebrid): use current magnet files API`; `fix(arr-bridge): support multipart qBittorrent add requests`; `fix(arr-bridge): persist qBittorrent categories`; `fix(arr-bridge): recover tracked torrents after restart`; `fix(arr-bridge): preserve nested staging paths`; `fix(mount): honor individual cache settings by default`; `feat(organizer): add identity review workflow` |
 
-> **How we count:** `git log --format="%an <%ae>" | sort -u`. Commit counts above are from `git log` at 2026-09-21. GitHub's *Contributors* graph may show lower numbers because it only counts commits to the default branch.
+> **How we count:** `git log --format="%an <%ae>" | sort -u`. Commit counts above are from `git log` at 2026-10-10. GitHub's *Contributors* graph may show lower numbers because it only counts commits to the default branch.
 
 ---
 
@@ -58,7 +58,7 @@ These are not human contributors, but they keep the repo healthy and are thanked
 
 The project is MIT-licensed (see `LICENSE`, copyright © 2025 moderniselife). All contributors retain copyright to their work and license it under MIT.
 
-*Last updated: 2026-09-23 — generated from `git log --format="%an <%ae>" | sort -u` and `gh api repos/moderniselife/SchroDrive/contributors`.*
+*Last updated: 2026-10-10 — generated from `git log --format="%an <%ae>" | sort -u` and `gh api repos/moderniselife/SchroDrive/contributors`.*
 
 ---
 

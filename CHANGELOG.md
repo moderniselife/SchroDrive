@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.12.0] - 2026-10-10
+*Status: provider reconciliation, organizer filename modes, settings persistence hardening*
+
+### Added ✨
+- **Provider reconciliation into Arr libraries** (`src/services/providerReconciliation*.ts`, `src/providers/alldebrid.ts`, `docs/provider-reconciliation.md`): newly added provider media is reconciled into Sonarr/Radarr libraries with capability detection, isolated runtime wiring, settings UI, e2e + unit tests (#114, thanks @samtruman)
+- **Organizer original release filenames** (`src/services/organizer.ts`, `src/core/config.ts`, settings UI): new `organizerFilenameMode` (`canonical` default, `original` opt-in) preserves source release basenames via `selectOrganizerFilename` without changing the canonical directory layout; ARR integrations tab restored in settings (#125, thanks @samtruman)
+- **AllDebrid + Premiumize provider credentials** (`src/core/configApi.ts`): canonical `ALLDEBRID_*`/`PREMIUMIZE_*` schema keys with legacy `AD_*`/`PM_*` aliases resolved for both runtime env and persisted dotenv (#124, thanks @samtruman)
+
+### Fixed 🐛
+- **Colliding media versions preserved** (`src/services/organizer.ts`): canonical-mode collisions allocate a deterministic alternate target (`resolveCollisionTarget`) instead of replacing; original-mode collisions keep the existing symlink (`avoidCollision`) (#115, #125)
+- **Categories as lazy destinations** (`src/services/organizer.ts`): absent unused categories no longer abort scans; required generic categories are created lazily (#116)
+- **Canonical Seerr keys persisted** (`src/core/configApi.ts`, settings UI): partial saves keep canonical `SEERR_URL`/`SEERR_API_KEY` and preserve existing secrets instead of legacy `OVERSEERR_*` keys (#117)
+- **Seerr URL normalization** (`src/services/seerrUrl.ts`, `overseerr.ts`): service and API-root URLs normalized without duplicated API roots (#118)
+- **Container vs persisted dotenv provenance** (`src/core/configApi.ts`): `getConfigWithSources` marks real container env as locked `CONTAINER_ENV`, persisted-only values as editable `PERSISTED_DOTENV`, absent values as `DEFAULT` (#119)
+- **Docker context + layer cache** (`.dockerignore`, `Dockerfile`): smaller build context with preserved dependency layer reuse (#120)
+- **Mount readiness guard** (`src/server.ts`, `src/services/mount.ts`, `organizer.ts`): operations fail closed when configured provider mounts are not ready (#121)
+- **Container restart lifecycle** (`docker-entrypoint.sh`): small PID-1 supervisor exits when either child exits so Docker restart policy can act (#122)
+- **Dotenv survives container recreation** (`docker-entrypoint.sh`, `docker-compose.yml`, `src/core/configApi.ts`): legacy `/app/.env` migrated atomically to `/config/.env`, symlinked back, preferred by `findEnvPath`, saved atomically with `0600` (#123)
+- **Persisted TMDb fallback** (`src/core/config.ts`, `configApi.ts`): persisted `TMDB_API_KEY` loads when the runtime value is empty (#126)
+- **Arr stable symlinks after staging moves** (`src/services/arrBridge.ts`): imported symlinks stay valid when staging directories move (#127)
+
+### Security 🔒
+- **SSRF defense-in-depth on torrent URL fetch** (`src/providers/registry.ts`): normalized URL string passed to `axios.get` with redirects disabled (`maxRedirects: 0`) so a public URL cannot bounce to internal targets. Note: CodeQL alert no. 12 still open — tracked as follow-up (#97)
+
 ### Version [0.11.5] - 2026-09-23
 *Status: landing on schrodrive.org, Cloudflare Workers, contributors live page*
 
