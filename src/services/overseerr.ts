@@ -5,6 +5,7 @@ import { registry } from "../providers";
 import { upsertOverseerrRequest, getAllOverseerrRequests, isOverseerrProcessed, markOverseerrProcessed, getProcessedOverseerrKeys } from "../core/db";
 import { isBlacklisted } from "../core/blacklist";
 import { isAnyMediaServerStreaming } from "../integrations/plex";
+import { seerrApiBaseUrl } from "./seerrUrl";
 
 
 interface MediaLike {
@@ -28,7 +29,7 @@ function defaultCategoriesFor(mediaType: any): string[] | undefined {
 
 async function fetchTitleYearFromOverseerr(mediaType: string, tmdbId: number): Promise<{ title: string; year?: number } | undefined> {
   if (!config.overseerrUrl || (!config.overseerrApiKey && !config.overseerrAuth)) return undefined;
-  const base = config.overseerrUrl.replace(/\/$/, "");
+  const base = seerrApiBaseUrl(config.overseerrUrl);
   const path = mediaType?.toLowerCase() === 'movie' ? `/movie/${tmdbId}` : `/tv/${tmdbId}`;
   const url = `${base}${path}`;
   console.log(`[${new Date().toISOString()}][poller->seerr] GET ${url} (details)`);
@@ -89,7 +90,7 @@ function buildSearchFromRequest(r: MediaRequestLike): { query: string; categorie
 }
 
 async function fetchApprovedRequests(): Promise<MediaRequestLike[]> {
-  const base = config.overseerrUrl.replace(/\/$/, "");
+  const base = seerrApiBaseUrl(config.overseerrUrl);
   const url = `${base}/request`;
   const started = Date.now();
   console.log(`[${new Date().toISOString()}][poller->seerr] GET ${url}`, {
@@ -353,7 +354,7 @@ export function startOverseerrPoller() {
  */
 async function syncAllApprovedRequests(): Promise<void> {
   if (!config.overseerrUrl || (!config.overseerrApiKey && !config.overseerrAuth)) return;
-  const base = config.overseerrUrl.replace(/\/$/, "");
+  const base = seerrApiBaseUrl(config.overseerrUrl);
   const url = `${base}/request`;
   const headers: any = {};
   if (config.overseerrApiKey) headers["X-Api-Key"] = config.overseerrApiKey;
