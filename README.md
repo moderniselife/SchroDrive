@@ -909,6 +909,28 @@ All configuration is done via environment variables. Below is the complete refer
 | `ARR_BRIDGE_ENABLED` | `false` | Enable the fake qBittorrent API server |
 | `ARR_BRIDGE_PORT` | `8282` | Port for the *arr bridge (add as qBittorrent in Radarr/Sonarr) |
 
+### 🔄 Provider Reconciliation (opt-in)
+
+After the initial historical library import performed in Radarr/Sonarr,
+provider reconciliation detects newly completed files added directly to a
+configured debrid provider. It compares snapshots in SQLite, creates
+mount-backed symlinks in the existing Arr library, and asks Radarr/Sonarr to
+rescan the affected movie or series. It does not copy media locally and does
+not delete or repair provider content.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PROVIDER_RECONCILIATION_ENABLED` | `false` | Enable reconciliation |
+| `PROVIDER_RECONCILIATION_RECENT_INTERVAL_MS` | `900000` | Recent snapshot interval |
+| `PROVIDER_RECONCILIATION_FULL_INTERVAL_MS` | `21600000` | Full snapshot interval |
+| `PROVIDER_RECONCILIATION_RADARR_URL` | — | Radarr API endpoint |
+| `PROVIDER_RECONCILIATION_SONARR_URL` | — | Sonarr API endpoint |
+| `PROVIDER_RECONCILIATION_MOUNT_BASE` | `/mnt/schrodrive` | Shared mount base |
+
+The provider adapter uses the common `DebridProvider` contract. See
+[`docs/provider-reconciliation.md`](docs/provider-reconciliation.md) for
+provider capability and live-validation status.
+
 ### 📁 Organiser
 
 | Variable | Default | Description |
