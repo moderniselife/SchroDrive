@@ -110,10 +110,40 @@ export type ConfigKey = keyof typeof CONFIG_SCHEMA;
 interface ConfigValue {
   value: string;
   source: "env" | "file" | "default";
+  /** Distinguishes the real process environment from Bun-loaded .env data. */
+  provenance: "CONTAINER_ENV" | "PERSISTED_DOTENV" | "DEFAULT";
+  locked: boolean;
   schema: (typeof CONFIG_SCHEMA)[ConfigKey];
 }
 
 export type ConfigData = Record<ConfigKey, ConfigValue>;
+export type ConfigProvenance = ConfigData[ConfigKey]["provenance"];
+
+export interface ConfigSourceOptions {
+  /** Test/embedding override; production reads the original process env. */
+  containerEnvKeys?: ReadonlySet<string>;
+  envPath?: string;
+}
+
+/**
+ * Bun can load .env values into process.env before application modules run.
+ * Reading /proc/self/environ preserves the original environment boundary on
+ * Linux/Docker so persisted values are not incorrectly shown as locked.
+ */
+export function getOriginalEnvironmentKeys(): Set<string> {
+  try {
+    const raw = fs.readFileSync("/proc/self/environ");
+    return new Set(
+      raw
+        .toString("utf8")
+        .split("\0")
+        .map((entry) => entry.slice(0, entry.indexOf("=")))
+        .filter(Boolean),
+    );
+  } catch {
+    return new Set(Object.keys(process.env));
+  }
+}
 
 // Find the .env file path
 function findEnvPath(): string {
@@ -168,9 +198,10 @@ function parseEnvFile(filePath: string): Map<string, string> {
 }
 
 // Get all config values with their sources
-export function getConfigWithSources(): { config: ConfigData; envPath: string } {
-  const envPath = findEnvPath();
+export function getConfigWithSources(options: ConfigSourceOptions = {}): { config: ConfigData; envPath: string } {
+  const envPath = options.envPath || findEnvPath();
   const fileValues = parseEnvFile(envPath);
+  const containerEnvKeys = options.containerEnvKeys || getOriginalEnvironmentKeys();
   const config: Partial<ConfigData> = {};
 
   for (const [key, schema] of Object.entries(CONFIG_SCHEMA)) {
@@ -180,24 +211,34 @@ export function getConfigWithSources(): { config: ConfigData; envPath: string } 
 
     let value: string;
     let source: "env" | "file" | "default";
+    let provenance: ConfigProvenance;
+    let locked: boolean;
 
-    if (envValue !== undefined && envValue !== "") {
+    if (containerEnvKeys.has(key) && envValue !== undefined && envValue !== "") {
       // Runtime environment variable takes priority
       value = envValue;
       source = "env";
+      provenance = "CONTAINER_ENV";
+      locked = true;
     } else if (fileValue !== undefined) {
       // .env file value
       value = fileValue;
       source = "file";
+      provenance = "PERSISTED_DOTENV";
+      locked = false;
     } else {
       // Default value
       value = schema.default;
       source = "default";
+      provenance = "DEFAULT";
+      locked = false;
     }
 
     config[k] = {
       value,
       source,
+      provenance,
+      locked,
       schema,
     };
   }
