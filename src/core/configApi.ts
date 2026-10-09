@@ -48,6 +48,17 @@ export const CONFIG_SCHEMA = {
   SEERR_AUTH: { type: "password", default: "", category: "seerr", label: "Webhook Auth Header" },
   POLL_INTERVAL_S: { type: "number", default: "30", category: "seerr", label: "Poll Interval (seconds)" },
 
+  // ARR integrations
+  PROVIDER_RECONCILIATION_ENABLED: { type: "boolean", default: "false", category: "arr", label: "Enable Provider Reconciliation" },
+  PROVIDER_RECONCILIATION_RECENT_INTERVAL_MS: { type: "number", default: "900000", category: "arr", label: "Recent Scan Interval (ms)" },
+  PROVIDER_RECONCILIATION_FULL_INTERVAL_MS: { type: "number", default: "21600000", category: "arr", label: "Full Scan Interval (ms)" },
+  PROVIDER_RECONCILIATION_RECENT_LIMIT: { type: "number", default: "30", category: "arr", label: "Recent Items Limit" },
+  PROVIDER_RECONCILIATION_RUN_FULL_ON_START: { type: "boolean", default: "true", category: "arr", label: "Run Full Scan on Startup" },
+  PROVIDER_RECONCILIATION_RADARR_URL: { type: "string", default: "", category: "arr", label: "Radarr URL" },
+  PROVIDER_RECONCILIATION_RADARR_API_KEY: { type: "password", default: "", category: "arr", label: "Radarr API Key" },
+  PROVIDER_RECONCILIATION_SONARR_URL: { type: "string", default: "", category: "arr", label: "Sonarr URL" },
+  PROVIDER_RECONCILIATION_SONARR_API_KEY: { type: "password", default: "", category: "arr", label: "Sonarr API Key" },
+
   // Runtime Services
   RUN_WEBHOOK: { type: "boolean", default: "true", category: "services", label: "Run Webhook Server" },
   RUN_POLLER: { type: "boolean", default: "false", category: "services", label: "Run Seerr Poller" },
