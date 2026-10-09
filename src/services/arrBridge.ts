@@ -182,8 +182,8 @@ function extractMagnetName(magnet: string): string {
 }
 
 /** Returns the base download path for symlinks. */
-function getDownloadsPath(): string {
-  return path.join(config.mountBase, 'downloads');
+export function getDownloadsPath(): string {
+  return config.arrDownloadsPath || path.join(config.mountBase, 'downloads');
 }
 
 /** Ensures the downloads staging directory exists. */
@@ -194,6 +194,18 @@ async function ensureDownloadsDir(): Promise<void> {
   } catch {
     // Already exists
   }
+}
+
+/**
+ * Create a symlink whose target remains valid if *arr moves the link out of
+ * the staging directory. The target is deliberately absolute: the existing
+ * bridge contract requires SchroDrive and *arr to expose the shared mount at
+ * the same path inside their containers.
+ */
+export async function createStableSymlink(sourcePath: string, symlinkPath: string): Promise<void> {
+  await fsp.mkdir(path.dirname(symlinkPath), { recursive: true });
+  try { await fsp.unlink(symlinkPath); } catch { /* doesn't exist */ }
+  await fsp.symlink(path.resolve(sourcePath), symlinkPath);
 }
 
 // ===========================================================================
@@ -357,12 +369,7 @@ async function scanMountsForCompleted(): Promise<void> {
         for (const file of foundFiles) {
             const symlinkPath = path.join(torrentDir, file.name);
           try {
-            // Create relative symlink
-            await fsp.mkdir(path.dirname(symlinkPath), { recursive: true });
-            const relativePath = path.relative(path.dirname(symlinkPath), file.path);
-            // Remove existing symlink if it exists
-            try { await fsp.unlink(symlinkPath); } catch { /* doesn't exist */ }
-            await fsp.symlink(relativePath, symlinkPath);
+            await createStableSymlink(file.path, symlinkPath);
           } catch (err: any) {
             console.error(`${LOG_PREFIX} Failed to create symlink for ${file.name}: ${err?.message}`);
           }

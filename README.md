@@ -908,6 +908,7 @@ All configuration is done via environment variables. Below is the complete refer
 |----------|---------|-------------|
 | `ARR_BRIDGE_ENABLED` | `false` | Enable the fake qBittorrent API server |
 | `ARR_BRIDGE_PORT` | `8282` | Port for the *arr bridge (add as qBittorrent in Radarr/Sonarr) |
+| `ARR_DOWNLOADS_PATH` | `<MOUNT_BASE>/downloads` | Optional staging path when Radarr/Sonarr share a custom path; it must be visible at the same path to the bridge and *arr |
 
 ### 🔄 Provider Reconciliation (opt-in)
 
