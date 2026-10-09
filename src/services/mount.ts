@@ -152,6 +152,104 @@ export function getWebdavOrganiserRoots(): string[] {
   return roots;
 }
 
+// ===========================================================================
+// Shared mount readiness guard
+// ===========================================================================
+
+export type MountReadiness = {
+  ready: boolean;
+  reason: "ready" | "not-mounted" | "unavailable";
+  path?: string;
+};
+
+type MountReadinessProbe = {
+  platform?: NodeJS.Platform;
+  mountInfo?: string;
+  readDir?: (mountPath: string) => Promise<string[]>;
+};
+
+function decodeMountInfoPath(value: string): string {
+  return value.replace(/\\([0-7]{3})/g, (_match, octal: string) => String.fromCharCode(parseInt(octal, 8)));
+}
+
+function isMountpoint(pathname: string, mountInfo: string): boolean {
+  const target = path.resolve(pathname);
+  return mountInfo.split("\n").some((line) => {
+    const separator = line.indexOf(" - ");
+    if (separator < 0) return false;
+    const fields = line.slice(0, separator).split(" ");
+    return fields.length > 4 && path.resolve(decodeMountInfoPath(fields[4])) === target;
+  });
+}
+
+async function readMountDirectory(mountPath: string): Promise<string[]> {
+  return await Promise.race([
+    fs.promises.readdir(mountPath),
+    new Promise<string[]>((_resolve, reject) =>
+      setTimeout(() => reject(new Error("mount readiness probe timed out")), 10_000),
+    ),
+  ]);
+}
+
+/**
+ * Probes configured mount roots without treating an existing local directory
+ * as a ready provider filesystem. On Linux, mountinfo proves that the path is
+ * an actual mountpoint; readdir then proves that the mounted filesystem is
+ * responding. A successful empty response remains a valid, observed empty
+ * filesystem and is distinct from an unobservable mount.
+ *
+ * The optional probe arguments are intentionally injectable for unit tests;
+ * production callers use the process mount table and real filesystem.
+ */
+export async function evaluateMountReadiness(
+  mountPaths: string[],
+  probe: MountReadinessProbe = {},
+): Promise<MountReadiness> {
+  const paths = [...new Set(mountPaths.map((p) => path.resolve(p)))];
+  if (paths.length === 0) return { ready: true, reason: "ready" };
+
+  const readDir = probe.readDir || readMountDirectory;
+  let mountInfo = probe.mountInfo;
+  if (mountInfo === undefined && (probe.platform || process.platform) === "linux") {
+    try {
+      mountInfo = fs.readFileSync("/proc/self/mountinfo", "utf8");
+    } catch {
+      return { ready: false, reason: "not-mounted", path: paths[0] };
+    }
+  }
+
+  for (const mountPath of paths) {
+    if (mountInfo !== undefined && !isMountpoint(mountPath, mountInfo)) {
+      return { ready: false, reason: "not-mounted", path: mountPath };
+    }
+    try {
+      const entries = await readDir(mountPath);
+      // Media cardinality is not readiness. An observed empty source is valid.
+      void entries;
+    } catch {
+      return { ready: false, reason: "unavailable", path: mountPath };
+    }
+  }
+  return { ready: true, reason: "ready" };
+}
+
+/** Returns readiness for the configured provider/WebDAV roots. */
+export async function getMountReadiness(): Promise<MountReadiness> {
+  const statuses = await getConfiguredMountReadiness();
+  return statuses.find((status) => !status.ready) || { ready: true, reason: "ready" };
+}
+
+/** Returns readiness independently for each configured provider/WebDAV root. */
+export async function getConfiguredMountReadiness(): Promise<MountReadiness[]> {
+  const roots: string[] = [];
+  if (config.runMount) {
+    roots.push(...config.providers.map((provider) => path.join(config.mountBase, provider)));
+  }
+  if (config.webdavMountsEnabled) roots.push(...getWebdavOrganiserRoots());
+  if (roots.length === 0) return [];
+  return Promise.all(roots.map((root) => evaluateMountReadiness([root])));
+}
+
 /**
  * Returns status information for all configured external WebDAV mounts.
  * Used by the /health endpoint.

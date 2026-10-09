@@ -12,6 +12,8 @@ import { getDb, closeDb, pruneOldEntries, pruneExpiredStrmCodes } from "./core/d
 import { startStrmServer, stopStrmServer } from "./services/strmService";
 import { startCloudLinksBridge, stopCloudLinksBridge } from "./services/cloudLinks/bridge";
 import { startArrBridge, stopArrBridge } from "./services/arrBridge";
+import { startProviderReconciliation } from "./services/providerReconciliationRuntime";
+import type { ProviderReconciliationWorker } from "./services/providerReconciliation";
 
 const program = new Command();
 program
@@ -31,6 +33,7 @@ program
     }
 
     // Register graceful shutdown handlers
+    let providerReconciliationWorker: ProviderReconciliationWorker | undefined;
     const shutdown = () => {
       console.log(`[${new Date().toISOString()}][serve] Shutting down — unmounting FUSE drives...`);
       try {
@@ -43,6 +46,7 @@ program
       stopStrmServer().catch(() => {});
       stopCloudLinksBridge().catch(() => {});
       stopArrBridge().catch(() => {});
+      providerReconciliationWorker?.stop();
       setTimeout(() => {
         console.log(`[${new Date().toISOString()}][serve] Closing database and exiting...`);
         closeDb();
@@ -77,7 +81,13 @@ program
         });
       }
 
-      promises.push(mountVirtualDrive());
+      // The provider reconciliation worker submits Arr rescans against this
+      // mount. Wait until mountVirtualDrive has established the visible paths
+      // before starting the worker below; otherwise Arr can reject the first
+      // scan as a missing file during FUSE startup.
+      await mountVirtualDrive().catch((err: any) => {
+        console.error(`[${new Date().toISOString()}][serve] Virtual drive mount failed (non-fatal): ${err?.message}`);
+      });
     }
     
     if (config.runDeadScannerWatch) {
@@ -97,6 +107,8 @@ program
       console.log("[serve] Starting media server watchlist poller (RUN_WATCHLIST_POLLER=true)");
       startWatchlistPoller();
     }
+
+    providerReconciliationWorker = startProviderReconciliation();
     
     // Start the main server
     startServer();

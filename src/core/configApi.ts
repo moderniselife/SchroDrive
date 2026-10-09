@@ -61,6 +61,17 @@ export const CONFIG_SCHEMA = {
   SEERR_AUTH: { type: "password", default: "", category: "seerr", label: "Webhook Auth Header" },
   POLL_INTERVAL_S: { type: "number", default: "30", category: "seerr", label: "Poll Interval (seconds)" },
 
+  // ARR integrations
+  PROVIDER_RECONCILIATION_ENABLED: { type: "boolean", default: "false", category: "arr", label: "Enable Provider Reconciliation" },
+  PROVIDER_RECONCILIATION_RECENT_INTERVAL_MS: { type: "number", default: "900000", category: "arr", label: "Recent Scan Interval (ms)" },
+  PROVIDER_RECONCILIATION_FULL_INTERVAL_MS: { type: "number", default: "21600000", category: "arr", label: "Full Scan Interval (ms)" },
+  PROVIDER_RECONCILIATION_RECENT_LIMIT: { type: "number", default: "30", category: "arr", label: "Recent Items Limit" },
+  PROVIDER_RECONCILIATION_RUN_FULL_ON_START: { type: "boolean", default: "true", category: "arr", label: "Run Full Scan on Startup" },
+  PROVIDER_RECONCILIATION_RADARR_URL: { type: "string", default: "", category: "arr", label: "Radarr URL" },
+  PROVIDER_RECONCILIATION_RADARR_API_KEY: { type: "password", default: "", category: "arr", label: "Radarr API Key" },
+  PROVIDER_RECONCILIATION_SONARR_URL: { type: "string", default: "", category: "arr", label: "Sonarr URL" },
+  PROVIDER_RECONCILIATION_SONARR_API_KEY: { type: "password", default: "", category: "arr", label: "Sonarr API Key" },
+
   // Runtime Services
   RUN_WEBHOOK: { type: "boolean", default: "true", category: "services", label: "Run Webhook Server" },
   RUN_POLLER: { type: "boolean", default: "false", category: "services", label: "Run Seerr Poller" },
@@ -123,15 +134,46 @@ const CONFIG_KEY_ALIASES: Record<string, readonly string[]> = {
 interface ConfigValue {
   value: string;
   source: "env" | "file" | "default";
+  /** Distinguishes the real process environment from Bun-loaded .env data. */
+  provenance: "CONTAINER_ENV" | "PERSISTED_DOTENV" | "DEFAULT";
+  locked: boolean;
   schema: (typeof CONFIG_SCHEMA)[ConfigKey];
 }
 
 export type ConfigData = Record<ConfigKey, ConfigValue>;
+export type ConfigProvenance = ConfigData[ConfigKey]["provenance"];
+
+export interface ConfigSourceOptions {
+  /** Test/embedding override; production reads the original process env. */
+  containerEnvKeys?: ReadonlySet<string>;
+  envPath?: string;
+}
+
+/**
+ * Bun can load .env values into process.env before application modules run.
+ * Reading /proc/self/environ preserves the original environment boundary on
+ * Linux/Docker so persisted values are not incorrectly shown as locked.
+ */
+export function getOriginalEnvironmentKeys(): Set<string> {
+  try {
+    const raw = fs.readFileSync("/proc/self/environ");
+    return new Set(
+      raw
+        .toString("utf8")
+        .split("\0")
+        .map((entry) => entry.slice(0, entry.indexOf("=")))
+        .filter(Boolean),
+    );
+  } catch {
+    return new Set(Object.keys(process.env));
+  }
+}
 
 // Find the .env file path
 function findEnvPath(): string {
   // Check multiple possible locations
   const candidates = [
+    "/config/.env", // persistent Docker configuration mount
     path.join(process.cwd(), ".env"),
     path.join(__dirname, "..", ".env"),
     "/app/.env", // Docker container path
@@ -142,6 +184,10 @@ function findEnvPath(): string {
       return p;
     }
   }
+
+  // Prefer the persistent configuration mount when it is available so a
+  // settings save survives container recreation.
+  if (fs.existsSync("/config")) return "/config/.env";
 
   // Default to cwd
   return path.join(process.cwd(), ".env");
@@ -181,9 +227,10 @@ function parseEnvFile(filePath: string): Map<string, string> {
 }
 
 // Get all config values with their sources
-export function getConfigWithSources(): { config: ConfigData; envPath: string } {
-  const envPath = findEnvPath();
+export function getConfigWithSources(options: ConfigSourceOptions = {}): { config: ConfigData; envPath: string } {
+  const envPath = options.envPath || findEnvPath();
   const fileValues = parseEnvFile(envPath);
+  const containerEnvKeys = options.containerEnvKeys || getOriginalEnvironmentKeys();
   const config: Partial<ConfigData> = {};
 
   for (const [key, schema] of Object.entries(CONFIG_SCHEMA)) {
@@ -194,26 +241,39 @@ export function getConfigWithSources(): { config: ConfigData; envPath: string } 
     const legacyFileValue = aliases.map((alias) => fileValues.get(alias)).find((candidate) => candidate !== undefined && candidate !== "");
     const fileValue = canonicalFileValue !== undefined && canonicalFileValue !== "" ? canonicalFileValue : legacyFileValue ?? canonicalFileValue;
 
+    const runtimeValue = runtimeKey ? process.env[runtimeKey] || "" : undefined;
+
     let value: string;
     let source: "env" | "file" | "default";
+    let provenance: ConfigProvenance;
+    let locked: boolean;
 
-    if (runtimeKey) {
-      // Runtime environment variable takes priority
-      value = process.env[runtimeKey] || "";
+    if (runtimeKey !== undefined && containerEnvKeys.has(runtimeKey)) {
+      // Original container environment variable (canonical key or legacy
+      // alias) takes priority and is locked for editing in the UI.
+      value = runtimeValue as string;
       source = "env";
+      provenance = "CONTAINER_ENV";
+      locked = true;
     } else if (fileValue !== undefined) {
       // .env file value
       value = fileValue;
       source = "file";
+      provenance = "PERSISTED_DOTENV";
+      locked = false;
     } else {
       // Default value
       value = schema.default;
       source = "default";
+      provenance = "DEFAULT";
+      locked = false;
     }
 
     config[k] = {
       value,
       source,
+      provenance,
+      locked,
       schema,
     };
   }
@@ -297,8 +357,12 @@ export function saveConfigToFile(updates: Record<string, string>): { success: bo
       }
     }
 
-    // Write the updated content
-    fs.writeFileSync(envPath, newLines.join("\n"));
+    // Publish atomically and keep credentials private on disk.
+    const temporaryPath = `${envPath}.tmp.${process.pid}`;
+    fs.writeFileSync(temporaryPath, newLines.join("\n"), { mode: 0o600 });
+    fs.chmodSync(temporaryPath, 0o600);
+    fs.renameSync(temporaryPath, envPath);
+    fs.chmodSync(envPath, 0o600);
 
     return { success: true, path: envPath };
   } catch (err: any) {
