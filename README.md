@@ -908,6 +908,29 @@ All configuration is done via environment variables. Below is the complete refer
 |----------|---------|-------------|
 | `ARR_BRIDGE_ENABLED` | `false` | Enable the fake qBittorrent API server |
 | `ARR_BRIDGE_PORT` | `8282` | Port for the *arr bridge (add as qBittorrent in Radarr/Sonarr) |
+| `ARR_DOWNLOADS_PATH` | `<MOUNT_BASE>/downloads` | Optional staging path when Radarr/Sonarr share a custom path; it must be visible at the same path to the bridge and *arr |
+
+### 🔄 Provider Reconciliation (opt-in)
+
+After the initial historical library import performed in Radarr/Sonarr,
+provider reconciliation detects newly completed files added directly to a
+configured debrid provider. It compares snapshots in SQLite, creates
+mount-backed symlinks in the existing Arr library, and asks Radarr/Sonarr to
+rescan the affected movie or series. It does not copy media locally and does
+not delete or repair provider content.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PROVIDER_RECONCILIATION_ENABLED` | `false` | Enable reconciliation |
+| `PROVIDER_RECONCILIATION_RECENT_INTERVAL_MS` | `900000` | Recent snapshot interval |
+| `PROVIDER_RECONCILIATION_FULL_INTERVAL_MS` | `21600000` | Full snapshot interval |
+| `PROVIDER_RECONCILIATION_RADARR_URL` | — | Radarr API endpoint |
+| `PROVIDER_RECONCILIATION_SONARR_URL` | — | Sonarr API endpoint |
+| `PROVIDER_RECONCILIATION_MOUNT_BASE` | `/mnt/schrodrive` | Shared mount base |
+
+The provider adapter uses the common `DebridProvider` contract. See
+[`docs/provider-reconciliation.md`](docs/provider-reconciliation.md) for
+provider capability and live-validation status.
 
 ### 📁 Organiser
 
@@ -916,6 +939,7 @@ All configuration is done via environment variables. Below is the complete refer
 | `TMDB_API_KEY` | — | TMDB API key for metadata lookup |
 | `ORGANIZED_BASE` | `<MOUNT_BASE>/organized` | Output directory for organised symlinks |
 | `ORGANIZER_MODE` | `symlink` | `symlink`, `copy`, or `move` |
+| `ORGANIZER_FILENAME_MODE` | `canonical` | `canonical` keeps the existing name; `original` preserves the source release basename |
 | `ORG_SCAN_INTERVAL_S` | `300` | Organiser scan interval (seconds) |
 
 ### 🔍 Dead Scanner

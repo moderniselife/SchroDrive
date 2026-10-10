@@ -1,4 +1,10 @@
-node_modules
+**/node_modules
+**/.next
+**/out
+data
+*.db
+*.sqlite
+*.sqlite3
 npm-debug.log*
 *.log
 coverage
@@ -7,5 +13,6 @@ coverage
 .env
 .env.*
 dist
+**/dist
 .git
 .gitignore

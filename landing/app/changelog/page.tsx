@@ -34,6 +34,21 @@ type Product = 'core' | 'media-manager';
 
 const coreChangelog: VersionEntry[] = [
   {
+    version: 'v0.12.0',
+    date: '2026-10-10',
+    emoji: '✨',
+    tagline: 'provider reconciliation, organizer filename modes, settings hardening',
+    changes: [
+      { category: 'Added', text: 'Provider reconciliation into Arr libraries — newly added provider media is reconciled into Sonarr/Radarr with capability detection and settings UI' },
+      { category: 'Added', text: 'Organizer original release filenames — new organizerFilenameMode (canonical default, original opt-in) preserves source basenames' },
+      { category: 'Added', text: 'AllDebrid + Premiumize credential keys with legacy AD_*/PM_* aliases for runtime env and persisted dotenv' },
+      { category: 'Fixed', text: 'Colliding media versions preserved (versioned alternate in canonical mode, keep-existing in original mode); categories as lazy destinations' },
+      { category: 'Fixed', text: 'Canonical Seerr keys persisted, Seerr URL normalization, container-vs-dotenv provenance, mount readiness guard, dotenv survives container recreation, persisted TMDb fallback, stable Arr symlinks' },
+      { category: 'Fixed', text: 'Docker context reduced with layer-cache reuse; container exits when backend exits so restart policy can act' },
+      { category: 'Fixed', text: 'SSRF defense-in-depth on torrent URL fetch — normalized URL with redirects disabled' },
+    ],
+  },
+  {
     version: 'v0.11.5',
     date: '2026-09-23',
     emoji: '🌐',

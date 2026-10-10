@@ -22,7 +22,7 @@ services:
       # Persistent data directory (SQLite DB, blacklist, rate limit store)
       - schrodrive_data:/data
       # Config directory (cloud_links.json, etc.)
-      - /config:/config:ro
+      - /config:/config:rw
     devices:
       - /dev/fuse:/dev/fuse:rwm
     cap_add:

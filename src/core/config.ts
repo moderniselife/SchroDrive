@@ -1,5 +1,8 @@
 import path from 'path';
 import { asBool, asNumber, splitCsv } from './utils';
+import { getPersistedEnvValue, resolveRuntimeOrPersistedValue } from './configApi';
+
+const persistedTmdbApiKey = getPersistedEnvValue("TMDB_API_KEY");
 
 const defaultMountBase = (process.env.MOUNT_BASE || (process.platform === 'darwin' ? "/Volumes/SchroDrive" : "/mnt/schrodrive"));
 
@@ -56,20 +59,34 @@ export const config = {
   torboxWebdavUsername: process.env.TORBOX_WEBDAV_USERNAME || "",
   torboxWebdavPassword: process.env.TORBOX_WEBDAV_PASSWORD || "",
   // AllDebrid API
-  alldebridApiKey: process.env.ALLDEBRID_API_KEY || "",
+  alldebridApiKey: process.env.ALLDEBRID_API_KEY || process.env.AD_API_KEY || "",
   alldebridApiBase: process.env.ALLDEBRID_API_BASE || "https://api.alldebrid.com/v4",
   alldebridAgent: process.env.ALLDEBRID_AGENT || "schrodrive",
+  // Provider reconciliation is opt-in and disabled by default.
+  providerReconciliationEnabled: String(process.env.PROVIDER_RECONCILIATION_ENABLED ?? "false").toLowerCase() === "true",
+  providerReconciliationRecentIntervalMs: Number(process.env.PROVIDER_RECONCILIATION_RECENT_INTERVAL_MS || 900000),
+  providerReconciliationFullIntervalMs: Number(process.env.PROVIDER_RECONCILIATION_FULL_INTERVAL_MS || 21600000),
+  providerReconciliationRecentLimit: Number(process.env.PROVIDER_RECONCILIATION_RECENT_LIMIT || 30),
+  providerReconciliationRunFullOnStart: String(process.env.PROVIDER_RECONCILIATION_RUN_FULL_ON_START ?? "true").toLowerCase() !== "false",
+  providerReconciliationDryRun: String(process.env.PROVIDER_RECONCILIATION_DRY_RUN ?? "false").toLowerCase() === "true",
+  providerReconciliationRadarrUrl: process.env.PROVIDER_RECONCILIATION_RADARR_URL || "",
+  providerReconciliationRadarrApiKey: process.env.PROVIDER_RECONCILIATION_RADARR_API_KEY || "",
+  providerReconciliationSonarrUrl: process.env.PROVIDER_RECONCILIATION_SONARR_URL || "",
+  providerReconciliationSonarrApiKey: process.env.PROVIDER_RECONCILIATION_SONARR_API_KEY || "",
+  providerReconciliationMountBase: process.env.PROVIDER_RECONCILIATION_MOUNT_BASE || "/mnt/schrodrive",
+  providerReconciliationMoviesLibraryPath: process.env.PROVIDER_RECONCILIATION_MOVIES_LIBRARY_PATH || "",
+  providerReconciliationShowsLibraryPath: process.env.PROVIDER_RECONCILIATION_SHOWS_LIBRARY_PATH || "",
   // AllDebrid WebDAV (if supported)
-  alldebridWebdavUrl: process.env.ALLDEBRID_WEBDAV_URL || "",
-  alldebridWebdavUsername: process.env.ALLDEBRID_WEBDAV_USERNAME || "",
-  alldebridWebdavPassword: process.env.ALLDEBRID_WEBDAV_PASSWORD || "",
+  alldebridWebdavUrl: process.env.ALLDEBRID_WEBDAV_URL || process.env.AD_WEBDAV_URL || "",
+  alldebridWebdavUsername: process.env.ALLDEBRID_WEBDAV_USERNAME || process.env.AD_WEBDAV_USERNAME || "",
+  alldebridWebdavPassword: process.env.ALLDEBRID_WEBDAV_PASSWORD || process.env.AD_WEBDAV_PASSWORD || "",
   // Premiumize API
-  premiumizeApiKey: process.env.PREMIUMIZE_API_KEY || "",
+  premiumizeApiKey: process.env.PREMIUMIZE_API_KEY || process.env.PM_API_KEY || "",
   premiumizeApiBase: process.env.PREMIUMIZE_API_BASE || "https://www.premiumize.me/api",
   // Premiumize WebDAV
-  premiumizeWebdavUrl: process.env.PREMIUMIZE_WEBDAV_URL || "https://webdav.premiumize.me",
-  premiumizeWebdavUsername: process.env.PREMIUMIZE_WEBDAV_USERNAME || "",
-  premiumizeWebdavPassword: process.env.PREMIUMIZE_WEBDAV_PASSWORD || '',
+  premiumizeWebdavUrl: process.env.PREMIUMIZE_WEBDAV_URL || process.env.PM_WEBDAV_URL || "https://webdav.premiumize.me",
+  premiumizeWebdavUsername: process.env.PREMIUMIZE_WEBDAV_USERNAME || process.env.PM_WEBDAV_USERNAME || "",
+  premiumizeWebdavPassword: process.env.PREMIUMIZE_WEBDAV_PASSWORD || process.env.PM_WEBDAV_PASSWORD || '',
   // --- Download Token Rotation (Zurg-style 503 bypass) ---
   rdDownloadTokens: splitCsv(process.env.RD_DOWNLOAD_TOKENS),
   torboxDownloadTokens: splitCsv(process.env.TORBOX_DOWNLOAD_TOKENS),
@@ -160,9 +177,14 @@ export const config = {
   runDeadScanner: asBool(process.env.RUN_DEAD_SCANNER),
   runDeadScannerWatch: asBool(process.env.RUN_DEAD_SCANNER_WATCH),
   // Organiser (symlinked view)
-  tmdbApiKey: process.env.TMDB_API_KEY || "",
+  // Docker may provide an empty placeholder while Settings persists the real key in .env.
+  tmdbApiKey: resolveRuntimeOrPersistedValue(process.env.TMDB_API_KEY, persistedTmdbApiKey),
   organizedBase: process.env.ORGANIZED_BASE || `${defaultMountBase}/organized`,
   organizerMode: (process.env.ORGANIZER_MODE || "symlink") as "symlink" | "copy" | "move",
+  // Filename policy for the organised view. Canonical preserves the existing behaviour; original keeps the source release basename in the symlink.
+  organizerFilenameMode: (process.env.ORGANIZER_FILENAME_MODE || "canonical").toLowerCase() === "original"
+    ? "original" as const
+    : "canonical" as const,
   runOrganizerWatch: asBool(process.env.RUN_ORGANIZER_WATCH),
   orgScanIntervalSeconds: asNumber(process.env.ORG_SCAN_INTERVAL_S, 300),
   // --- Media Server Integration ---
@@ -233,6 +255,9 @@ export const config = {
   // --- *arr Bridge (fake qBittorrent API for Radarr/Sonarr) ---
   arrBridgeEnabled: String(process.env.ARR_BRIDGE_ENABLED ?? "false").toLowerCase() === "true",
   arrBridgePort: Number(process.env.ARR_BRIDGE_PORT || 8282),
+  // Optional staging path visible to Radarr/Sonarr. The default preserves the
+  // historical path under MOUNT_BASE.
+  arrDownloadsPath: process.env.ARR_DOWNLOADS_PATH || "",
   // --- Stremio Addon Server (expose SchröDrive as an addon) ---
   stremioAddonEnabled: String(process.env.STREMIO_ADDON_ENABLED ?? "false").toLowerCase() === "true",
   stremioAddonPort: Number(process.env.STREMIO_ADDON_PORT || 7000),
