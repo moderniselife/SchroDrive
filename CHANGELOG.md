@@ -27,7 +27,7 @@ and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.
 - **Arr stable symlinks after staging moves** (`src/services/arrBridge.ts`): imported symlinks stay valid when staging directories move (#127)
 
 ### Security 🔒
-- **SSRF defense-in-depth on torrent URL fetch** (`src/providers/registry.ts`): normalized URL string passed to `axios.get` with redirects disabled (`maxRedirects: 0`) so a public URL cannot bounce to internal targets. Note: CodeQL alert no. 12 still open — tracked as follow-up (#97)
+- **SSRF hardening on torrent URL fetch** (`src/providers/registry.ts`): layered guard — scheme/host/IP-literal/userinfo checks, DNS must resolve all-public (fail-closed), connection pinned to a validated IP (closes DNS-rebinding TOCTOU), redirects disabled (`maxRedirects: 0`). Residual CodeQL taint finding (alert no. 12) risk-accepted and dismissed as won't-fix: arbitrary indexer URLs are required by design so no allowlist is possible; regression tests in `tests/regressions/codeql-ssrf-torrent-url/` (#97 + follow-up)
 
 ### Version [0.11.5] - 2026-09-23
 *Status: landing on schrodrive.org, Cloudflare Workers, contributors live page*
