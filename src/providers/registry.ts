@@ -272,21 +272,27 @@ class ProviderRegistry {
   }
 
   /**
+   * Returns providers explicitly enabled by PROVIDERS and configured with
+   * valid credentials. Configured providers that are kept for backup or
+   * recovery must not become operational implicitly.
+   */
+  enabled(): DebridProvider[] {
+    const enabled = new Set(config.providers.map(id => id.toLowerCase()));
+    return this.configured().filter(p => enabled.has(p.id.toLowerCase()));
+  }
+
+  /**
    * Returns configured providers in the user's preferred order.
    *
    * @returns An ordered array of configured providers.
    */
   ordered(): DebridProvider[] {
     const order = config.providers; // e.g. ['torbox', 'realdebrid']
-    const configured = this.configured();
+    const configured = this.enabled();
     const ordered: DebridProvider[] = [];
     for (const id of order) {
       const p = configured.find(c => c.id === id);
       if (p) ordered.push(p);
-    }
-    // Append any configured providers not in the order list
-    for (const p of configured) {
-      if (!ordered.includes(p)) ordered.push(p);
     }
     return ordered;
   }
@@ -298,7 +304,7 @@ class ProviderRegistry {
    * @returns An object indicating whether a match was found and which provider.
    */
   async checkExistingAcrossAll(title: string): Promise<{ exists: boolean; provider?: string }> {
-    for (const p of this.configured()) {
+    for (const p of this.enabled()) {
       try {
         if (await p.checkExisting(title)) {
           return { exists: true, provider: p.id };

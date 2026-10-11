@@ -120,7 +120,7 @@ export function startOverseerrPoller() {
   }
 
   // Ensure at least one provider is configured
-  const providers = registry.configured();
+  const providers = registry.enabled();
   if (providers.length === 0) {
     throw new Error("No debrid provider configured. Set TORBOX_API_KEY and/or RD_ACCESS_TOKEN.");
   }
@@ -161,7 +161,7 @@ export function startOverseerrPoller() {
         return;
       }
 
-      const configuredProviders = registry.configured();
+      const configuredProviders = registry.enabled();
       const allRateLimited = configuredProviders.every(p => p.isRateLimited());
       if (allRateLimited && configuredProviders.length > 0) {
         const minWait = Math.min(...configuredProviders.map(p => p.getWaitTime()));
@@ -173,7 +173,7 @@ export function startOverseerrPoller() {
       const items = await fetchApprovedRequests();
       console.log(`[${new Date().toISOString()}][poller] approved requests fetched`, { count: items.length });
       for (const r of items) {
-        const currentProviders = registry.configured();
+        const currentProviders = registry.enabled();
         if (currentProviders.every(p => p.isRateLimited()) && currentProviders.length > 0) {
           console.warn(`[${new Date().toISOString()}][poller] All debrid providers became rate-limited. Aborting tick.`);
           break;
@@ -417,7 +417,7 @@ async function checkAndReaddMissingRequests(): Promise<void> {
     return;
   }
 
-  const configuredProviders = registry.configured();
+  const configuredProviders = registry.enabled();
   const allRateLimited = configuredProviders.every(p => p.isRateLimited());
   if (allRateLimited && configuredProviders.length > 0) {
     console.warn(`[${new Date().toISOString()}][poller-sync] All providers are rate-limited. Skipping recovery check.`);
@@ -426,7 +426,7 @@ async function checkAndReaddMissingRequests(): Promise<void> {
 
   console.log(`[${new Date().toISOString()}][poller-sync] Checking for requests removed from debrid providers...`);
   const requests = getAllOverseerrRequests();
-  const providers = registry.configured();
+  const providers = registry.enabled();
   if (providers.length === 0) {
     console.warn(`[${new Date().toISOString()}][poller-sync] No configured debrid providers, skipping missing requests check`);
     return;
@@ -435,7 +435,7 @@ async function checkAndReaddMissingRequests(): Promise<void> {
   let readdedCount = 0;
 
   for (const req of requests) {
-    const currentProviders = registry.configured();
+    const currentProviders = registry.enabled();
     if (currentProviders.every(p => p.isRateLimited()) && currentProviders.length > 0) {
       console.warn(`[${new Date().toISOString()}][poller-sync] All providers became rate-limited. Aborting recovery check.`);
       break;
