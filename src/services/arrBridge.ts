@@ -186,6 +186,39 @@ export function getDownloadsPath(): string {
   return config.arrDownloadsPath || path.join(config.mountBase, 'downloads');
 }
 
+/**
+ * Removes an Arr bridge staging directory without following its symlinks.
+ *
+ * Staging entries are disposable local links: the provider mount is the
+ * source of truth and the organised library has its own links. Keep this
+ * operation constrained to the configured downloads root so an Arr request
+ * can never remove a provider or organised-library path by mistake.
+ */
+export async function cleanupStagingPath(stagingPath: string): Promise<boolean> {
+  const downloadsRoot = path.resolve(getDownloadsPath());
+  const candidate = path.resolve(stagingPath);
+  const relative = path.relative(downloadsRoot, candidate);
+
+  if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    console.warn(`${LOG_PREFIX} Refusing to clean staging path outside downloads root`, {
+      stagingPath: candidate,
+      downloadsRoot,
+    });
+    return false;
+  }
+
+  try {
+    await fsp.rm(candidate, { recursive: true, force: true });
+    return true;
+  } catch (err: any) {
+    console.warn(`${LOG_PREFIX} Failed to clean staging path`, {
+      stagingPath: candidate,
+      err: err?.message || String(err),
+    });
+    return false;
+  }
+}
+
 /** Ensures the downloads staging directory exists. */
 async function ensureDownloadsDir(): Promise<void> {
   const dir = getDownloadsPath();
@@ -810,9 +843,13 @@ function handleDeleteTorrent(req: Request, res: Response): void {
     if (torrent) {
       console.log(`${LOG_PREFIX} Removing tracked torrent: "${torrent.name}" (deleteFiles: ${deleteFiles})`);
 
-      // Clean up symlinks if requested
-      if (deleteFiles && torrent.symlinkPath) {
-        fsp.rm(torrent.symlinkPath, { recursive: true, force: true }).catch(() => {});
+      // Arr removes the completed download after importing it. The bridge
+      // staging directory is disposable regardless of deleteFiles: it only
+      // contains local symlinks, while the provider mount and organised view
+      // remain untouched. deleteFiles controls Arr's client semantics, not
+      // whether the bridge leaks staging links forever.
+      if (torrent.symlinkPath) {
+        void cleanupStagingPath(torrent.symlinkPath);
       }
 
       tracked.delete(hash);
