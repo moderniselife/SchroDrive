@@ -910,7 +910,7 @@ All configuration is done via environment variables. Below is the complete refer
 | `ARR_BRIDGE_PORT` | `8282` | Port for the *arr bridge (add as qBittorrent in Radarr/Sonarr) |
 | `ARR_DOWNLOADS_PATH` | `<MOUNT_BASE>/downloads` | Optional staging path when Radarr/Sonarr share a custom path; it must be visible at the same path to the bridge and *arr |
 
-### 🔄 Provider Reconciliation (opt-in)
+### 🔄 Provider Reconciliation
 
 After the initial historical library import performed in Radarr/Sonarr,
 provider reconciliation detects newly completed files added directly to a
@@ -921,7 +921,7 @@ not delete or repair provider content.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PROVIDER_RECONCILIATION_ENABLED` | `false` | Enable reconciliation |
+| `PROVIDER_RECONCILIATION_ENABLED` | `automatic` | Starts automatically when both Radarr and Sonarr URL/API key pairs are configured; explicit `true`/`false` overrides this |
 | `PROVIDER_RECONCILIATION_RECENT_INTERVAL_MS` | `900000` | Recent snapshot interval |
 | `PROVIDER_RECONCILIATION_FULL_INTERVAL_MS` | `21600000` | Full snapshot interval |
 | `PROVIDER_RECONCILIATION_RADARR_URL` | — | Radarr API endpoint |
