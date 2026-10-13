@@ -71,6 +71,16 @@ describe('*arr bridge qBittorrent-compatible API', () => {
     expect(fs.existsSync(outsideFile)).toBe(true);
   });
 
+  test('refuses to clean the parent of the downloads root', async () => {
+    const parentRoot = path.dirname(path.resolve(config.mountBase, 'downloads'));
+    const protectedFile = path.join(parentRoot, 'must-remain-parent.txt');
+    fs.writeFileSync(protectedFile, 'protected');
+
+    await expect(cleanupStagingPath(parentRoot)).resolves.toBe(false);
+    expect(fs.existsSync(protectedFile)).toBe(true);
+    fs.rmSync(protectedFile, { force: true });
+  });
+
   test('reports a webapi version on GET /api/v2/app/webapiVersion', async () => {
     const res = await fetch(`${BASE_URL}/api/v2/app/webapiVersion`);
     expect(res.status).toBe(200);

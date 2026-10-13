@@ -199,7 +199,7 @@ export async function cleanupStagingPath(stagingPath: string): Promise<boolean> 
   const candidate = path.resolve(stagingPath);
   const relative = path.relative(downloadsRoot, candidate);
 
-  if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     console.warn(`${LOG_PREFIX} Refusing to clean staging path outside downloads root`, {
       stagingPath: candidate,
       downloadsRoot,
