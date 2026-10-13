@@ -810,9 +810,8 @@ async function organizerSourcesMatch(left: string, right: string): Promise<boole
   if (leftAbsolute === rightAbsolute) return true;
 
   // realpath() performs I/O against the target. For provider-backed FUSE
-  // mounts that I/O can block the event loop when the remote is degraded.
-  // Both paths are produced in the same mount namespace, so lexical
-  // comparison is sufficient for mounted sources.
+  // mounts that I/O can block when the remote is degraded, so mounted
+  // sources skip realpath and conservatively compare as non-matching.
   const mountBase = path.normalize(path.resolve(config.mountBase));
   const isMountedPath = (value: string) => value === mountBase || value.startsWith(mountBase + path.sep);
   if (isMountedPath(leftAbsolute) || isMountedPath(rightAbsolute)) return false;

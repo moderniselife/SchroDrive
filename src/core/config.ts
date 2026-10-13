@@ -1,10 +1,27 @@
 import path from 'path';
 import { asBool, asNumber, splitCsv } from './utils';
-import { getPersistedEnvValue, resolveRuntimeOrPersistedValue } from './configApi';
+import { getPersistedEnvValue, loadPersistedConfigIntoRuntimeEnv, resolveRuntimeOrPersistedValue } from './configApi';
 
+loadPersistedConfigIntoRuntimeEnv();
 const persistedTmdbApiKey = getPersistedEnvValue("TMDB_API_KEY");
 
 const defaultMountBase = (process.env.MOUNT_BASE || (process.platform === 'darwin' ? "/Volumes/SchroDrive" : "/mnt/schrodrive"));
+
+export function isProviderReconciliationAutoEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const hasCompleteArrConfiguration = Boolean(
+    env.PROVIDER_RECONCILIATION_RADARR_URL &&
+      env.PROVIDER_RECONCILIATION_RADARR_API_KEY &&
+      env.PROVIDER_RECONCILIATION_SONARR_URL &&
+      env.PROVIDER_RECONCILIATION_SONARR_API_KEY,
+  );
+
+  const explicitValue = env.PROVIDER_RECONCILIATION_ENABLED;
+  if (explicitValue !== undefined && explicitValue !== '') {
+    return String(explicitValue).toLowerCase() === 'true';
+  }
+
+  return hasCompleteArrConfiguration;
+}
 
 export const config = {
   port: asNumber(process.env.PORT, 8978),
@@ -62,8 +79,9 @@ export const config = {
   alldebridApiKey: process.env.ALLDEBRID_API_KEY || process.env.AD_API_KEY || "",
   alldebridApiBase: process.env.ALLDEBRID_API_BASE || "https://api.alldebrid.com/v4",
   alldebridAgent: process.env.ALLDEBRID_AGENT || "schrodrive",
-  // Provider reconciliation is opt-in and disabled by default.
-  providerReconciliationEnabled: String(process.env.PROVIDER_RECONCILIATION_ENABLED ?? "false").toLowerCase() === "true",
+  // Provider reconciliation starts automatically when both Arr integrations
+  // are configured. An explicit true/false remains an override.
+  providerReconciliationEnabled: isProviderReconciliationAutoEnabled(),
   providerReconciliationRecentIntervalMs: Number(process.env.PROVIDER_RECONCILIATION_RECENT_INTERVAL_MS || 900000),
   providerReconciliationFullIntervalMs: Number(process.env.PROVIDER_RECONCILIATION_FULL_INTERVAL_MS || 21600000),
   providerReconciliationRecentLimit: Number(process.env.PROVIDER_RECONCILIATION_RECENT_LIMIT || 30),

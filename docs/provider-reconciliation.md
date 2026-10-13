@@ -17,8 +17,9 @@ provider listTorrents/fetchDirectories
   -> Radarr, Sonarr, Plex and Jellyfin see the same provider-backed file
 ```
 
-The worker is disabled by default with
-`PROVIDER_RECONCILIATION_ENABLED=false`.
+When both Radarr and Sonarr are configured with a URL and API key, the worker
+starts automatically. `PROVIDER_RECONCILIATION_ENABLED=true` can still be used
+to force it on, while an explicit `false` disables automatic activation.
 
 ## Contract coverage
 
