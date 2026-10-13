@@ -371,7 +371,7 @@ export function startServer() {
               configured: true,
               enabled,
               mounted,
-              active: enabled && mounted,
+              active: enabled && (mounted || (!config.runMount && connected)),
               connected: true,
               torrentCount: torrents.length,
               webdav: {
