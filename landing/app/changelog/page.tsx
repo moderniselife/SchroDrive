@@ -34,6 +34,19 @@ type Product = 'core' | 'media-manager';
 
 const coreChangelog: VersionEntry[] = [
   {
+    version: 'v0.12.1',
+    date: '2026-10-13',
+    emoji: '🛡️',
+    tagline: 'reconciliation follow-ups, provider mount state, mount guard hardening',
+    changes: [
+      { category: 'Fixed', text: 'Configured backup providers stay inactive; external mounts report active status correctly' },
+      { category: 'Fixed', text: 'Disposable staging links cleaned after removal; filename-mode symlinks reconciled instead of duplicated' },
+      { category: 'Fixed', text: 'Persisted GUI settings hydrated at startup; reconciliation auto-enables when Arr is configured' },
+      { category: 'Fixed', text: 'FUSE reconciliation no longer blocks on realpath() I/O for provider-backed paths' },
+      { category: 'Fixed', text: 'Mount readiness guard fails closed on platforms without a mount table (macOS) instead of reporting any readable directory ready' },
+    ],
+  },
+  {
     version: 'v0.12.0',
     date: '2026-10-10',
     emoji: '✨',
