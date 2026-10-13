@@ -88,8 +88,32 @@ describe("shared mount readiness guard", () => {
     await expect(evaluateMountReadiness([])).resolves.toEqual({ ready: true, reason: "ready" });
   });
 
-  test("ready and unavailable provider mounts are evaluated independently", async () => {
-    const statuses = await Promise.all([
+  test("off-Linux without a mount table, a plain directory is not a mountpoint", async () => {
+    // Regression: the mountpoint check used to be skipped entirely when no
+    // mountinfo was available (any non-Linux platform), so any readable
+    // directory reported ready (fail-open) and the organizer would prune
+    // against a dead mount. The device-number fallback closes that gap.
+    // Injecting platform makes this deterministic on every OS.
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "schrodrive-mount-guard-"));
+    const provider = path.join(temp, "provider");
+    fs.mkdirSync(provider, { recursive: true });
+    try {
+      const result = await evaluateMountReadiness([provider], { platform: "darwin" });
+      expect(result.ready).toBe(false);
+      expect(result.reason).toBe("not-mounted");
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
+  test("off-Linux without a mount table, a missing path fails closed", async () => {
+    const missing = path.join(os.tmpdir(), "schrodrive-mount-guard-definitely-absent");
+    const result = await evaluateMountReadiness([missing], { platform: "darwin" });
+    expect(result.ready).toBe(false);
+    expect(result.reason).toBe("not-mounted");
+  });
+
+  test("ready and unavailable provider mounts are evaluated independently", async () => {    const statuses = await Promise.all([
       evaluateMountReadiness(["/mnt/ready"], {
         platform: "linux",
         mountInfo: mountInfoFor("/mnt/ready"),
