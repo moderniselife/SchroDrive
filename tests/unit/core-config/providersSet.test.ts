@@ -11,6 +11,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { config, providersSet } from '../../../src/core/config';
 import { CONFIG_SCHEMA } from '../../../src/core/configApi';
+import { registry } from '../../../src/providers';
 
 const originalProviders = [...config.providers];
 
@@ -36,5 +37,20 @@ describe('providersSet', () => {
   test('de-duplicates repeated provider names', () => {
     config.providers = ['torbox', 'torbox', 'TORBOX'];
     expect(providersSet()).toEqual(new Set(['torbox']));
+  });
+
+  test('does not activate a configured provider omitted from PROVIDERS', () => {
+    const id = `test-provider-${Date.now()}`;
+    registry.register({
+      id,
+      displayName: 'Test Provider',
+      isConfigured: () => true,
+      isRateLimited: () => false,
+      getWaitTime: () => 0,
+    } as any);
+
+    config.providers = ['alldebrid'];
+    expect(registry.configured().some(provider => provider.id === id)).toBe(true);
+    expect(registry.enabled().some(provider => provider.id === id)).toBe(false);
   });
 });

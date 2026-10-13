@@ -622,6 +622,8 @@ All configuration is done via environment variables. Below is the complete refer
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PROVIDERS` | `torbox,realdebrid` | Comma-separated list of active providers (order = priority) |
+
+> Upgrade note: credentials alone do not activate a provider. If you configure a provider API key, include its lowercase provider id in PROVIDERS; otherwise it remains configured but inactive.
 | `ADD_STRATEGY` | `all` | How magnets are distributed: `all`, `failover`, or `single` |
 
 #### TorBox

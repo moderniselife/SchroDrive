@@ -31,6 +31,9 @@ interface Provider {
   name: string
   id: string
   configured: boolean
+  enabled: boolean
+  mounted: boolean
+  active: boolean
   connected: boolean
   torrentCount?: number
   error?: string
@@ -279,7 +282,7 @@ export default function DashboardPage() {
   const totalTorrentSize = torrents.reduce((acc, t) => acc + (t.size || 0), 0)
   const totalDownloadSize = downloads.reduce((acc, d) => acc + (d.size || 0), 0)
   const totalSize = totalTorrentSize + totalDownloadSize
-  const connectedProviders = providers.filter(p => p.connected).length
+  const connectedProviders = providers.filter(p => p.active).length
   
   // Combine recent activity from both sources
   const allActivity = [
@@ -522,22 +525,24 @@ export default function DashboardPage() {
                     <div>
                       <p className="font-medium">{provider.name}</p>
                       <p className="text-sm text-muted-foreground">
-                        {provider.connected 
+                        {provider.active
                           ? `${provider.torrentCount || 0} torrents`
-                          : provider.configured 
-                            ? "Connection failed" 
+                          : provider.enabled && provider.connected && !provider.mounted
+                            ? "Not mounted"
+                            : provider.configured
+                              ? "Configured but inactive"
                             : "Not configured"}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className={`h-2 w-2 rounded-full ${
-                      provider.connected ? "bg-green-500" : provider.configured ? "bg-red-500" : "bg-gray-500"
+                      provider.active ? "bg-green-500" : provider.configured ? "bg-yellow-500" : "bg-gray-500"
                     }`} />
                     <span className={`text-sm ${
-                      provider.connected ? "text-green-500" : provider.configured ? "text-red-500" : "text-gray-500"
+                      provider.active ? "text-green-500" : provider.configured ? "text-yellow-500" : "text-gray-500"
                     }`}>
-                      {provider.connected ? "Connected" : provider.configured ? "Error" : "Disabled"}
+                      {provider.active ? "Active" : provider.configured ? "Inactive" : "Disabled"}
                     </span>
                   </div>
                 </div>

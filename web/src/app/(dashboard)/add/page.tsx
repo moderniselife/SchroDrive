@@ -13,6 +13,9 @@ interface Provider {
   name: string
   id: string
   configured: boolean
+  enabled: boolean
+  mounted: boolean
+  active: boolean
   connected: boolean
 }
 
@@ -32,10 +35,10 @@ export default function AddContentPage() {
         const data = await res.json()
         if (data.ok !== false && data.providers) {
           setProviders(data.providers)
-          // Select first connected provider by default
-          const firstConnected = data.providers.find((p: Provider) => p.connected)
-          if (firstConnected) {
-            setSelectedProvider(firstConnected.id)
+          // Select the first provider that is actually enabled and mounted.
+          const firstActive = data.providers.find((p: Provider) => p.active)
+          if (firstActive) {
+            setSelectedProvider(firstActive.id)
           }
         }
       } catch (error) {
@@ -157,7 +160,7 @@ export default function AddContentPage() {
     )
   }
 
-  const connectedProviders = providers.filter(p => p.connected)
+  const connectedProviders = providers.filter(p => p.active)
 
   return (
     <div className="space-y-6">
@@ -196,11 +199,11 @@ export default function AddContentPage() {
                       variant={selectedProvider === provider.id ? "default" : "outline"}
                       onClick={() => setSelectedProvider(provider.id)}
                       className="flex-1"
-                      disabled={!provider.connected}
+                      disabled={!provider.active}
                     >
                       {selectedProvider === provider.id && <CheckCircle2 className="mr-2 h-4 w-4" />}
                       {provider.name}
-                      {!provider.connected && <span className="ml-2 text-xs">(disconnected)</span>}
+                      {!provider.active && <span className="ml-2 text-xs">(inactive)</span>}
                     </Button>
                   ))}
                 </div>

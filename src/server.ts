@@ -20,7 +20,7 @@ import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
-import { config } from "./core/config";
+import { config, providersSet } from "./core/config";
 import { searchIndexer, pickBestResult, getMagnet, getProviderName, isIndexerConfigured } from "./indexers/index";
 import { registry, type DebridProvider, type TorrentInfo, type DownloadInfo } from "./providers";
 import { startOverseerrPoller } from "./services/overseerr";
@@ -28,7 +28,7 @@ import { startAutoUpdater } from "./services/autoUpdate";
 import { getConfigWithSources, saveConfigToFile, triggerRestart, isRunningInDocker, CONFIG_SCHEMA } from "./core/configApi";
 import { logBuffer } from "./core/logger";
 import { rateLimiter } from "./core/rateLimiter";
-import { getBridgeStatuses, refreshBridges, getExternalWebdavStatus, getMountReadiness } from "./services/mount";
+import { getBridgeStatuses, refreshBridges, getExternalWebdavStatus, getMountReadiness, evaluateMountReadiness } from "./services/mount";
 import { getPreWarmStatus } from "./services/cloudLinks/bridge";
 import { getBlacklistEntries, getBlacklistCount, addToBlacklist, removeFromBlacklist, isBlacklisted } from "./core/blacklist";
 import { tokenRotator } from "./core/tokenRotator";
@@ -348,15 +348,19 @@ export function startServer() {
 
   /**
    * GET /api/providers — Returns connectivity and configuration status
-   * for all active debrid providers (TorBox, Real-Debrid).
-   * Attempts a live torrent list fetch to verify connectivity.
+   * for all registered providers. `configured` means credentials exist,
+   * `enabled` means the provider is listed in PROVIDERS, and `active` means
+   * the API is reachable and its filesystem mount is present.
    */
   app.get("/api/providers", async (_req, res) => {
     try {
       const providers: any[] = [];
 
-      // Check all registered providers (configured or not)
+      // Report every registered provider, but distinguish credentials from
+      // the explicitly enabled and actually mounted provider set.
       for (const p of registry.all()) {
+        const enabled = providersSet().has(p.id);
+        const mounted = enabled && config.runMount && (await evaluateMountReadiness([path.join(config.mountBase, p.id)])).ready;
         if (p.isConfigured()) {
           try {
             const torrents = await p.listTorrents();
@@ -365,6 +369,9 @@ export function startServer() {
               name: p.displayName,
               id: p.id,
               configured: true,
+              enabled,
+              mounted,
+              active: enabled && (mounted || !config.runMount),
               connected: true,
               torrentCount: torrents.length,
               webdav: {
@@ -378,6 +385,9 @@ export function startServer() {
               name: p.displayName,
               id: p.id,
               configured: true,
+              enabled,
+              mounted,
+              active: false,
               connected: false,
               error: err.message,
               webdav: {
@@ -391,6 +401,9 @@ export function startServer() {
             name: p.displayName,
             id: p.id,
             configured: false,
+            enabled: false,
+            mounted: false,
+            active: false,
             connected: false,
             webdav: { configured: false, url: null },
           });
@@ -415,7 +428,7 @@ export function startServer() {
     try {
       const allTorrents: any[] = [];
 
-      for (const provider of registry.configured()) {
+      for (const provider of registry.enabled()) {
         try {
           const torrents = await provider.listTorrents();
           for (const t of torrents) {
@@ -463,7 +476,7 @@ export function startServer() {
     try {
       // Fetch downloads from all providers in parallel for speed
       const providerResults = await Promise.allSettled(
-        registry.configured().map(async (provider) => {
+        registry.enabled().map(async (provider) => {
           const downloads: any[] = [];
 
           // Fetch all download types for this provider in parallel
@@ -604,7 +617,7 @@ export function startServer() {
     }
 
     try {
-      const configuredProviders = registry.configured();
+      const configuredProviders = registry.enabled();
       send("status", { message: "Fetching torrents...", providers: configuredProviders.map(p => p.id) });
       let totalCount = 0;
 
@@ -700,7 +713,7 @@ export function startServer() {
     }
 
     try {
-      const configuredProviders = registry.configured();
+      const configuredProviders = registry.enabled();
       send("status", { message: "Fetching downloads...", providers: configuredProviders.map(p => p.id) });
       let totalCount = 0;
 
@@ -896,6 +909,9 @@ export function startServer() {
         if (!provider) {
           return res.status(400).json({ ok: false, error: `Unknown provider: ${targetProvider}` });
         }
+        if (!registry.enabled().some(active => active.id === provider.id)) {
+          return res.status(503).json({ ok: false, error: `${provider.displayName} is not enabled` });
+        }
         if (!provider.isConfigured()) {
           return res.status(503).json({ ok: false, error: `${provider.displayName} not configured` });
         }
@@ -1012,7 +1028,7 @@ export function startServer() {
             documentation: "See README.md for configuration instructions.",
           });
         }
-        if (registry.configured().length === 0) {
+        if (registry.enabled().length === 0) {
           console.warn(`[${new Date().toISOString()}][webhook] no debrid providers configured`);
           return res.status(503).json({
             ok: false,
