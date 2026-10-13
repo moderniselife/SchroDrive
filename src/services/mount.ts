@@ -192,11 +192,34 @@ async function readMountDirectory(mountPath: string): Promise<string[]> {
 }
 
 /**
+ * Portable mountpoint check for platforms without a mount table (anything
+ * without /proc mountinfo, e.g. macOS): a path is a mountpoint when its
+ * device number differs from its parent directory's. Fail-closed (false)
+ * when either stat fails.
+ */
+function isMountpointByDevice(pathname: string): boolean {
+  try {
+    const target = path.resolve(pathname);
+    const parent = path.dirname(target);
+    if (target === parent) return false;
+    return fs.statSync(target).dev !== fs.statSync(parent).dev;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Probes configured mount roots without treating an existing local directory
  * as a ready provider filesystem. On Linux, mountinfo proves that the path is
  * an actual mountpoint; readdir then proves that the mounted filesystem is
  * responding. A successful empty response remains a valid, observed empty
  * filesystem and is distinct from an unobservable mount.
+ *
+ * On platforms without a mount table (e.g. macOS), mountpoint-ness falls
+ * back to comparing device numbers of the path and its parent, so a plain
+ * local directory is never mistaken for a ready provider filesystem there
+ * either — previously the mountpoint check was silently skipped off-Linux
+ * and any readable directory reported ready (fail-open).
  *
  * The optional probe arguments are intentionally injectable for unit tests;
  * production callers use the process mount table and real filesystem.
@@ -219,8 +242,16 @@ export async function evaluateMountReadiness(
   }
 
   for (const mountPath of paths) {
-    if (mountInfo !== undefined && !isMountpoint(mountPath, mountInfo)) {
-      return { ready: false, reason: "not-mounted", path: mountPath };
+    if (mountInfo !== undefined) {
+      if (!isMountpoint(mountPath, mountInfo)) {
+        return { ready: false, reason: "not-mounted", path: mountPath };
+      }
+    } else if ((probe.platform || process.platform) !== "linux") {
+      // No mount table to consult off-Linux: fall back to device-number
+      // comparison so a plain directory never reports ready.
+      if (!isMountpointByDevice(mountPath)) {
+        return { ready: false, reason: "not-mounted", path: mountPath };
+      }
     }
     try {
       const entries = await readDir(mountPath);

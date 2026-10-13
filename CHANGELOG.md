@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog (https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning (https://semver.org/spec/v2.0.0.html).
 
+### Version [0.12.1] - 2026-10-13
+*Status: reconciliation follow-ups, provider mount state, mount guard hardening*
+
+### Fixed 🐛
+- **Configured backup providers stay inactive** (`src/providers/registry.ts`, `src/server.ts`, `deadScanner.ts`, `overseerr.ts`, dashboard pages): external mounts report active status correctly and backup providers are not activated spuriously (#131, thanks @samtruman)
+- **Disposable staging links cleaned after removal** (`src/services/arrBridge.ts`): rejects parents of the downloads root and removes staging links once imports are removed (#132, thanks @samtruman)
+- **Filename-mode symlink reconciliation** (`src/services/organizer.ts`): filename-mode sources reconcile to existing symlinks instead of duplicating them (#133, thanks @samtruman)
+- **Persisted GUI settings hydrated at startup** (`src/core/config.ts`, `configApi.ts`): runtime config initializes from the persisted dotenv so saved settings survive restarts (#134, thanks @samtruman)
+- **Provider reconciliation auto-enabled with Arr** (`src/core/config.ts`, `docs/provider-reconciliation.md`): reconciliation turns itself on when Arr integrations are configured (#135, thanks @samtruman)
+- **Non-blocking FUSE reconciliation** (`src/services/organizer.ts`): source comparison skips `realpath()` I/O for provider-backed FUSE paths so degraded remotes can't stall organizer scans (#136, thanks @samtruman)
+- **Mount guard fails closed off-Linux** (`src/services/mount.ts`): the mountpoint check used to be skipped entirely without mountinfo, so any readable directory reported ready and the organizer would prune against a dead mount — now falls back to device-number comparison on platforms without a mount table (macOS), Linux mountinfo path unchanged
+
 ### Version [0.12.0] - 2026-10-10
 *Status: provider reconciliation, organizer filename modes, settings persistence hardening*
 

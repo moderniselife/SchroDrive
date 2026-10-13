@@ -115,7 +115,8 @@ The `ProviderRegistry` class is a singleton exported as `registry`. It provides:
 | `get(id)` | Look up a specific provider by ID |
 | `all()` | All registered providers (configured or not) |
 | `configured()` | Only providers with valid API credentials |
-| `ordered()` | Configured providers in user-preferred order (`PROVIDERS` env) |
+| `enabled()` | Configured providers explicitly listed in `PROVIDERS` |
+| `ordered()` | Enabled providers in user-preferred order (`PROVIDERS` env) |
 | `checkExistingAcrossAll(title)` | Check for existing torrents across all providers |
 | `addMagnetWithStrategy(magnet, name?, strategy?)` | Add a magnet with distribution strategy |
 | `addTorrentFileFromUrl(url, name, strategy?)` | Download a `.torrent` file and upload to providers |

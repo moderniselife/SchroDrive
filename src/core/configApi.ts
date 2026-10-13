@@ -238,6 +238,33 @@ export function getPersistedEnvValue(key: ConfigKey): string {
   return parseEnvFile(findEnvPath()).get(key) || "";
 }
 
+/**
+ * Make persisted GUI settings available to the runtime configuration.
+ *
+ * Docker may provide empty placeholders for settings that are saved in the
+ * mounted .env file.  The settings API already knows how to read that file,
+ * but modules constructing the runtime config read process.env directly.
+ * Hydrate only missing/empty schema keys so real container environment values
+ * retain precedence while every GUI-backed setting follows the same startup
+ * path.
+ */
+export function loadPersistedConfigIntoRuntimeEnv(): void {
+  const fileValues = parseEnvFile(findEnvPath());
+
+  for (const key of Object.keys(CONFIG_SCHEMA)) {
+    const aliases = CONFIG_KEY_ALIASES[key] || [];
+    const runtimeKey = [key, ...aliases].find((candidate) => process.env[candidate] !== undefined && process.env[candidate] !== "");
+    if (runtimeKey) continue;
+
+    const persistedValue = [key, ...aliases]
+      .map((candidate) => fileValues.get(candidate))
+      .find((value) => value !== undefined && value !== "");
+    if (persistedValue !== undefined && (process.env[key] === undefined || process.env[key] === "")) {
+      process.env[key] = persistedValue;
+    }
+  }
+}
+
 // Get all config values with their sources
 export function getConfigWithSources(options: ConfigSourceOptions = {}): { config: ConfigData; envPath: string } {
   const envPath = options.envPath || findEnvPath();

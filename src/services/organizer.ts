@@ -793,13 +793,41 @@ export async function resolveCollisionTarget(src: string, dst: string): Promise<
     if (!st) return candidate;
     if (st.isSymbolicLink()) {
       const current = await fsp.readlink(candidate).catch(() => "");
-      if (path.resolve(path.dirname(candidate), current) === src) return candidate;
+      const currentTarget = path.resolve(path.dirname(candidate), current);
+      if (await organizerSourcesMatch(src, currentTarget)) return candidate;
     }
     const suffix = index === 0 ? ` - ${fingerprint}` : ` - ${fingerprint}-${index}`;
     candidate = path.join(dstDir, `${stem}${suffix}${ext}`);
   }
 
   throw new Error(`unable to allocate collision-safe organizer target for ${dst}`);
+}
+
+/** Compare sources across symlinked/container mount aliases. */
+async function organizerSourcesMatch(left: string, right: string): Promise<boolean> {
+  const leftAbsolute = path.normalize(path.resolve(left));
+  const rightAbsolute = path.normalize(path.resolve(right));
+  if (leftAbsolute === rightAbsolute) return true;
+
+  // realpath() performs I/O against the target. For provider-backed FUSE
+  // mounts that I/O can block when the remote is degraded, so mounted
+  // sources skip realpath and conservatively compare as non-matching.
+  const mountBase = path.normalize(path.resolve(config.mountBase));
+  const isMountedPath = (value: string) => value === mountBase || value.startsWith(mountBase + path.sep);
+  if (isMountedPath(leftAbsolute) || isMountedPath(rightAbsolute)) return false;
+
+  const [leftReal, rightReal] = await Promise.all([
+    fsp.realpath(leftAbsolute).catch(() => leftAbsolute),
+    fsp.realpath(rightAbsolute).catch(() => rightAbsolute),
+  ]);
+  return path.normalize(leftReal) === path.normalize(rightReal);
+}
+
+async function organizerSourceKey(source: string): Promise<string> {
+  const absolute = path.normalize(path.resolve(source));
+  const mountBase = path.normalize(path.resolve(config.mountBase));
+  if (absolute === mountBase || absolute.startsWith(mountBase + path.sep)) return absolute;
+  return fsp.realpath(absolute).then((resolved) => path.normalize(resolved)).catch(() => absolute);
 }
 
 /**
@@ -900,6 +928,53 @@ async function pruneStaleSymlinks(dir: string): Promise<{ removedLinks: number; 
         }
       }
     }
+  }
+
+  return { removedLinks, removedDirs };
+}
+
+/** Remove valid links left behind when naming or classification changes. */
+async function reconcileObsoleteSymlinks(
+  dir: string,
+  desiredBySource: Map<string, string>,
+): Promise<{ removedLinks: number; removedDirs: number }> {
+  let removedLinks = 0;
+  let removedDirs = 0;
+  let entries: fs.Dirent[];
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch {
+    return { removedLinks, removedDirs };
+  }
+
+  for (const ent of entries) {
+    const full = path.join(dir, ent.name);
+    if (ent.isDirectory()) {
+      const sub = await reconcileObsoleteSymlinks(full, desiredBySource);
+      removedLinks += sub.removedLinks;
+      removedDirs += sub.removedDirs;
+      try {
+        if ((await fsp.readdir(full)).length === 0) {
+          await fsp.rmdir(full);
+          removedDirs++;
+        }
+      } catch { /* directory may have disappeared */ }
+      continue;
+    }
+    if (!ent.isSymbolicLink()) continue;
+
+    const current = await fsp.readlink(full).catch(() => "");
+    const source = path.resolve(path.dirname(full), current);
+    const desired = desiredBySource.get(await organizerSourceKey(source));
+    if (!desired || path.normalize(desired) === path.normalize(full)) continue;
+
+    console.log(`[${new Date().toISOString()}][organize] obsolete organized symlink`, {
+      path: full,
+      target: source,
+      replacement: desired,
+    });
+    await fsp.unlink(full);
+    removedLinks++;
   }
 
   return { removedLinks, removedDirs };
@@ -1046,6 +1121,7 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
   let tvCount = 0;
   let unknownCount = 0;
   const unknownSamples: string[] = [];
+  const desiredBySource = new Map<string, string>();
   for (const src of files) {
     const base = path.basename(src);
     const structuredIdentity = parseMediaFilename(base, src);
@@ -1130,6 +1206,7 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
     const dst = computeTarget(parsed, base, src);
     if (!dst) continue;
 
+    let organizedTarget = dst;
     if (config.organizerFilenameMode === "original") {
       // Original release filenames: never silently replace a different
       // symlink on collision — keep the existing one.
@@ -1139,8 +1216,26 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
       // deterministic alternate target instead of replacing them.
       const safeDst = dryRun ? dst : await resolveCollisionTarget(src, dst);
       await makeSymlink(src, safeDst, dryRun);
+      organizedTarget = safeDst;
     }
+    if (!dryRun) desiredBySource.set(await organizerSourceKey(src), organizedTarget);
     processed++;
+  }
+
+  if (!dryRun && desiredBySource.size > 0) {
+    let removedLinks = 0;
+    let removedDirs = 0;
+    for (const dir of [movieDir, tvDir, animeDir]) {
+      const result = await reconcileObsoleteSymlinks(dir, desiredBySource);
+      removedLinks += result.removedLinks;
+      removedDirs += result.removedDirs;
+    }
+    if (removedLinks || removedDirs) {
+      console.log(`[${new Date().toISOString()}][organize] reconciled obsolete content`, {
+        removedSymlinks: removedLinks,
+        removedEmptyDirs: removedDirs,
+      });
+    }
   }
 
   console.log(

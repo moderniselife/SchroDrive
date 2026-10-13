@@ -12,7 +12,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { config } from '../../../src/core/config';
-import { scanDirRecursive, startArrBridge, stopArrBridge } from '../../../src/services/arrBridge';
+import { cleanupStagingPath, scanDirRecursive, startArrBridge, stopArrBridge } from '../../../src/services/arrBridge';
 
 const PORT = 18283;
 const BASE_URL = `http://localhost:${PORT}`;
@@ -46,6 +46,39 @@ describe('*arr bridge qBittorrent-compatible API', () => {
     fs.writeFileSync(path.join(root, 'Extras', 'Episode.mkv'), 'extra');
     const files = await scanDirRecursive(root);
     expect(files.map((file) => file.name).sort()).toEqual(['Extras/Episode.mkv', 'Season 01/Episode.mkv']);
+  });
+
+  test('cleans only disposable staging links, not their provider targets', async () => {
+    const providerRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'schrodrive-provider-'));
+    const stagingRoot = path.join(config.mountBase, 'downloads', 'radarr', 'cleanup-test');
+    const providerFile = path.join(providerRoot, 'movie.mkv');
+    const stagingFile = path.join(stagingRoot, 'movie.mkv');
+    fs.writeFileSync(providerFile, 'provider content');
+    fs.mkdirSync(stagingRoot, { recursive: true });
+    fs.symlinkSync(providerFile, stagingFile);
+
+    await expect(cleanupStagingPath(stagingRoot)).resolves.toBe(true);
+    expect(fs.existsSync(stagingRoot)).toBe(false);
+    expect(fs.existsSync(providerFile)).toBe(true);
+  });
+
+  test('refuses to clean a path outside the staging root', async () => {
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'schrodrive-outside-'));
+    const outsideFile = path.join(outsideRoot, 'must-remain.txt');
+    fs.writeFileSync(outsideFile, 'protected');
+
+    await expect(cleanupStagingPath(outsideRoot)).resolves.toBe(false);
+    expect(fs.existsSync(outsideFile)).toBe(true);
+  });
+
+  test('refuses to clean the parent of the downloads root', async () => {
+    const parentRoot = path.dirname(path.resolve(config.mountBase, 'downloads'));
+    const protectedFile = path.join(parentRoot, 'must-remain-parent.txt');
+    fs.writeFileSync(protectedFile, 'protected');
+
+    await expect(cleanupStagingPath(parentRoot)).resolves.toBe(false);
+    expect(fs.existsSync(protectedFile)).toBe(true);
+    fs.rmSync(protectedFile, { force: true });
   });
 
   test('reports a webapi version on GET /api/v2/app/webapiVersion', async () => {

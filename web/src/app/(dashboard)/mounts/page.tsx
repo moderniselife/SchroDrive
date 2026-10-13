@@ -20,6 +20,9 @@ interface Provider {
   name: string
   id: string
   configured: boolean
+  enabled: boolean
+  mounted: boolean
+  active: boolean
   connected: boolean
   torrentCount?: number
   error?: string
@@ -127,8 +130,8 @@ export default function MountsPage() {
                       </CardDescription>
                     </div>
                   </div>
-                  <Badge variant={provider.connected ? "default" : provider.configured ? "destructive" : "secondary"}>
-                    {provider.connected ? "connected" : provider.configured ? "error" : "disabled"}
+                  <Badge variant={provider.active ? "default" : provider.configured ? "secondary" : "secondary"}>
+                    {provider.active ? "active" : provider.enabled && provider.connected ? "not mounted" : provider.configured ? "inactive" : "disabled"}
                   </Badge>
                 </div>
               </CardHeader>
@@ -143,7 +146,7 @@ export default function MountsPage() {
                         <AlertCircle className="h-4 w-4 text-red-500" />
                       )}
                       <span className="font-medium">
-                        {provider.connected ? "Connected" : provider.error || "Disconnected"}
+                        {provider.connected ? (provider.mounted ? "Connected and mounted" : "Connected, mount unavailable") : provider.error || "Disconnected"}
                       </span>
                     </div>
                   </div>

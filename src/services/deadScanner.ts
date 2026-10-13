@@ -208,7 +208,7 @@ async function tryReaddViaIndexer(
 async function scanProviderDead(): Promise<Record<string, any>> {
   const summary: Record<string, any> = { scanned: {}, repaired: [], crossRepaired: [], readded: [], preemptive: [] };
 
-  for (const provider of registry.configured()) {
+  for (const provider of registry.enabled()) {
     try {
       const list = await provider.listTorrents();
       const dead = list.filter(t => provider.isTorrentDead(t));
@@ -292,7 +292,7 @@ async function scanProviderDead(): Promise<Record<string, any>> {
 
           if (infoHash) {
             const magnet = `magnet:?xt=urn:btih:${infoHash.toUpperCase()}`;
-            const otherProviders = registry.configured().filter(p => p.id !== provider.id);
+    const otherProviders = registry.enabled().filter(p => p.id !== provider.id);
 
             for (const other of otherProviders) {
               try {
@@ -490,7 +490,7 @@ export function startDeadScanner() {
         console.log(`[${new Date().toISOString()}][dead-scan] Active stream detected BUT bridge has dead torrents — running scan to break deadlock`);
       }
 
-      const configuredProviders = registry.configured();
+      const configuredProviders = registry.enabled();
       const allRateLimited = configuredProviders.every(p => p.isRateLimited());
       if (allRateLimited && configuredProviders.length > 0) {
         console.warn(`[${new Date().toISOString()}][dead-scan] All debrid providers are rate-limited. Skipping scan to avoid API spam.`);

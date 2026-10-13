@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { config } from '../../../src/core/config';
+import { config, isProviderReconciliationAutoEnabled } from '../../../src/core/config';
 import { providerReconciliationRoutes, startProviderReconciliation } from '../../../src/services/providerReconciliationRuntime';
 
 const original = {
@@ -19,9 +19,35 @@ afterEach(() => {
 });
 
 describe('provider reconciliation runtime wiring', () => {
-  test('is disabled by default and does not construct a provider worker', () => {
-    config.providerReconciliationEnabled = false;
-    expect(startProviderReconciliation()).toBeUndefined();
+  test('auto-enables when both Arr integrations are configured', () => {
+    const env = {
+      PROVIDER_RECONCILIATION_RADARR_URL: 'http://radarr.test',
+      PROVIDER_RECONCILIATION_RADARR_API_KEY: 'radarr-fixture-key',
+      PROVIDER_RECONCILIATION_SONARR_URL: 'http://sonarr.test',
+      PROVIDER_RECONCILIATION_SONARR_API_KEY: 'sonarr-fixture-key',
+    };
+    expect(isProviderReconciliationAutoEnabled(env)).toBe(true);
+  });
+
+  test('remains disabled when the Arr configuration is incomplete', () => {
+    expect(isProviderReconciliationAutoEnabled({
+      PROVIDER_RECONCILIATION_RADARR_URL: 'http://radarr.test',
+      PROVIDER_RECONCILIATION_RADARR_API_KEY: 'radarr-fixture-key',
+    })).toBe(false);
+  });
+
+  test('allows an explicit false to disable automatic activation', () => {
+    expect(isProviderReconciliationAutoEnabled({
+      PROVIDER_RECONCILIATION_ENABLED: 'false',
+      PROVIDER_RECONCILIATION_RADARR_URL: 'http://radarr.test',
+      PROVIDER_RECONCILIATION_RADARR_API_KEY: 'radarr-fixture-key',
+      PROVIDER_RECONCILIATION_SONARR_URL: 'http://sonarr.test',
+      PROVIDER_RECONCILIATION_SONARR_API_KEY: 'sonarr-fixture-key',
+    })).toBe(false);
+  });
+
+  test('allows an explicit true when automatic configuration is incomplete', () => {
+    expect(isProviderReconciliationAutoEnabled({ PROVIDER_RECONCILIATION_ENABLED: 'true' })).toBe(true);
   });
 
   test('requires explicit complete Arr routes when enabled', () => {
