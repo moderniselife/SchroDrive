@@ -21,6 +21,13 @@ When both Radarr and Sonarr are configured with a URL and API key, the worker
 starts automatically. `PROVIDER_RECONCILIATION_ENABLED=true` can still be used
 to force it on, while an explicit `false` disables automatic activation.
 
+When an Arr-visible symlink library is configured, reconciliation resolves the
+existing Radarr or Sonarr entity before creating a link. Title, original title,
+alternate titles, year, and Arr's own metadata lookup are used to identify the
+configured entity. The symlink is then placed below the library path already
+stored by Arr; SchröDrive does not invent a parallel title folder. If identity
+or the Arr path is unavailable or ambiguous, the item is deferred to Review.
+
 ## Contract coverage
 
 Every provider registered by SchröDrive implements the common provider
