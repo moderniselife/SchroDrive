@@ -14,6 +14,7 @@
  * @module services/arrBridge
  */
 
+import { findProviderTorrent, shouldPollTorrent } from './arrBridgeStatus';
 import express, { type Request, type Response } from 'express';
 import Busboy from 'busboy';
 import http from 'http';
@@ -136,7 +137,7 @@ function loadTrackedTorrents(): void {
 }
 
 function stateFingerprint(torrent: TrackedTorrent): string {
-  return `${torrent.state}|${torrent.progress}|${torrent.size}|${torrent.completionOn}|${torrent.mountScanned}|${torrent.contentPath}`;
+  return `${torrent.state}|${torrent.progress}|${torrent.size}|${torrent.completionOn}|${torrent.mountScanned}|${torrent.contentPath}|${torrent.name}|${torrent.pollAttempts}`;
 }
 
 /** Express server instance (last started, for backwards compat). */
@@ -249,24 +250,23 @@ export async function createStableSymlink(sourcePath: string, symlinkPath: strin
  * Polls debrid providers for status of all tracked torrents that are
  * still downloading. Updates progress and state accordingly.
  */
-async function pollDebridStatus(): Promise<void> {
+export async function pollDebridStatus(): Promise<void> {
   const pending = [...tracked.values()].filter(
-    (t) => t.state === 'downloading' || t.state === 'stalledDL' || t.state === 'queuedDL',
+    shouldPollTorrent,
   );
 
   if (pending.length === 0) return;
 
-  // Fetch torrent lists from all configured providers (cached, cheap)
+  // Provider listings are discovery signals; absence is not proof of failure.
   const providers = registry.ordered();
-  const allTorrents = new Map<string, { provider: string; status: string; progress: number; bytes: number; name: string }>();
+  const allTorrents: Array<{ provider: string; id: string; status: string; progress: number; bytes: number; name: string }> = [];
 
   for (const p of providers) {
     try {
       const torrents = await p.listTorrents();
       for (const t of torrents) {
-        // Try to match by info hash or name
-        const key = t.name?.toUpperCase() || t.id;
-        allTorrents.set(key, {
+        allTorrents.push({
+          id: String(t.id),
           provider: p.id,
           status: t.status,
           progress: t.progress,
@@ -281,46 +281,33 @@ async function pollDebridStatus(): Promise<void> {
 
   for (const torrent of pending) {
     const before = stateFingerprint(torrent);
-    torrent.pollAttempts++;
 
     // Try to find this torrent across providers
-    let found = false;
-    for (const [, info] of allTorrents) {
-      // Match by name (fuzzy — torrent names might differ slightly)
-      if (info.name && torrent.name &&
-          (info.name.toLowerCase().includes(torrent.name.toLowerCase().slice(0, 30)) ||
-           torrent.name.toLowerCase().includes(info.name.toLowerCase().slice(0, 30)))) {
-        found = true;
-        torrent.progress = info.progress / 100; // Normalise to 0.0–1.0
-        torrent.size = info.bytes || torrent.size;
-        torrent.name = info.name || torrent.name;
+    const info = findProviderTorrent(torrent, allTorrents);
+    if (info) {
+      torrent.pollAttempts = 0;
+      torrent.progress = info.progress / 100; // Normalise to 0.0–1.0
+      torrent.size = info.bytes || torrent.size;
+      torrent.name = info.name || torrent.name;
 
-        // Map debrid status to qBit state
-        const s = info.status.toLowerCase();
-        if (s === 'downloaded' || s === 'seeding' || s === 'finished' ||
-            s === 'cached' || s === 'completed' || info.progress >= 100) {
-          torrent.progress = 1.0;
-          // Don't set to uploading yet — wait for mount scan to find files
-          if (!torrent.mountScanned) {
-            torrent.state = 'stalledDL'; // Signal: ready but waiting for mount
-          }
-        } else if (s === 'error' || s === 'dead' || s === 'failed') {
-          torrent.state = 'error';
-        } else if (s === 'queued' || s === 'waiting') {
-          torrent.state = 'queuedDL';
-        } else {
-          torrent.state = 'downloading';
+      // Map debrid status to qBit state
+      const s = info.status.toLowerCase();
+      if (s === 'downloaded' || s === 'seeding' || s === 'finished' ||
+          s === 'cached' || s === 'completed' || info.progress >= 100) {
+        torrent.progress = 1.0;
+        // Don't set to uploading yet — wait for mount scan to find files
+        if (!torrent.mountScanned) {
+          torrent.state = 'stalledDL'; // Signal: ready but waiting for mount
         }
-        break;
+      } else if (s === 'error' || s === 'dead' || s === 'failed') {
+        torrent.state = 'error';
+      } else if (s === 'queued' || s === 'waiting') {
+        torrent.state = 'queuedDL';
+      } else {
+        torrent.state = 'downloading';
       }
     }
-
-    // If torrent has been pending for ages with no match, mark as error
-    if (!found && torrent.pollAttempts > 60) { // ~15 minutes
-      console.warn(`${LOG_PREFIX} Torrent "${torrent.name}" not found on any provider after ${torrent.pollAttempts} polls — marking as error`);
-      torrent.state = 'error';
-    }
-    if (before !== stateFingerprint(torrent) || torrent.pollAttempts % 5 === 0) persistTrackedTorrent(torrent);
+    if (before !== stateFingerprint(torrent)) persistTrackedTorrent(torrent);
   }
 }
 
@@ -332,7 +319,7 @@ async function pollDebridStatus(): Promise<void> {
  * Scans rclone mount paths for files belonging to tracked torrents
  * that are ready (progress = 1.0) but haven't been symlinked yet.
  */
-async function scanMountsForCompleted(): Promise<void> {
+export async function scanMountsForCompleted(): Promise<void> {
   const ready = [...tracked.values()].filter(
     (t) => t.progress >= 1.0 && !t.mountScanned && t.state !== 'error',
   );
@@ -357,34 +344,10 @@ async function scanMountsForCompleted(): Promise<void> {
 
         for (const searchDir of searchDirs) {
           try {
-            const entries = await fsp.readdir(searchDir);
-            // Look for a directory matching the torrent name
-            for (const entry of entries) {
-              const entryLower = entry.toLowerCase();
-              const nameLower = torrent.name.toLowerCase();
-
-              // Fuzzy match: entry contains significant portion of torrent name or vice versa
-              if (entryLower.includes(nameLower.slice(0, 20)) ||
-                  nameLower.includes(entryLower.slice(0, 20)) ||
-                  entryLower.replace(/[.\-_]/g, ' ') === nameLower.replace(/[.\-_]/g, ' ')) {
-                const fullPath = path.join(searchDir, entry);
-                const stat = await fsp.stat(fullPath);
-
-                if (stat.isDirectory()) {
-                  // Scan files inside the torrent directory
-                  const files = await scanDirRecursive(fullPath);
-                  if (files.length > 0) {
-                    foundPath = fullPath;
-                    foundFiles = files;
-                    break;
-                  }
-                } else if (stat.isFile() && isVideoFile(entry)) {
-                  // Single file torrent
-                  foundPath = searchDir;
-                  foundFiles = [{ name: entry, size: stat.size, path: fullPath }];
-                  break;
-                }
-              }
+            const match = await findBestMountMatch(searchDir, torrent.name);
+            if (match) {
+              foundPath = match.path;
+              foundFiles = match.files;
             }
             if (foundPath) break;
           } catch {
@@ -425,6 +388,50 @@ async function scanMountsForCompleted(): Promise<void> {
       console.error(`${LOG_PREFIX} Mount scan error for "${torrent.name}": ${err?.message}`);
     }
   }
+}
+
+type MountMatch = {
+  path: string;
+  files: Array<{ name: string; size: number; path: string }>;
+  score: number;
+};
+
+function normaliseMountName(value: string): string {
+  return value
+    .replace(/[.](mkv|mp4|avi|mov|wmv|m4v|ts|m2ts|webm)$/i, '')
+    .toLowerCase()
+    .replace(/[._-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Resolve a completed torrent to its best mount entry. */
+export async function findBestMountMatch(searchDir: string, torrentName: string): Promise<MountMatch | null> {
+  const entries = await fsp.readdir(searchDir, { withFileTypes: true });
+  const target = normaliseMountName(torrentName);
+  if (!target) return null;
+  const targetPrefix = target.slice(0, 20);
+  const directories: MountMatch[] = [];
+  const files: MountMatch[] = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(searchDir, entry.name);
+    const candidate = normaliseMountName(entry.name);
+    const exact = candidate === target;
+    const prefix = candidate.startsWith(targetPrefix) || target.startsWith(candidate.slice(0, 20));
+    if (!exact && !prefix && !candidate.includes(target) && !target.includes(candidate)) continue;
+
+    if (entry.isDirectory()) {
+      const discovered = await scanDirRecursive(fullPath);
+      if (!discovered.length) continue;
+      directories.push({ path: fullPath, files: discovered, score: (exact ? 100000 : 1000) + discovered.length });
+    } else if (entry.isFile() && isVideoFile(entry.name)) {
+      const stat = await fsp.stat(fullPath);
+      files.push({ path: searchDir, files: [{ name: entry.name, size: stat.size, path: fullPath }], score: exact ? 100000 : 1 });
+    }
+  }
+
+  return [...directories, ...files].sort((a, b) => b.score - a.score)[0] || null;
 }
 
 /** Recursively scans a directory for video files. */
