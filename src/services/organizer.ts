@@ -947,6 +947,24 @@ async function reconcileObsoleteSymlinks(
     return { removedLinks, removedDirs };
   }
 
+  // When Arr reconciliation exposes a category-root source, the provider's
+  // __all__ view is only an aggregation alias. If both roots are scanned, the
+  // same media file is discovered twice and collision handling creates a
+  // second, suffixed organised symlink. Record category targets in this
+  // directory so old __all__ aliases can be removed safely.
+  const categoryTargetLeaves = new Set<string>();
+  for (const ent of entries) {
+    if (!ent.isSymbolicLink()) continue;
+    const full = path.join(dir, ent.name);
+    const current = await fsp.readlink(full).catch(() => "");
+    const source = path.resolve(path.dirname(full), current);
+    const relative = path.relative(path.resolve(config.mountBase), source);
+    const segments = relative.split(path.sep);
+    if (segments.length >= 3 && ["movies", "shows", "anime"].includes(segments[1])) {
+      categoryTargetLeaves.add(path.basename(source));
+    }
+  }
+
   for (const ent of entries) {
     const full = path.join(dir, ent.name);
     if (ent.isDirectory()) {
@@ -965,6 +983,18 @@ async function reconcileObsoleteSymlinks(
 
     const current = await fsp.readlink(full).catch(() => "");
     const source = path.resolve(path.dirname(full), current);
+    const relative = path.relative(path.resolve(config.mountBase), source);
+    const segments = relative.split(path.sep);
+    const isProviderAllAlias = segments.length >= 3 && segments[1] === "__all__";
+    if (isProviderAllAlias && categoryTargetLeaves.has(path.basename(source))) {
+      console.log(`[${new Date().toISOString()}][organize] obsolete __all__ alias`, {
+        path: full,
+        target: source,
+      });
+      await fsp.unlink(full);
+      removedLinks++;
+      continue;
+    }
     const desired = desiredBySource.get(await organizerSourceKey(source));
     if (!desired || path.normalize(desired) === path.normalize(full)) continue;
 
@@ -1068,11 +1098,28 @@ export async function organizeOnce(opts?: { dryRun?: boolean; limit?: number }) 
       console.warn(`[${new Date().toISOString()}][organize] skipping source mount`, { reason: status.reason });
       continue;
     }
-    // Check for Zurg-style organised category layout (__all__/anime/shows/movies)
+    // Prefer provider category roots. __all__ is an aggregation view, not an
+    // additional source: scanning it alongside movies/shows creates duplicate
+    // symlinks for media already exposed through the authoritative category.
+    const categoryRoots = ["movies", "shows", "anime"]
+      .map((category) => path.join(b, category))
+      .filter((root) => root !== b);
+    let addedCategoryRoot = false;
+    for (const categoryRoot of categoryRoots) {
+      const categoryStat = await fsp.stat(categoryRoot).catch(() => null);
+      if (categoryStat?.isDirectory()) {
+        roots.push(categoryRoot);
+        addedCategoryRoot = true;
+      }
+    }
+    if (addedCategoryRoot) continue;
+
+    // Legacy/provider layouts without category roots can still be imported
+    // from __all__ as a fallback, but never combined with categories.
     const allDir = path.join(b, "__all__");
     const allStat = await fsp.stat(allDir).catch(() => null);
     if (allStat?.isDirectory()) {
-      roots.push(allDir);  // Scan __all__ only — it's the superset, avoids duplicates
+      roots.push(allDir);
       continue;
     }
 

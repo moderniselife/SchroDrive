@@ -28,6 +28,14 @@ configured entity. The symlink is then placed below the library path already
 stored by Arr; SchröDrive does not invent a parallel title folder. If identity
 or the Arr path is unavailable or ambiguous, the item is deferred to Review.
 
+Provider mounts that expose both category directories (`movies`, `shows`, or
+`anime`) and an aggregate `__all__` directory are scanned through the category
+directories only. `__all__` is retained as a fallback for legacy layouts, but
+is never combined with category roots; this prevents an Arr-reconciled file
+from being imported a second time through an aggregate alias. Existing
+aggregate aliases are removed only when the corresponding category-root link
+is present in the same organised folder.
+
 ## Contract coverage
 
 Every provider registered by SchröDrive implements the common provider
