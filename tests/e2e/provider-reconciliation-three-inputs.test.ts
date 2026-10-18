@@ -77,21 +77,92 @@ describe('provider reconciliation fixture E2E', () => {
 
   test('B3: exposes provider media as a symlink and never copies it locally', async () => {
     let body: any;
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'provider-reconciliation-symlink-'));
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.body) body = JSON.parse(String(init.body));
-      if (!init?.body) return new Response(JSON.stringify([{ id: 1, title: 'Lanterns' }]), { status: 200 });
+      if (!init?.body && String(input).endsWith('/api/v3/series')) {
+        return new Response(JSON.stringify([{ id: 1, title: 'Lanterns', path: path.join(root, 'Lanterns') }]), { status: 200 });
+      }
       return new Response(JSON.stringify({ id: 1, status: 'queued' }), { status: 201, headers: { 'content-type': 'application/json' } });
     }) as typeof fetch;
-    const root = await mkdtemp(path.join(tmpdir(), 'provider-reconciliation-symlink-'));
     try {
       const routeWithLibrary = { ...route('sonarr', '/mnt/schrodrive/alldebrid'), symlinkLibraryPath: root };
       const item = event('Shows', 'shows/Lanterns/Lanterns.S01E06.Bad.Optics.mkv');
       await new HttpArrClient().submitScan(routeWithLibrary, item);
-      const link = path.join(root, 'Lanterns', 'Season 1', 'Lanterns.S01E06.Bad.Optics.mkv');
+      const link = path.join(root, 'Lanterns', 'Season 01', 'Lanterns.S01E06.Bad.Optics.mkv');
       expect((await lstat(link)).isSymbolicLink()).toBe(true);
       expect(await readlink(link)).toBe('/mnt/schrodrive/alldebrid/shows/Lanterns/Lanterns.S01E06.Bad.Optics.mkv');
       expect(body.name).toBe('RescanSeries');
       expect(body.seriesId).toBe(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('B4: uses Arr alternate titles and its authoritative library path', async () => {
+    let body: any;
+    const root = await mkdtemp(path.join(tmpdir(), 'provider-reconciliation-alias-'));
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.body) {
+        body = JSON.parse(String(init.body));
+        return new Response(JSON.stringify({ id: 9, status: 'queued' }), { status: 201 });
+      }
+      if (String(input).endsWith('/api/v3/series')) {
+        return new Response(JSON.stringify([{ id: 42, title: 'Ghosts (US)', alternateTitles: [{ title: 'Ghosts' }], path: path.join(root, 'Ghosts (US)') }]), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const configured = { ...route('sonarr', '/mnt/schrodrive/alldebrid'), symlinkLibraryPath: root };
+      await new HttpArrClient().submitScan(configured, event('Shows', 'shows/Ghosts.S01E02.1080p.mkv'));
+      const link = path.join(root, 'Ghosts (US)', 'Season 01', 'Ghosts.S01E02.1080p.mkv');
+      expect((await lstat(link)).isSymbolicLink()).toBe(true);
+      expect(body).toEqual({ name: 'RescanSeries', seriesId: 42 });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('B5: falls back to Arr metadata lookup and matches the configured TMDb id', async () => {
+    let body: any;
+    const root = await mkdtemp(path.join(tmpdir(), 'provider-reconciliation-tmdb-'));
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.body) {
+        body = JSON.parse(String(init.body));
+        return new Response(JSON.stringify({ id: 10, status: 'queued' }), { status: 201 });
+      }
+      if (url.endsWith('/api/v3/movie')) {
+        return new Response(JSON.stringify([{ id: 7, title: 'Titolo locale', tmdbId: 123, year: 2025, path: path.join(root, 'Canonical Movie (2025)') }]), { status: 200 });
+      }
+      if (url.includes('/api/v3/movie/lookup?term=')) {
+        return new Response(JSON.stringify([{ title: 'Canonical Movie', tmdbId: 123, year: 2025 }]), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const configured = { ...route('radarr', '/mnt/schrodrive/alldebrid'), symlinkLibraryPath: root };
+      await new HttpArrClient().submitScan(configured, event('Movies', 'movies/Canonical.Movie.2025.2160p.mkv'));
+      const link = path.join(root, 'Canonical Movie (2025)', 'Canonical.Movie.2025.2160p.mkv');
+      expect((await lstat(link)).isSymbolicLink()).toBe(true);
+      expect(body).toEqual({ name: 'RescanMovie', movieId: 7 });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('B6: refuses an Arr path outside the configured symlink library', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'provider-reconciliation-boundary-'));
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!init?.body && String(input).endsWith('/api/v3/movie')) {
+        return new Response(JSON.stringify([{ id: 8, title: 'Boundary Movie', year: 2025, path: path.join(path.dirname(root), 'outside') }]), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const configured = { ...route('radarr', '/mnt/schrodrive/alldebrid'), symlinkLibraryPath: root };
+      await expect(new HttpArrClient().submitScan(configured, event('Movies', 'movies/Boundary.Movie.2025.mkv')))
+        .rejects.toThrow('outside configured symlink library');
     } finally {
       await rm(root, { recursive: true, force: true });
     }

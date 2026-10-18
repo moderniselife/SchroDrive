@@ -156,14 +156,17 @@ export class HttpArrClient implements ArrClient {
     const providerPath = route.sourcePathPrefix
       ? `${route.sourcePathPrefix.replace(/\/$/, '')}/${event.path.replace(/^\/+/, '')}`
       : event.path;
+    const arrEntity = route.symlinkLibraryPath ? await findArrEntity(route, event) : undefined;
+    if (route.symlinkLibraryPath && !arrEntity?.path) {
+      throw new Error(`Arr ${route.kind} record or library path not found for ${path.basename(event.path)}`);
+    }
     const scanPath = route.symlinkLibraryPath
-      ? await exposeAsSymlink(route, event, providerPath)
+      ? await exposeAsSymlink(route, event, providerPath, arrEntity!.path!)
       : providerPath;
     let commandBody: Record<string, unknown> = { name: commandName, path: scanPath, importMode: route.importMode || 'Copy' };
     if (route.symlinkLibraryPath) {
-      const entityId = await findArrEntityId(route, event);
       commandName = route.kind === 'radarr' ? 'RescanMovie' : 'RescanSeries';
-      commandBody = { name: commandName, [route.kind === 'radarr' ? 'movieId' : 'seriesId']: entityId };
+      commandBody = { name: commandName, [route.kind === 'radarr' ? 'movieId' : 'seriesId']: arrEntity!.id };
     }
     const response = await fetch(`${route.baseUrl.replace(/\/$/, '')}/api/v3/command`, {
       method: 'POST',
@@ -186,42 +189,71 @@ export class HttpArrClient implements ArrClient {
   }
 }
 
+type ArrAlternateTitle = string | { title?: string };
+type ArrEntity = {
+  id?: number;
+  title?: string;
+  originalTitle?: string;
+  alternateTitles?: ArrAlternateTitle[];
+  year?: number;
+  tmdbId?: number | string;
+  path?: string;
+};
+
 function normalizedTitle(value: string): string {
-  return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  return value.toLocaleLowerCase().replace(/\s*\((?:(?:19|20|21)\d{2}|us|uk)\)\s*$/iu, '').replace(/[^\p{L}\p{N}]+/gu, '');
 }
 
-async function findArrEntityId(route: ArrRoute, event: DirectFileEvent): Promise<number> {
-  const filename = path.basename(event.path);
-  const parsed = parseMediaFilename(filename, event.path);
-  const title = normalizedTitle(parsed.title || event.path.split('/').filter(Boolean).slice(-2, -1)[0] || '');
-  const endpoint = route.kind === 'radarr' ? 'movie' : 'series';
+function arrTitles(entity: ArrEntity): string[] {
+  const values = [entity.title, entity.originalTitle, ...(entity.alternateTitles || []).map((item) => typeof item === 'string' ? item : item.title)];
+  return [...new Set(values.filter((value): value is string => Boolean(value)).map(normalizedTitle).filter(Boolean))];
+}
+
+async function fetchArrEntities(route: ArrRoute, endpoint: string): Promise<ArrEntity[]> {
   const response = await fetch(`${route.baseUrl.replace(/\/$/, '')}/api/v3/${endpoint}`, {
     headers: { 'X-Api-Key': route.apiKey },
   });
   if (!response.ok) throw new Error(`Arr ${endpoint} lookup failed: HTTP ${response.status}`);
-  const records = await response.json() as Array<{ id?: number; title?: string }>; 
-  const match = records.find((record) => record.id && normalizedTitle(record.title || '') === title);
-  if (!match?.id) throw new Error(`Arr ${endpoint} record not found for ${parsed.title || filename}`);
-  return match.id;
+  const body = await response.json();
+  return Array.isArray(body) ? body as ArrEntity[] : [];
 }
 
-function safeSegment(value: string): string {
-  return value.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim() || 'Unknown';
+async function findArrEntity(route: ArrRoute, event: DirectFileEvent): Promise<ArrEntity | undefined> {
+  const filename = path.basename(event.path);
+  const parsed = parseMediaFilename(filename, event.path);
+  const title = normalizedTitle(parsed.title || event.path.split('/').filter(Boolean).slice(-2, -1)[0] || '');
+  const endpoint = route.kind === 'radarr' ? 'movie' : 'series';
+  const records = await fetchArrEntities(route, endpoint);
+  const titleMatches = records.filter((record) => {
+    if (!record.id || !arrTitles(record).includes(title)) return false;
+    return route.kind === 'sonarr' || !parsed.year || !record.year || Number(record.year) === parsed.year;
+  });
+  if (titleMatches.length === 1) return titleMatches[0];
+
+  // Use Arr's own metadata lookup for canonical TMDb identity, then map it
+  // back to an already configured record. No second TMDb credential is needed.
+  const lookup = await fetchArrEntities(route, `${endpoint}/lookup?term=${encodeURIComponent(parsed.title || filename)}`);
+  const yearMatches = lookup.filter((candidate) => !parsed.year || !candidate.year || Number(candidate.year) === parsed.year);
+  const tmdbIds = new Set(yearMatches.map((candidate) => String(candidate.tmdbId || '')).filter(Boolean));
+  const tmdbMatches = records.filter((record) => record.id && tmdbIds.has(String(record.tmdbId || '')));
+  return tmdbMatches.length === 1 ? tmdbMatches[0] : undefined;
 }
 
 /**
  * Creates the Arr-facing library entry without copying provider data. The
  * target is deliberately a symlink into the shared SchröDrive mount.
  */
-async function exposeAsSymlink(route: ArrRoute, event: DirectFileEvent, providerPath: string): Promise<string> {
-  const library = route.symlinkLibraryPath!;
+async function exposeAsSymlink(route: ArrRoute, event: DirectFileEvent, providerPath: string, arrPath: string): Promise<string> {
+  const libraryRoot = path.resolve(route.symlinkLibraryPath!);
+  const authoritativeRoot = path.resolve(arrPath);
+  if (authoritativeRoot !== libraryRoot && !authoritativeRoot.startsWith(`${libraryRoot}${path.sep}`)) {
+    throw new Error(`Refusing Arr path outside configured symlink library: ${arrPath}`);
+  }
   const filename = path.basename(event.path);
   const parsed = parseMediaFilename(filename, event.path);
-  const pathParts = event.path.split('/').filter(Boolean);
-  const title = safeSegment(parsed.title || pathParts[pathParts.length - 2] || path.parse(filename).name);
-  const directory = event.sourceCategory === 'Shows'
-    ? path.join(library, title, `Season ${parsed.season ?? 1}`)
-    : path.join(library, parsed.year ? `${title} (${parsed.year})` : title);
+  const directory = event.sourceCategory === 'Shows' && parsed.season
+    ? path.join(arrPath, `Season ${String(parsed.season).padStart(2, '0')}`)
+    : arrPath;
   const destination = path.join(directory, filename);
   await fsp.mkdir(directory, { recursive: true });
   const existing = await fsp.lstat(destination).catch(() => undefined);
