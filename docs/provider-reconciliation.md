@@ -28,20 +28,11 @@ configured entity. The symlink is then placed below the library path already
 stored by Arr; SchröDrive does not invent a parallel title folder. If identity
 or the Arr path is unavailable or ambiguous, the item is deferred to Review.
 
-Provider mounts that expose category directories and an aggregate `__all__`
-directory are scanned through the category directories only. Every direct,
-non-hidden category directory is eligible, including custom categories; the
-aggregate `__all__` and compatibility `links` directories are never combined
-with authoritative roots. If no category root exists, `__all__` (then `links`)
-is retained as a legacy fallback. This prevents an Arr-reconciled file from
-being imported a second time through an aggregate alias while preserving older
-provider layouts. Existing aggregate aliases are removed only when the
-corresponding category-root link is present in the same organised folder.
+Provider mounts that expose category directories and an aggregate  directory are scanned through the category directories only. Every direct, non-hidden category directory is eligible, including custom categories; the aggregate  and compatibility  directories are never combined with authoritative roots. If no category root exists,  (then ) is retained as a legacy fallback. This prevents an Arr-reconciled file from being imported a second time through an aggregate alias while preserving older provider layouts. Existing aggregate aliases are removed only when the corresponding category-root link is present in the same organised folder.
 
-Alias reconciliation compares the complete provider-relative media path, not
-only the final filename. This keeps two different sources with the same leaf
-name from being treated as the same media item.
+Alias reconciliation compares the complete provider-relative media path, not only the final filename. This keeps two different sources with the same leaf name from being treated as the same media item.
 
+ARR parser identity is authoritative when Arr can parse the release filename and the parsed entity is configured. Without a parser match, a title match is accepted only when its year is equal or within +/-1 year; a distant year mismatch (for example, a remake with the same title) is not linked automatically. Arr metadata lookup remains the final identity fallback. Ambiguous or unresolved items are left unlinked, never placed in a guessed folder.
 ## Contract coverage
 
 Every provider registered by SchröDrive implements the common provider

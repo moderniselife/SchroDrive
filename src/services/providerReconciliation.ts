@@ -224,11 +224,14 @@ async function findArrEntity(route: ArrRoute, event: DirectFileEvent): Promise<A
   const title = normalizedTitle(parsed.title || event.path.split('/').filter(Boolean).slice(-2, -1)[0] || '');
   const endpoint = route.kind === 'radarr' ? 'movie' : 'series';
   const records = await fetchArrEntities(route, endpoint);
-  const titleMatches = records.filter((record) => {
-    if (!record.id || !arrTitles(record).includes(title)) return false;
-    return route.kind === 'sonarr' || !parsed.year || !record.year || Number(record.year) === parsed.year;
-  });
+  const titleMatches = records.filter((record) => record.id && arrTitles(record).includes(title));
   if (titleMatches.length === 1) return titleMatches[0];
+
+  // The release year is secondary evidence. It must disambiguate duplicate
+  // ARR titles, but must not reject a unique title match when a release year
+  // differs from the catalog year.
+  const titleYearMatches = titleMatches.filter((record) => !parsed.year || !record.year || Number(record.year) === parsed.year);
+  if (titleYearMatches.length === 1) return titleYearMatches[0];
 
   // Use Arr's own metadata lookup for canonical TMDb identity, then map it
   // back to an already configured record. No second TMDb credential is needed.
