@@ -218,25 +218,46 @@ async function fetchArrEntities(route: ArrRoute, endpoint: string): Promise<ArrE
   return Array.isArray(body) ? body as ArrEntity[] : [];
 }
 
+async function parseArrEntity(route: ArrRoute, filename: string): Promise<ArrEntity | undefined> {
+  const endpoint = route.kind === 'radarr' ? 'movie' : 'series';
+  const response = await fetch(
+    route.baseUrl.replace(/\/$/, '') + '/api/v3/parse?title=' + encodeURIComponent(filename),
+    { headers: { 'X-Api-Key': route.apiKey } },
+  );
+  if (!response.ok) return undefined;
+  const body = await response.json() as Record<string, unknown>;
+  const entity = body[endpoint];
+  return entity && typeof entity === 'object' ? entity as ArrEntity : undefined;
+}
+
 async function findArrEntity(route: ArrRoute, event: DirectFileEvent): Promise<ArrEntity | undefined> {
   const filename = path.basename(event.path);
   const parsed = parseMediaFilename(filename, event.path);
   const title = normalizedTitle(parsed.title || event.path.split('/').filter(Boolean).slice(-2, -1)[0] || '');
   const endpoint = route.kind === 'radarr' ? 'movie' : 'series';
   const records = await fetchArrEntities(route, endpoint);
-  const titleMatches = records.filter((record) => record.id && arrTitles(record).includes(title));
-  if (titleMatches.length === 1) return titleMatches[0];
 
-  // The release year is secondary evidence. It must disambiguate duplicate
-  // ARR titles, but must not reject a unique title match when a release year
-  // differs from the catalog year.
-  const titleYearMatches = titleMatches.filter((record) => !parsed.year || !record.year || Number(record.year) === parsed.year);
-  if (titleYearMatches.length === 1) return titleYearMatches[0];
+  // Let Arr parse the release first. If it identifies an entity that is not
+  // configured in this Arr instance, fail closed instead of guessing by title.
+  const parsedEntity = await parseArrEntity(route, filename);
+  if (parsedEntity?.id) {
+    return records.find((record) => String(record.id) === String(parsedEntity.id));
+  }
+
+  const titleMatches = records.filter((record) => record.id && arrTitles(record).includes(title));
+  const nearYearMatches = titleMatches.filter((record) => {
+    if (!parsed.year || !record.year) return true;
+    return Math.abs(Number(record.year) - parsed.year) <= 1;
+  });
+  if (nearYearMatches.length === 1) return nearYearMatches[0];
 
   // Use Arr's own metadata lookup for canonical TMDb identity, then map it
   // back to an already configured record. No second TMDb credential is needed.
-  const lookup = await fetchArrEntities(route, `${endpoint}/lookup?term=${encodeURIComponent(parsed.title || filename)}`);
-  const yearMatches = lookup.filter((candidate) => !parsed.year || !candidate.year || Number(candidate.year) === parsed.year);
+  const lookup = await fetchArrEntities(route, endpoint + '/lookup?term=' + encodeURIComponent(parsed.title || filename));
+  const yearMatches = lookup.filter((candidate) => {
+    if (!parsed.year || !candidate.year) return true;
+    return Math.abs(Number(candidate.year) - parsed.year) <= 1;
+  });
   const tmdbIds = new Set(yearMatches.map((candidate) => String(candidate.tmdbId || '')).filter(Boolean));
   const tmdbMatches = records.filter((record) => record.id && tmdbIds.has(String(record.tmdbId || '')));
   return tmdbMatches.length === 1 ? tmdbMatches[0] : undefined;

@@ -151,7 +151,75 @@ describe('provider reconciliation fixture E2E', () => {
     }
   });
 
-  test('B6: refuses an Arr path outside the configured symlink library', async () => {
+  test('B6: uses Arr parser identity before title fallback', async () => {
+    let body: any;
+    const root = await mkdtemp(path.join(tmpdir(), 'provider-reconciliation-parser-'));
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.body) {
+        body = JSON.parse(String(init.body));
+        return new Response(JSON.stringify({ id: 11, status: 'queued' }), { status: 201 });
+      }
+      if (url.endsWith('/api/v3/movie')) {
+        return new Response(JSON.stringify([{ id: 42, title: 'Canonical Movie', year: 1984, path: path.join(root, 'Canonical Movie (1984)') }]), { status: 200 });
+      }
+      if (url.includes('/api/v3/parse?title=')) {
+        return new Response(JSON.stringify({ movie: { id: 42, title: 'Canonical Movie', year: 1984 } }), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const configured = { ...route('radarr', '/mnt/schrodrive/alldebrid'), symlinkLibraryPath: root };
+      await new HttpArrClient().submitScan(configured, event('Movies', 'movies/Canonical.Movie.2021.2160p.mkv'));
+      const link = path.join(root, 'Canonical Movie (1984)', 'Canonical.Movie.2021.2160p.mkv');
+      expect((await lstat(link)).isSymbolicLink()).toBe(true);
+      expect(body).toEqual({ name: 'RescanMovie', movieId: 42 });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('B7: rejects a unique title match for a distant remake year', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'provider-reconciliation-remake-'));
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/v3/movie')) {
+        return new Response(JSON.stringify([{ id: 42, title: 'Dune', year: 2021, tmdbId: 438631, path: path.join(root, 'Dune (2021)') }]), { status: 200 });
+      }
+      if (url.includes('/api/v3/movie/lookup?term=')) {
+        return new Response(JSON.stringify([{ title: 'Dune', year: 1984, tmdbId: 841 }]), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const configured = { ...route('radarr', '/mnt/schrodrive/alldebrid'), symlinkLibraryPath: root };
+      await expect(new HttpArrClient().submitScan(configured, event('Movies', 'movies/Dune.1984.2160p.mkv')))
+        .rejects.toThrow('record or library path not found');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('B8: accepts a unique title match within one release year', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'provider-reconciliation-year-'));
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.body) return new Response(JSON.stringify({ id: 12, status: 'queued' }), { status: 201 });
+      if (url.endsWith('/api/v3/movie')) {
+        return new Response(JSON.stringify([{ id: 42, title: 'Example Film', year: 2024, path: path.join(root, 'Example Film (2024)') }]), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const configured = { ...route('radarr', '/mnt/schrodrive/alldebrid'), symlinkLibraryPath: root };
+      await new HttpArrClient().submitScan(configured, event('Movies', 'movies/Example.Film.2025.2160p.mkv'));
+      expect((await lstat(path.join(root, 'Example Film (2024)', 'Example.Film.2025.2160p.mkv'))).isSymbolicLink()).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('B9: refuses an Arr path outside the configured symlink library', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'provider-reconciliation-boundary-'));
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       if (!init?.body && String(input).endsWith('/api/v3/movie')) {
