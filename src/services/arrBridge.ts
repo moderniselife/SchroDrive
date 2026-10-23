@@ -14,7 +14,6 @@
  * @module services/arrBridge
  */
 
-import { findProviderTorrent, shouldPollTorrent } from './arrBridgeStatus';
 import express, { type Request, type Response } from 'express';
 import Busboy from 'busboy';
 import http from 'http';
@@ -24,8 +23,9 @@ import path from 'path';
 import { config } from '../core/config';
 import { getDb } from '../core/db';
 import { registry } from '../providers';
-import type { AddMagnetResult } from '../providers';
+import type { AddMagnetResult, TorrentInfo } from '../providers';
 import { sanitiseName, base32ToHex } from '../core/utils';
+import { findProviderTorrentWithStatus, shouldPollTorrent, type ProviderInventory } from './arrBridgeStatus';
 
 // ===========================================================================
 // Constants
@@ -259,13 +259,18 @@ export async function pollDebridStatus(): Promise<void> {
 
   // Provider listings are discovery signals; absence is not proof of failure.
   const providers = registry.ordered();
-  const allTorrents: Array<{ provider: string; id: string; status: string; progress: number; bytes: number; name: string }> = [];
+  type ProviderTorrent = { provider: string; id: string; status: string; progress: number; bytes: number; name: string };
+  const inventories: ProviderInventory<ProviderTorrent>[] = [];
 
   for (const p of providers) {
     try {
-      const torrents = await p.listTorrents();
+      const result: { torrents: TorrentInfo[]; complete: boolean } = p.listTorrentsWithStatus
+        ? await p.listTorrentsWithStatus()
+        : { torrents: await p.listTorrents(), complete: !p.isRateLimited() };
+      const torrents = result.torrents;
+      const items: ProviderTorrent[] = [];
       for (const t of torrents) {
-        allTorrents.push({
+        items.push({
           id: String(t.id),
           provider: p.id,
           status: t.status,
@@ -274,8 +279,10 @@ export async function pollDebridStatus(): Promise<void> {
           name: t.name,
         });
       }
+      inventories.push({ provider: p.id, items, complete: result.complete });
     } catch (err: any) {
-      // Non-fatal — provider might be temporarily unavailable
+      // An unavailable provider cannot prove that a submitted torrent is gone.
+      inventories.push({ provider: p.id, items: [], complete: false });
     }
   }
 
@@ -283,7 +290,8 @@ export async function pollDebridStatus(): Promise<void> {
     const before = stateFingerprint(torrent);
 
     // Try to find this torrent across providers
-    const info = findProviderTorrent(torrent, allTorrents);
+    const lookup = findProviderTorrentWithStatus(torrent, inventories);
+    const info = lookup.match;
     if (info) {
       torrent.pollAttempts = 0;
       torrent.progress = info.progress / 100; // Normalise to 0.0–1.0
@@ -306,6 +314,8 @@ export async function pollDebridStatus(): Promise<void> {
       } else {
         torrent.state = 'downloading';
       }
+    } else if (lookup.authoritativeMissing) {
+      torrent.state = 'error';
     }
     if (before !== stateFingerprint(torrent)) persistTrackedTorrent(torrent);
   }
@@ -405,29 +415,46 @@ function normaliseMountName(value: string): string {
     .trim();
 }
 
+const MIN_FUZZY_MOUNT_NAME_LENGTH = 20;
+
+function mountNameScore(target: string, candidate: string): number {
+  if (!target || !candidate) return -1;
+  if (target === candidate) return 100000;
+  if (candidate.length < MIN_FUZZY_MOUNT_NAME_LENGTH) return -1;
+
+  const shorter = Math.min(target.length, candidate.length);
+  const longer = Math.max(target.length, candidate.length);
+  const overlap = Math.round((shorter / longer) * 1000);
+  if (target.includes(candidate) || candidate.includes(target)) return 5000 + overlap;
+
+  const targetTokens = new Set(target.split(' '));
+  const sharedTokens = candidate.split(' ').filter(token => targetTokens.has(token)).length;
+  return sharedTokens >= 3 ? 1000 + sharedTokens * 100 + overlap : -1;
+}
+
 /** Resolve a completed torrent to its best mount entry. */
 export async function findBestMountMatch(searchDir: string, torrentName: string): Promise<MountMatch | null> {
   const entries = await fsp.readdir(searchDir, { withFileTypes: true });
   const target = normaliseMountName(torrentName);
   if (!target) return null;
-  const targetPrefix = target.slice(0, 20);
   const directories: MountMatch[] = [];
   const files: MountMatch[] = [];
 
   for (const entry of entries) {
     const fullPath = path.join(searchDir, entry.name);
     const candidate = normaliseMountName(entry.name);
-    const exact = candidate === target;
-    const prefix = candidate.startsWith(targetPrefix) || target.startsWith(candidate.slice(0, 20));
-    if (!exact && !prefix && !candidate.includes(target) && !target.includes(candidate)) continue;
 
     if (entry.isDirectory()) {
       const discovered = await scanDirRecursive(fullPath);
       if (!discovered.length) continue;
-      directories.push({ path: fullPath, files: discovered, score: (exact ? 100000 : 1000) + discovered.length });
+      const directoryScore = mountNameScore(target, candidate);
+      const fileScore = Math.max(...discovered.map(file => mountNameScore(target, normaliseMountName(file.name))));
+      const score = Math.max(directoryScore, fileScore);
+      if (score >= 0) directories.push({ path: fullPath, files: discovered, score });
     } else if (entry.isFile() && isVideoFile(entry.name)) {
       const stat = await fsp.stat(fullPath);
-      files.push({ path: searchDir, files: [{ name: entry.name, size: stat.size, path: fullPath }], score: exact ? 100000 : 1 });
+      const score = mountNameScore(target, candidate);
+      if (score >= 0) files.push({ path: searchDir, files: [{ name: entry.name, size: stat.size, path: fullPath }], score });
     }
   }
 

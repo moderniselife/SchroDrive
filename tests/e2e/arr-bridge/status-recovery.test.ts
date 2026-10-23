@@ -12,6 +12,7 @@ const saved = { dbPath: config.dbPath, mountBase: config.mountBase, arrBridgePor
 const hash = '7777777777777777777777777777777777777777';
 let unavailable = true;
 let silentEmpty = false;
+let authoritativeEmpty = false;
 const listing = spyOn(registry, 'ordered');
 const record = (mountScanned = false) => ({ hash, magnet: `magnet:?xt=urn:btih:${hash}`, name: 'Original release', state: mountScanned ? 'uploading' : 'error', progress: mountScanned ? 1 : 0, size: 0, addedOn: 1, completionOn: -1, category: 'radarr', tags: '', savePath: root, contentPath: root, providerResults: [{ provider: 'alldebrid', id: '123', success: true }], files: [], pollAttempts: 61, mountScanned });
 function stored() { return JSON.parse((getDb().prepare('SELECT state_json FROM arr_tracked_torrents WHERE hash = ?').get(hash) as { state_json: string }).state_json); }
@@ -27,10 +28,11 @@ beforeAll(async () => {
   config.arrDownloadsPath = path.join(root, 'custom-staging');
   config.arrBridgePort = 18287;
   config.providers = [];
-  listing.mockReturnValue([{ id: 'alldebrid', async listTorrents() {
-    if (unavailable) throw new Error('temporary outage');
-    if (silentEmpty) return [];
-    return [{ id: '123', name: 'Renamed.release.mkv', status: 'downloaded', progress: 100, bytes: 15450000000 }];
+  listing.mockReturnValue([{ id: 'alldebrid', async listTorrentsWithStatus() {
+    if (unavailable) return { torrents: [], complete: false };
+    if (silentEmpty) return { torrents: [], complete: false };
+    if (authoritativeEmpty) return { torrents: [], complete: true };
+    return { complete: true, torrents: [{ id: '123', name: 'Renamed.release.mkv', status: 'downloaded', progress: 100, bytes: 15450000000 }] };
   } }] as any);
   await seed(record());
 });
@@ -56,6 +58,14 @@ test('an empty provider listing is not proof that a submitted torrent disappeare
   expect(stored()).toMatchObject({ state: 'downloading', pollAttempts: 60 });
   silentEmpty = false;
   await seed(record());
+});
+test('a complete provider listing without the submitted ID marks the torrent as gone', async () => {
+  unavailable = false;
+  authoritativeEmpty = true;
+  await seed({ ...record(), state: 'downloading' });
+  await pollDebridStatus();
+  expect(stored()).toMatchObject({ state: 'error', pollAttempts: 61 });
+  authoritativeEmpty = false;
 });
 test('restored error recovers through provider ID despite rename and persists across restart', async () => {
   unavailable = false;

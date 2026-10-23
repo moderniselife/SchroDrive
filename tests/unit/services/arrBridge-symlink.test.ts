@@ -69,6 +69,22 @@ describe('ARR bridge symlink paths', () => {
     expect(match?.files.map(file => file.name)).toEqual(['Movie.2026.mkv']);
   });
 
+  test('does not let a broader pack win because it contains more files', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'schrodrive-arr-specific-'));
+    const mount = path.join(root, 'mount');
+    const broadPack = path.join(mount, 'Example.Show.Complete.Series.Pack.ITA.ENG.2160p');
+    const specificSeason = path.join(mount, 'Example.Show.S01.ITA.ENG.2160p');
+    fs.mkdirSync(broadPack, { recursive: true });
+    fs.mkdirSync(specificSeason, { recursive: true });
+    for (let episode = 1; episode <= 4; episode += 1) {
+      fs.writeFileSync(path.join(broadPack, `Example.Show.S01E0${episode}.mkv`), `pack ${episode}`);
+    }
+    fs.writeFileSync(path.join(specificSeason, 'Example.Show.S01E01.mkv'), 'specific');
+
+    const match = await findBestMountMatch(mount, 'Example.Show.S01.ITA.ENG.2160p');
+    expect(match?.path).toBe(specificSeason);
+  });
+
   test('does not match an empty torrent name', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'schrodrive-arr-empty-'));
     fs.writeFileSync(path.join(root, 'unrelated.mkv'), 'media');

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { findProviderTorrent, shouldPollTorrent } from '../../src/services/arrBridgeStatus';
+import { findProviderTorrent, findProviderTorrentWithStatus, shouldPollTorrent } from '../../src/services/arrBridgeStatus';
 
 const tracked = {
   name: 'Backrooms 2026 iTA-ENG Bluray 2160p HEVC HDR x265-CYBER',
@@ -36,5 +36,15 @@ describe('arr bridge provider identity and recovery', () => {
     expect(findProviderTorrent(legacy, [match, { ...match, id: '2' }])).toBeUndefined();
     expect(findProviderTorrent({ ...legacy, name: '' }, [match])).toBeUndefined();
     expect(findProviderTorrent(legacy, [{ ...match, name: 'Movie 2026 1080p' }])).toBeUndefined();
+  });
+  test('does not treat incomplete inventory as provider deletion', () => {
+    expect(findProviderTorrentWithStatus(tracked, [
+      { provider: 'alldebrid', items: [], complete: false },
+    ])).toEqual({ authoritativeMissing: false });
+  });
+  test('treats an authoritative missing provider ID as deletion', () => {
+    expect(findProviderTorrentWithStatus(tracked, [
+      { provider: 'alldebrid', items: [], complete: true },
+    ])).toEqual({ authoritativeMissing: true });
   });
 });
