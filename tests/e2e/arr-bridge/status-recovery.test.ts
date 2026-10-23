@@ -67,6 +67,18 @@ test('a complete provider listing without the submitted ID marks the torrent as 
   expect(stored()).toMatchObject({ state: 'error', pollAttempts: 61 });
   authoritativeEmpty = false;
 });
+test('legacy provider listings are never treated as authoritative', async () => {
+  listing.mockReturnValue([{ id: 'alldebrid', async listTorrents() { return []; }, isRateLimited() { return false; } }] as any);
+  await seed({ ...record(), state: 'downloading' });
+  await pollDebridStatus();
+  expect(stored()).toMatchObject({ state: 'downloading', pollAttempts: 61 });
+  listing.mockReturnValue([{ id: 'alldebrid', async listTorrentsWithStatus() {
+    if (unavailable) return { torrents: [], complete: false };
+    if (silentEmpty) return { torrents: [], complete: false };
+    if (authoritativeEmpty) return { torrents: [], complete: true };
+    return { complete: true, torrents: [{ id: '123', name: 'Renamed.release.mkv', status: 'downloaded', progress: 100, bytes: 15450000000 }] };
+  } }] as any);
+});
 test('restored error recovers through provider ID despite rename and persists across restart', async () => {
   unavailable = false;
   await pollDebridStatus();

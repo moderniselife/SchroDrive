@@ -47,4 +47,30 @@ describe('arr bridge provider identity and recovery', () => {
       { provider: 'alldebrid', items: [], complete: true },
     ])).toEqual({ authoritativeMissing: true });
   });
+  test('does not mark a multi-provider submission missing while one inventory is incomplete', () => {
+    const multiProvider = {
+      ...tracked,
+      providerResults: [
+        { provider: 'alldebrid', id: '123', success: true },
+        { provider: 'realdebrid', id: '456', success: true },
+      ],
+    };
+    expect(findProviderTorrentWithStatus(multiProvider, [
+      { provider: 'alldebrid', items: [], complete: true },
+      { provider: 'realdebrid', items: [], complete: false },
+    ])).toEqual({ authoritativeMissing: false });
+  });
+  test('marks a multi-provider submission missing only when every inventory is complete', () => {
+    const multiProvider = {
+      ...tracked,
+      providerResults: [
+        { provider: 'alldebrid', id: '123', success: true },
+        { provider: 'realdebrid', id: '456', success: true },
+      ],
+    };
+    expect(findProviderTorrentWithStatus(multiProvider, [
+      { provider: 'alldebrid', items: [], complete: true },
+      { provider: 'realdebrid', items: [], complete: true },
+    ])).toEqual({ authoritativeMissing: true });
+  });
 });

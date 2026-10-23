@@ -58,11 +58,23 @@ export function findProviderTorrentWithStatus<T extends ProviderStatus>(
     if (match) return { match, authoritativeMissing: false };
   }
 
-  // Only a complete response for the submitted provider can prove deletion.
-  if (submissions.some(submission => inventories.some(i =>
-    i.provider === submission.provider && i.complete &&
-    !i.items.some(t => t.provider === submission.provider && t.id === String(submission.id))
-  ))) {
+  // Only complete responses for every submitted provider can prove deletion.
+  // With a multi-provider submission, one provider may be temporarily
+  // unavailable while another returns a complete inventory.  The complete
+  // response must not win over the incomplete one.
+  const submittedProviders = [...new Set(submissions.map(submission => submission.provider))];
+  const inventoriesByProvider = new Map(inventories.map(inventory => [inventory.provider, inventory]));
+  const allSubmittedProvidersComplete = submittedProviders.every((provider) =>
+    inventoriesByProvider.get(provider)?.complete === true,
+  );
+  const allSubmittedIdsMissing = submissions.every((submission) => {
+    const inventory = inventoriesByProvider.get(submission.provider);
+    if (!inventory) return false;
+    return !inventory.items.some((item) =>
+      item.provider === submission.provider && item.id === String(submission.id),
+    );
+  });
+  if (submissions.length > 0 && allSubmittedProvidersComplete && allSubmittedIdsMissing) {
     return { authoritativeMissing: true };
   }
 

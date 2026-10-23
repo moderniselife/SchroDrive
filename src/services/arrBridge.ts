@@ -266,7 +266,10 @@ export async function pollDebridStatus(): Promise<void> {
     try {
       const result: { torrents: TorrentInfo[]; complete: boolean } = p.listTorrentsWithStatus
         ? await p.listTorrentsWithStatus()
-        : { torrents: await p.listTorrents(), complete: !p.isRateLimited() };
+        // The legacy listing API cannot distinguish an authoritative empty
+        // inventory from a cached, partial, or failed response.  Never use it
+        // as evidence that a persisted provider ID was deleted.
+        : { torrents: await p.listTorrents(), complete: false };
       const torrents = result.torrents;
       const items: ProviderTorrent[] = [];
       for (const t of torrents) {
