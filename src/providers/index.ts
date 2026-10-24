@@ -34,6 +34,12 @@ export interface TorrentInfo {
   raw?: any;
 }
 
+/** Result of an authoritative provider-scoped lookup for one torrent ID. */
+export type TorrentStatusResult =
+  | { status: 'present'; torrent: TorrentInfo }
+  | { status: 'missing' }
+  | { status: 'unknown'; reason?: string };
+
 /** A single file within a torrent. */
 export interface TorrentFile {
   /** File identifier (provider-specific). */
@@ -147,6 +153,8 @@ export interface DebridProvider {
    * complete inventory from a cached, partial, or unavailable response.
    */
   listTorrentsWithStatus?(): Promise<{ torrents: TorrentInfo[]; complete: boolean }>;
+  /** Looks up one persisted provider torrent ID without relying on a full-list cache. */
+  getTorrentStatus?(torrentId: string): Promise<TorrentStatusResult>;
   /** Async generator yielding torrent pages for SSE streaming (optional). */
   listTorrentsStream?(): AsyncGenerator<TorrentInfo[], void, unknown>;
   /** Adds a magnet link to the provider for downloading. */

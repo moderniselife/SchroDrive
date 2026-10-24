@@ -104,4 +104,19 @@ describe('AllDebrid current magnet API', () => {
       expect.stringContaining('/v4/link/unlock'),
     ]);
   });
+
+  test('does not classify a transport ENOTFOUND error as missing', async () => {
+    axiosIPv4.post = async () => {
+      const error = new Error('getaddrinfo ENOTFOUND api.alldebrid.com') as Error & { code?: string };
+      error.code = 'ENOTFOUND';
+      throw error;
+    };
+
+    const result = await new AllDebridProvider().getTorrentStatus('789');
+
+    expect(result).toEqual({
+      status: 'unknown',
+      reason: 'getaddrinfo ENOTFOUND api.alldebrid.com',
+    });
+  });
 });
