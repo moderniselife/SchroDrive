@@ -49,11 +49,12 @@ export function findProviderTorrentWithStatus<T extends ProviderStatus>(
 ): ProviderLookup<T> {
   const submissions = torrent.providerResults.filter(r => r.success && r.id);
 
-  // First search every complete inventory. A later provider may still contain
-  // the torrent even when an earlier provider response is incomplete.
+  // First search every observed item. A direct per-ID lookup can confirm one
+  // submission as present while another submission for the same provider is
+  // still unknown; incompleteness must block deletion, not hide a presence.
   for (const submission of submissions) {
     const inventory = inventories.find(i => i.provider === submission.provider);
-    if (!inventory?.complete) continue;
+    if (!inventory) continue;
     const match = inventory.items.find(t => t.provider === submission.provider && t.id === String(submission.id));
     if (match) return { match, authoritativeMissing: false };
   }

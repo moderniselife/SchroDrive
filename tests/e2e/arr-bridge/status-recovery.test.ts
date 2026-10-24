@@ -79,6 +79,34 @@ test('legacy provider listings are never treated as authoritative', async () => 
     return { complete: true, torrents: [{ id: '123', name: 'Renamed.release.mkv', status: 'downloaded', progress: 100, bytes: 15450000000 }] };
   } }] as any);
 });
+test('provider-scoped status distinguishes present, missing and unknown', async () => {
+  listing.mockReturnValue([{ id: 'alldebrid', async getTorrentStatus() {
+    return { status: 'unknown', reason: 'fixture outage' };
+  } }] as any);
+  await seed({ ...record(), state: 'downloading' });
+  await pollDebridStatus();
+  expect(stored()).toMatchObject({ state: 'downloading', pollAttempts: 61 });
+
+  listing.mockReturnValue([{ id: 'alldebrid', async getTorrentStatus() {
+    return { status: 'present', torrent: { id: '123', name: 'Direct lookup.mkv', status: 'downloaded', progress: 100, bytes: 15450000000 } };
+  } }] as any);
+  await pollDebridStatus();
+  expect(stored()).toMatchObject({ state: 'stalledDL', progress: 1, name: 'Direct lookup.mkv' });
+
+  listing.mockReturnValue([{ id: 'alldebrid', async getTorrentStatus() {
+    return { status: 'missing' };
+  } }] as any);
+  await seed({ ...record(), state: 'downloading' });
+  await pollDebridStatus();
+  expect(stored()).toMatchObject({ state: 'error' });
+
+  listing.mockReturnValue([{ id: 'alldebrid', async listTorrentsWithStatus() {
+    if (unavailable) return { torrents: [], complete: false };
+    if (silentEmpty) return { torrents: [], complete: false };
+    if (authoritativeEmpty) return { torrents: [], complete: true };
+    return { complete: true, torrents: [{ id: '123', name: 'Renamed.release.mkv', status: 'downloaded', progress: 100, bytes: 15450000000 }] };
+  } }] as any);
+});
 test('restored error recovers through provider ID despite rename and persists across restart', async () => {
   unavailable = false;
   await pollDebridStatus();
