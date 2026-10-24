@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { config } from '../../../src/core/config';
-import { createStableSymlink, getDownloadsPath } from '../../../src/services/arrBridge';
+import { createStableSymlink, findBestMountMatch, getDownloadsPath } from '../../../src/services/arrBridge';
 
 describe('ARR bridge symlink paths', () => {
   const originalMountBase = config.mountBase;
@@ -42,5 +42,52 @@ describe('ARR bridge symlink paths', () => {
 
     expect(fs.readlinkSync(importedPath)).toBe(sourcePath);
     expect(fs.readFileSync(importedPath, 'utf8')).toBe('media');
+  });
+
+  test('prefers the exact season-pack directory over a matching episode file', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'schrodrive-arr-pack-'));
+    const mount = path.join(root, 'mount', 'alldebrid', '__all__');
+    const pack = path.join(mount, 'Operazione.Speciale.Lioness.S03.ITA.ENG.2160p');
+    fs.mkdirSync(pack, { recursive: true });
+    fs.writeFileSync(path.join(pack, 'Lioness.S03E01.mkv'), 'episode 1');
+    fs.writeFileSync(path.join(pack, 'Lioness.S03E02.mkv'), 'episode 2');
+    fs.writeFileSync(path.join(mount, 'Operazione.Speciale.Lioness.S03E01.mkv'), 'single episode');
+
+    const match = await findBestMountMatch(mount, 'Operazione.Speciale.Lioness.S03.ITA.ENG.2160p');
+    expect(match?.path).toBe(pack);
+    expect(match?.files.map(file => file.name).sort()).toEqual(['Lioness.S03E01.mkv', 'Lioness.S03E02.mkv']);
+  });
+
+  test('prefers an exact single file over a merely similar directory', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'schrodrive-arr-file-'));
+    const mount = path.join(root, 'mount');
+    const similar = path.join(mount, 'Movie.2026.Extras');
+    fs.mkdirSync(similar, { recursive: true });
+    fs.writeFileSync(path.join(similar, 'bonus.mkv'), 'bonus');
+    fs.writeFileSync(path.join(mount, 'Movie.2026.mkv'), 'feature');
+    const match = await findBestMountMatch(mount, 'Movie.2026.mkv');
+    expect(match?.files.map(file => file.name)).toEqual(['Movie.2026.mkv']);
+  });
+
+  test('does not let a broader pack win because it contains more files', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'schrodrive-arr-specific-'));
+    const mount = path.join(root, 'mount');
+    const broadPack = path.join(mount, 'Example.Show.Complete.Series.Pack.ITA.ENG.2160p');
+    const specificSeason = path.join(mount, 'Example.Show.S01.ITA.ENG.2160p');
+    fs.mkdirSync(broadPack, { recursive: true });
+    fs.mkdirSync(specificSeason, { recursive: true });
+    for (let episode = 1; episode <= 4; episode += 1) {
+      fs.writeFileSync(path.join(broadPack, `Example.Show.S01E0${episode}.mkv`), `pack ${episode}`);
+    }
+    fs.writeFileSync(path.join(specificSeason, 'Example.Show.S01E01.mkv'), 'specific');
+
+    const match = await findBestMountMatch(mount, 'Example.Show.S01.ITA.ENG.2160p');
+    expect(match?.path).toBe(specificSeason);
+  });
+
+  test('does not match an empty torrent name', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'schrodrive-arr-empty-'));
+    fs.writeFileSync(path.join(root, 'unrelated.mkv'), 'media');
+    expect(await findBestMountMatch(root, '')).toBeNull();
   });
 });
