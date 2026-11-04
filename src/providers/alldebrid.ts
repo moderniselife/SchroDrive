@@ -34,6 +34,7 @@ import type {
   AddMagnetResult,
   VirtualDirectory,
   VirtualFile,
+  TorrentStatusResult,
 } from './index';
 
 // ===========================================================================
@@ -275,6 +276,41 @@ export class AllDebridProvider implements DebridProvider {
    */
   async listTorrents(): Promise<TorrentInfo[]> {
     return (await this.listTorrentsWithStatus()).torrents;
+  }
+
+  /**
+   * Looks up one magnet directly by its persisted AllDebrid ID.
+   * An explicit not-found response is authoritative; cached or transient
+   * failures remain unknown and never prove deletion.
+   */
+  async getTorrentStatus(torrentId: string): Promise<TorrentStatusResult> {
+    if (!this.isConfigured()) return { status: 'unknown', reason: 'provider not configured' };
+    if (this.isRateLimited()) return { status: 'unknown', reason: 'provider rate limited' };
+
+    await rateLimiter.throttle(PROVIDER_NAME);
+    try {
+      const url = buildUrl('/v4.1/magnet/status', { id: torrentId });
+      const res = await axiosIPv4.post(url, null, { headers: authHeaders(), timeout: 20000 });
+      rateLimiter.recordSuccess(PROVIDER_NAME);
+      const data = unwrapResponse(res, 'get magnet status');
+      const magnet = Array.isArray(data?.magnets) ? data.magnets[0] : data?.magnets;
+      if (!magnet || typeof magnet !== 'object') {
+        return { status: 'unknown', reason: 'provider returned an invalid magnet payload' };
+      }
+      const torrent = this.normaliseTorrents([magnet])[0];
+      return torrent?.id === String(torrentId)
+        ? { status: 'present', torrent }
+        : { status: 'unknown', reason: 'provider returned a mismatched magnet ID' };
+    } catch (err: any) {
+      const hasProviderResponse = Boolean(err?.response);
+      const responseBody = hasProviderResponse ? JSON.stringify(err.response.data || {}).toLowerCase() : '';
+      const code = String(err?.response?.data?.error?.code || '').toLowerCase();
+      if (err?.response?.status === 404 || (hasProviderResponse && /not[ _-]?found|does not exist|unknown id/.test(`${code} ${responseBody}`))) {
+        return { status: 'missing' };
+      }
+      this.handleError(err, `get magnet status ${torrentId}`);
+      return { status: 'unknown', reason: err?.message || 'provider lookup failed' };
+    }
   }
 
   /**

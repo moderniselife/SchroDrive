@@ -940,6 +940,13 @@ The provider adapter uses the common `DebridProvider` contract. See
 [`docs/provider-reconciliation.md`](docs/provider-reconciliation.md) for
 provider capability and live-validation status.
 
+When a provider implements `getTorrentStatus(torrentId)`, reconciliation uses a
+provider-scoped tri-state lookup: `present`, `missing`, or `unknown`. A tracked
+submission is considered deleted only when every submitted provider ID returns
+an explicit `missing` result. Timeouts, rate limits, partial or malformed
+responses, and other transient failures remain `unknown` and never trigger a
+deletion transition.
+
 ### 📁 Organiser
 
 | Variable | Default | Description |

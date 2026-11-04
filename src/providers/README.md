@@ -97,6 +97,7 @@ breaks the cycle because `registry.ts` is a leaf node with no provider imports.
 |---|---|
 | `listTorrentsStream()` | Async generator for SSE streaming |
 | `listTorrentsWithStatus()` | Optional status-aware listing that marks cached, partial, or unavailable responses as incomplete. Providers without this method are never treated as authoritative for persisted-ID deletion checks. |
+| `getTorrentStatus(torrentId)` | Optional provider-scoped lookup returning `present`, `missing`, or `unknown`; only explicit provider absence is authoritative deletion evidence. |
 | `addTorrentFile(fileBuffer, name?)` | Upload a `.torrent` file buffer |
 | `getInfoHash(torrentId)` | Returns infohash/magnet URI for repair |
 | `repairTorrent(torrentId)` | Re-add a dead torrent's magnet to the same provider |

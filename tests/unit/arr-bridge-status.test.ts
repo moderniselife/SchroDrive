@@ -42,6 +42,19 @@ describe('arr bridge provider identity and recovery', () => {
       { provider: 'alldebrid', items: [], complete: false },
     ])).toEqual({ authoritativeMissing: false });
   });
+  test('keeps an explicitly present item even when another item is still unknown', () => {
+    const multiSubmission = {
+      ...tracked,
+      providerResults: [
+        { provider: 'alldebrid', id: '123', success: true },
+        { provider: 'alldebrid', id: '456', success: true },
+      ],
+    };
+    const present = { provider: 'alldebrid', id: '123', name: 'still-present.mkv' };
+    expect(findProviderTorrentWithStatus(multiSubmission, [
+      { provider: 'alldebrid', items: [present], complete: false },
+    ])).toEqual({ match: present, authoritativeMissing: false });
+  });
   test('treats an authoritative missing provider ID as deletion', () => {
     expect(findProviderTorrentWithStatus(tracked, [
       { provider: 'alldebrid', items: [], complete: true },

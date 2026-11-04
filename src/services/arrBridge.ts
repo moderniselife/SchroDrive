@@ -23,7 +23,7 @@ import path from 'path';
 import { config } from '../core/config';
 import { getDb } from '../core/db';
 import { registry } from '../providers';
-import type { AddMagnetResult, TorrentInfo } from '../providers';
+import type { AddMagnetResult, TorrentInfo, TorrentStatusResult } from '../providers';
 import { sanitiseName, base32ToHex } from '../core/utils';
 import { findProviderTorrentWithStatus, shouldPollTorrent, type ProviderInventory } from './arrBridgeStatus';
 
@@ -261,9 +261,43 @@ export async function pollDebridStatus(): Promise<void> {
   const providers = registry.ordered();
   type ProviderTorrent = { provider: string; id: string; status: string; progress: number; bytes: number; name: string };
   const inventories: ProviderInventory<ProviderTorrent>[] = [];
+  const submittedIdsByProvider = new Map<string, string[]>();
+  for (const torrent of pending) {
+    for (const result of torrent.providerResults) {
+      if (!result.success || !result.id) continue;
+      const ids = submittedIdsByProvider.get(result.provider) || [];
+      if (!ids.includes(String(result.id))) ids.push(String(result.id));
+      submittedIdsByProvider.set(result.provider, ids);
+    }
+  }
+
+  const toProviderTorrent = (provider: string, torrent: TorrentInfo): ProviderTorrent => ({
+    id: String(torrent.id),
+    provider,
+    status: torrent.status,
+    progress: torrent.progress,
+    bytes: torrent.bytes,
+    name: torrent.name,
+  });
 
   for (const p of providers) {
     try {
+      const submittedIds = submittedIdsByProvider.get(p.id) || [];
+      if (p.getTorrentStatus && submittedIds.length > 0) {
+        const items: ProviderTorrent[] = [];
+        let complete = true;
+        for (const id of submittedIds) {
+          const result: TorrentStatusResult = await p.getTorrentStatus(id);
+          if (result.status === 'present') {
+            items.push(toProviderTorrent(p.id, result.torrent));
+          } else if (result.status === 'unknown') {
+            complete = false;
+          }
+        }
+        inventories.push({ provider: p.id, items, complete });
+        continue;
+      }
+
       const result: { torrents: TorrentInfo[]; complete: boolean } = p.listTorrentsWithStatus
         ? await p.listTorrentsWithStatus()
         // The legacy listing API cannot distinguish an authoritative empty
@@ -271,17 +305,7 @@ export async function pollDebridStatus(): Promise<void> {
         // as evidence that a persisted provider ID was deleted.
         : { torrents: await p.listTorrents(), complete: false };
       const torrents = result.torrents;
-      const items: ProviderTorrent[] = [];
-      for (const t of torrents) {
-        items.push({
-          id: String(t.id),
-          provider: p.id,
-          status: t.status,
-          progress: t.progress,
-          bytes: t.bytes,
-          name: t.name,
-        });
-      }
+      const items = torrents.map((torrent) => toProviderTorrent(p.id, torrent));
       inventories.push({ provider: p.id, items, complete: result.complete });
     } catch (err: any) {
       // An unavailable provider cannot prove that a submitted torrent is gone.
